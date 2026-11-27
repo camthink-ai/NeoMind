@@ -9,7 +9,7 @@ use std::time::Duration;
 use super::PushDestination;
 
 /// Webhook configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct WebhookConfig {
     pub url: String,
     #[serde(default = "default_method")]
@@ -25,10 +25,32 @@ pub struct WebhookConfig {
     pub timeout_secs: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+impl std::fmt::Debug for WebhookConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WebhookConfig")
+            .field("url", &crate::scheduler::scrub_credentials(&self.url))
+            .field("method", &self.method)
+            .field("headers_count", &self.headers.len())
+            .field("auth_token", &self.auth_token.as_ref().map(|_| "[REDACTED]"))
+            .field("auth_basic", &self.auth_basic)
+            .field("timeout_secs", &self.timeout_secs)
+            .finish()
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct BasicAuth {
     pub username: String,
     pub password: String,
+}
+
+impl std::fmt::Debug for BasicAuth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BasicAuth")
+            .field("username", &self.username)
+            .field("password", &"[REDACTED]")
+            .finish()
+    }
 }
 
 fn default_method() -> String {
@@ -37,6 +59,110 @@ fn default_method() -> String {
 
 fn default_timeout() -> u64 {
     30
+}
+
+/// Whether loopback webhook targets are permitted (tests or explicit opt-in).
+fn allow_private_webhooks() -> bool {
+    cfg!(test)
+        || std::env::var("NEOMIND_ALLOW_PRIVATE_WEBHOOKS")
+            .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+            .unwrap_or(false)
+}
+
+/// Check if an IP is blocked as a webhook destination.
+///
+/// Link-local / cloud metadata (`169.254.0.0/16`, `fe80::/10`) and unspecified /
+/// multicast / broadcast addresses are ALWAYS blocked. Loopback (`127.0.0.0/8`,
+/// `::1`) is blocked unless running tests or `NEOMIND_ALLOW_PRIVATE_WEBHOOKS=true`.
+fn is_blocked_webhook_ip(ip: &std::net::IpAddr, allow_loopback: bool) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            let o = v4.octets();
+            // Always block link-local / cloud metadata (169.254.0.0/16),
+            // unspecified (0.0.0.0/8), broadcast, multicast.
+            if (o[0] == 169 && o[1] == 254)
+                || o[0] == 0
+                || v4.is_broadcast()
+                || v4.is_multicast()
+                || v4.is_unspecified()
+            {
+                return true;
+            }
+            // Loopback (127.0.0.0/8)
+            if o[0] == 127 && !allow_loopback {
+                return true;
+            }
+            false
+        }
+        std::net::IpAddr::V6(v6) => {
+            if v6.is_multicast() || v6.is_unspecified() {
+                return true;
+            }
+            let seg = v6.segments();
+            // IPv6 link-local (fe80::/10)
+            if (seg[0] & 0xffc0) == 0xfe80 {
+                return true;
+            }
+            if v6.is_loopback() {
+                return !allow_loopback;
+            }
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return is_blocked_webhook_ip(&std::net::IpAddr::V4(v4), allow_loopback);
+            }
+            false
+        }
+    }
+}
+
+/// Validate a webhook target URL (scheme, host, literal IP checks).
+fn validate_webhook_url_with_policy(url_str: &str, allow_loopback: bool) -> Result<reqwest::Url> {
+    if url_str.is_empty() {
+        return Err(anyhow!("Webhook URL is required"));
+    }
+    let parsed = reqwest::Url::parse(url_str)
+        .map_err(|e| anyhow!("Invalid webhook URL: {}", e))?;
+
+    match parsed.scheme() {
+        "http" | "https" => {}
+        other => {
+            return Err(anyhow!(
+                "Webhook URL scheme '{}' is not allowed (only http/https supported)",
+                other
+            ));
+        }
+    }
+
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| anyhow!("Webhook URL must include a host"))?;
+    let host_unbracketed = host.trim_start_matches('[').trim_end_matches(']');
+    let lower = host_unbracketed.trim_end_matches('.').to_ascii_lowercase();
+
+    if !allow_loopback
+        && (lower == "localhost"
+            || lower == "localhost.localdomain"
+            || lower.ends_with(".localhost"))
+    {
+        return Err(anyhow!(
+            "Webhook URL host '{}' is blocked (loopback address)",
+            host
+        ));
+    }
+
+    if let Ok(ip) = host_unbracketed.parse::<std::net::IpAddr>() {
+        if is_blocked_webhook_ip(&ip, allow_loopback) {
+            return Err(anyhow!(
+                "Webhook URL target IP '{}' is blocked (loopback/link-local/metadata)",
+                ip
+            ));
+        }
+    }
+
+    Ok(parsed)
+}
+
+fn validate_webhook_url(url_str: &str) -> Result<reqwest::Url> {
+    validate_webhook_url_with_policy(url_str, allow_private_webhooks())
 }
 
 /// Webhook push destination.
@@ -49,11 +175,10 @@ impl WebhookTarget {
     pub fn from_config(config: &serde_json::Value) -> Result<Self> {
         let wc: WebhookConfig = serde_json::from_value(config.clone())
             .map_err(|e| anyhow!("Invalid webhook config: {}", e))?;
-        if wc.url.is_empty() {
-            return Err(anyhow!("Webhook URL is required"));
-        }
+        validate_webhook_url(&wc.url)?;
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(wc.timeout_secs))
+            .redirect(reqwest::redirect::Policy::none())
             .build()?;
         Ok(Self { client, config: wc })
     }
@@ -62,6 +187,31 @@ impl WebhookTarget {
 #[async_trait]
 impl PushDestination for WebhookTarget {
     async fn send(&self, payload: &str) -> std::result::Result<(), super::DeliveryError> {
+        let allow_loopback = allow_private_webhooks();
+        let parsed = validate_webhook_url_with_policy(&self.config.url, allow_loopback)
+            .map_err(super::DeliveryError::Other)?;
+
+        // Resolve DNS before sending so hostnames pointing to blocked loopback
+        // or cloud metadata IPs cannot bypass the literal-IP check.
+        if let Some(host) = parsed.host_str() {
+            let host_unbracketed = host.trim_start_matches('[').trim_end_matches(']');
+            if host_unbracketed.parse::<std::net::IpAddr>().is_err() {
+                if let Some(port) = parsed.port_or_known_default() {
+                    if let Ok(addrs) = tokio::net::lookup_host((host_unbracketed, port)).await {
+                        for addr in addrs {
+                            if is_blocked_webhook_ip(&addr.ip(), allow_loopback) {
+                                return Err(super::DeliveryError::Other(anyhow!(
+                                    "Webhook host '{}' resolved to blocked IP {}",
+                                    host,
+                                    addr.ip()
+                                )));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         let mut builder = match self.config.method.to_uppercase().as_str() {
             "PUT" => self.client.put(&self.config.url),
             _ => self.client.post(&self.config.url),
@@ -120,9 +270,7 @@ impl PushDestination for WebhookTarget {
     fn validate_config(&self, config: &serde_json::Value) -> Result<()> {
         let wc: WebhookConfig = serde_json::from_value(config.clone())
             .map_err(|e| anyhow!("Invalid webhook config: {}", e))?;
-        if wc.url.is_empty() {
-            return Err(anyhow!("Webhook URL is required"));
-        }
+        validate_webhook_url(&wc.url)?;
         Ok(())
     }
 }
@@ -176,5 +324,48 @@ mod tests {
             parse_retry_after(&h),
             Some(std::time::Duration::from_secs(600))
         );
+    }
+
+    #[test]
+    fn webhook_url_validation_blocks_bad_schemes_metadata_and_loopback() {
+        // Non-http(s) schemes rejected
+        assert!(validate_webhook_url_with_policy("file:///etc/passwd", false).is_err());
+        assert!(validate_webhook_url_with_policy("ftp://example.com/x", false).is_err());
+
+        // Cloud metadata & link-local ALWAYS rejected (even when loopback allowed)
+        for meta in [
+            "http://169.254.169.254/latest/meta-data/",
+            "http://[fe80::1]/",
+            "http://[::ffff:169.254.169.254]/",
+            "http://0.0.0.0:8080/",
+        ] {
+            assert!(
+                validate_webhook_url_with_policy(meta, false).is_err(),
+                "must block {meta}"
+            );
+            assert!(
+                validate_webhook_url_with_policy(meta, true).is_err(),
+                "must always block metadata/link-local {meta}"
+            );
+        }
+
+        // Loopback blocked by default (allow_loopback = false), allowed when opted in
+        for lo in [
+            "http://127.0.0.1:8080/hook",
+            "http://localhost:8080/hook",
+            "http://[::1]:8080/hook",
+        ] {
+            assert!(
+                validate_webhook_url_with_policy(lo, false).is_err(),
+                "loopback must be blocked by default: {lo}"
+            );
+            assert!(
+                validate_webhook_url_with_policy(lo, true).is_ok(),
+                "loopback should be allowed when opted in: {lo}"
+            );
+        }
+
+        // Public webhook accepted
+        assert!(validate_webhook_url_with_policy("https://hooks.example.com/ingest", false).is_ok());
     }
 }

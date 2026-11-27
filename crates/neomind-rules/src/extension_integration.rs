@@ -8,6 +8,9 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Default timeout applied to extension commands when none is explicitly set.
+pub const DEFAULT_EXTENSION_TIMEOUT_MS: u64 = 30_000;
+
 /// Extension command action for rules.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtensionCommandAction {
@@ -79,23 +82,18 @@ impl ExtensionActionExecutor {
 
         let start = std::time::Instant::now();
 
-        let result = if let Some(timeout_ms) = action.timeout_ms {
-            let timeout = tokio::time::Duration::from_millis(timeout_ms);
-            tokio::time::timeout(
-                timeout,
-                self.extension_registry.execute_command(
-                    &action.extension_id,
-                    &action.command,
-                    &action.args,
-                ),
-            )
-            .await
-            .map_err(|_| format!("Command timed out after {}ms", timeout_ms))?
-        } else {
-            self.extension_registry
-                .execute_command(&action.extension_id, &action.command, &action.args)
-                .await
-        }?;
+        let timeout_ms = action.timeout_ms.unwrap_or(DEFAULT_EXTENSION_TIMEOUT_MS);
+        let timeout = tokio::time::Duration::from_millis(timeout_ms);
+        let result = tokio::time::timeout(
+            timeout,
+            self.extension_registry.execute_command(
+                &action.extension_id,
+                &action.command,
+                &action.args,
+            ),
+        )
+        .await
+        .map_err(|_| format!("Command timed out after {}ms", timeout_ms))??;
 
         let duration = start.elapsed();
 

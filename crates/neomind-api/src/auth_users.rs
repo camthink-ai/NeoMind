@@ -1049,7 +1049,7 @@ impl AuthUserState {
             ));
         }
 
-        // Check if user exists
+        // Fast-path check before expensive bcrypt hashing
         let users = self.users.read().await;
         if users.contains_key(username) {
             drop(users);
@@ -1057,7 +1057,7 @@ impl AuthUserState {
         }
         drop(users);
 
-        // Create user
+        // Create user (bcrypt hashing runs outside the write lock)
         let user = User {
             id: uuid::Uuid::new_v4().to_string(),
             username: username.to_string(),
@@ -1067,6 +1067,14 @@ impl AuthUserState {
             last_login: None,
             active: true,
         };
+
+        // Acquire write lock BEFORE persisting and re-check uniqueness to close
+        // the TOCTOU window where two concurrent registrations with the same
+        // username both pass the read check above.
+        let mut users = self.users.write().await;
+        if users.contains_key(username) {
+            return Err(AuthError::UserExists);
+        }
 
         // Save to database synchronously (ensures persistence before returning)
         if let Err(e) = Self::save_user_to_db(self.db_path, &user) {
@@ -1078,7 +1086,6 @@ impl AuthUserState {
         }
 
         // Add to in-memory cache after successful DB save
-        let mut users = self.users.write().await;
         users.insert(username.to_string(), user.clone());
         drop(users);
 
@@ -2057,5 +2064,23 @@ mod revocation_persistence_tests {
             &missing.to_string_lossy(),
             "ghost"
         ));
+    }
+
+    #[tokio::test]
+    async fn concurrent_register_same_username_only_succeeds_once() {
+        let auth = Arc::new(AuthUserState::new_with_memory_store());
+        let a1 = auth.clone();
+        let a2 = auth.clone();
+        let (r1, r2) = tokio::join!(
+            tokio::spawn(async move { a1.register("race_user", "Password123", UserRole::User).await }),
+            tokio::spawn(async move { a2.register("race_user", "Password456", UserRole::Admin).await }),
+        );
+        let r1 = r1.unwrap();
+        let r2 = r2.unwrap();
+        let ok_count = usize::from(r1.is_ok()) + usize::from(r2.is_ok());
+        let exists_count = usize::from(matches!(r1, Err(AuthError::UserExists)))
+            + usize::from(matches!(r2, Err(AuthError::UserExists)));
+        assert_eq!(ok_count, 1, "exactly one registration must succeed");
+        assert_eq!(exists_count, 1, "the losing registration must return UserExists");
     }
 }

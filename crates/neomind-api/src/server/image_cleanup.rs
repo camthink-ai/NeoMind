@@ -63,6 +63,15 @@ pub async fn collect_referenced_image_files(
                     if msg.content.contains(MARKER) {
                         extract_image_refs(&msg.content, &mut referenced);
                     }
+                    if let Some(ref attachments) = msg.attachments {
+                        for att in attachments {
+                            if let Some(url) = att.get("imageUrl").and_then(|v| v.as_str()) {
+                                if url.contains(MARKER) {
+                                    extract_image_refs(url, &mut referenced);
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

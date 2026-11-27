@@ -586,6 +586,7 @@ pub(super) fn drive_react_stream(
             let mut seen_tool_sigs: std::collections::HashSet<String> =
                 std::collections::HashSet::new();
             let mut loop_progress = ChatLoopProgress::default();
+            let mut thrash_guard = ThrashGuard::default();
             let mut skill_exploration = super::guard::SkillExplorationBudget::default();
             let mut guide_recovery_pending = false;
             let mut guide_recovery_used = false;
@@ -1796,6 +1797,7 @@ pub(super) fn drive_react_stream(
                     let call_site_turn_for_tools = call_site_turn;
                     let turn_loaded_skills_for_tools = turn_loaded_skills.clone();
                     let recent_user_messages_for_tools = recent_user_messages.clone();
+                    let interrupt_signal_for_tools = safeguards.interrupt_signal.clone();
                     let tool_futures = futures::stream::iter(tool_inputs.into_iter().map(|(i, name, arguments, cached_read)| {
                         let tools_clone = tools.clone();
                         let cache_clone = cache.clone();
@@ -1806,6 +1808,7 @@ pub(super) fn drive_react_stream(
                         let call_site_turn = call_site_turn_for_tools;
                         let turn_loaded_skills = turn_loaded_skills_for_tools.clone();
                         let recent_user_messages = recent_user_messages_for_tools.clone();
+                        let mut tool_interrupt_rx = interrupt_signal_for_tools.clone();
 
                         async move {
                             // `$cached:` read-back: served from the cache in
@@ -2082,7 +2085,7 @@ pub(super) fn drive_react_stream(
                             super::super::task_continuity::strip_new_operation_flag(
                                 &mut exec_args,
                             );
-                            let result = crate::toolkit::skill_tool::with_turn_loaded_skills(
+                            let exec_fut = crate::toolkit::skill_tool::with_turn_loaded_skills(
                                 turn_loaded_skills,
                                 execute_tool_with_retry(
                                     &tools_clone,
@@ -2090,8 +2093,29 @@ pub(super) fn drive_react_stream(
                                     &name,
                                     exec_args,
                                 ),
-                            )
-                            .await;
+                            );
+                            let result = if let Some(ref mut rx) = tool_interrupt_rx {
+                                tokio::select! {
+                                    biased;
+                                    _ = async {
+                                        if *rx.borrow() {
+                                            return;
+                                        }
+                                        while rx.changed().await.is_ok() {
+                                            if *rx.borrow() {
+                                                return;
+                                            }
+                                        }
+                                        std::future::pending::<()>().await;
+                                    } => {
+                                        tracing::info!(tool = %name, "Tool execution aborted due to interrupt signal");
+                                        Err(crate::toolkit::error::ToolError::Execution("Interrupted".to_string()))
+                                    }
+                                    res = exec_fut => res,
+                                }
+                            } else {
+                                exec_fut.await
+                            };
 
                             // Strike bookkeeping on failure-circuit fingerprint:
                             // real failures accumulate; a success clears strikes.
@@ -2167,34 +2191,46 @@ pub(super) fn drive_react_stream(
                     // tokio interval's first tick completes immediately — consume it
                     // so the first heartbeat lands one interval in, not instantly.
                     tool_heartbeat.tick().await;
+                    let mut batch_interrupt_rx = safeguards.interrupt_signal.clone();
                     let mut tool_results_executed: Vec<_> = loop {
                         tokio::select! {
-                            _ = tool_heartbeat.tick() => {
-                                let interrupted = safeguards
-                                    .interrupt_signal
-                                    .as_ref()
-                                    .map(|rx| *rx.borrow())
-                                    .unwrap_or(false);
-                                if interrupted {
-                                    tracing::info!("Stream interrupted during tool batch");
-                                    {
-                                        let mut state = internal_state.write().await;
-                                        state.task_state.abandon_owned_operations_on_interrupt(
-                                            &stream_owner,
-                                            "user interrupt during tool batch",
-                                        );
+                            biased;
+                            _ = async {
+                                match batch_interrupt_rx.as_mut() {
+                                    Some(rx) => {
+                                        if *rx.borrow() {
+                                            return;
+                                        }
+                                        while rx.changed().await.is_ok() {
+                                            if *rx.borrow() {
+                                                return;
+                                            }
+                                        }
+                                        std::future::pending::<()>().await;
                                     }
-                                    yield AgentEvent::content("\n\n[Interrupted]");
-                                    let end_ev = {
-                                        let mut state = internal_state.write().await;
-                                        let reason = crate::agent::task_continuity::StreamEndReason::Interrupted;
-                                        let goal = state.task_state.system_goal_status();
-                                        state.stamp_final_goal_on_last_assistant(goal, reason);
-                                        AgentEvent::final_end(&state.task_state, reason, None)
-                                    };
-                                    yield end_ev;
-                                    return;
+                                    None => std::future::pending::<()>().await,
                                 }
+                            } => {
+                                tracing::info!("Stream interrupted during tool batch");
+                                {
+                                    let mut state = internal_state.write().await;
+                                    state.task_state.abandon_owned_operations_on_interrupt(
+                                        &stream_owner,
+                                        "user interrupt during tool batch",
+                                    );
+                                }
+                                yield AgentEvent::content("\n\n[Interrupted]");
+                                let end_ev = {
+                                    let mut state = internal_state.write().await;
+                                    let reason = crate::agent::task_continuity::StreamEndReason::Interrupted;
+                                    let goal = state.task_state.system_goal_status();
+                                    state.stamp_final_goal_on_last_assistant(goal, reason);
+                                    AgentEvent::final_end(&state.task_state, reason, None)
+                                };
+                                yield end_ev;
+                                return;
+                            }
+                            _ = tool_heartbeat.tick() => {
                                 yield AgentEvent::heartbeat();
                             }
                             done = &mut collect_fut => break done,
@@ -2234,6 +2270,7 @@ pub(super) fn drive_react_stream(
                     // decoration; those annotations are not new information.
                     let mut round_progress_results: Vec<(String, String)> = Vec::new();
                     let mut round_has_errors = false;
+                    let mut round_had_verified_success = false;
                     let mut round_other_progress = false;
                     let mut round_had_skill = false;
                     let mut round_had_help = false;
@@ -2419,6 +2456,20 @@ pub(super) fn drive_react_stream(
                         );
                         round_had_skill |= real_name == "skill";
                         if succeeded {
+                            if !matches!(real_name.as_str(), "file_write" | "file_edit") {
+                                round_had_verified_success = true;
+                            }
+                            if real_name == "image_edit" {
+                                if let Ok(output) = &execution.result {
+                                    if let Some(url) = output.data.get("url").and_then(|v| v.as_str()) {
+                                        internal_state
+                                            .write()
+                                            .await
+                                            .large_data_cache
+                                            .store_latest_image_ref(url);
+                                    }
+                                }
+                            }
                             if real_name == "skill" {
                                 round_had_skill = true;
                                 if let Ok(output) = &execution.result {
@@ -2844,8 +2895,29 @@ pub(super) fn drive_react_stream(
                             "summarizing", 0,
                         );
                     }
+                    let thrash_loop_terminated = behavioral_guards
+                        && !guards_disabled
+                        && thrash_guard.observe_round(
+                            round_has_errors,
+                            round_had_verified_success,
+                        );
+                    if thrash_loop_terminated {
+                        tracing::warn!(
+                            rounds = tool_iteration_count + 1,
+                            consecutive_failed_rounds = thrash_guard.consecutive_failed_rounds,
+                            unverified_failure_streak = thrash_guard.unverified_failure_streak,
+                            "Repeated tool failures without verified progress — forcing turn end"
+                        );
+                        yield AgentEvent::progress(
+                            "Repeated tool failures without verified progress — generating final response..."
+                                .to_string(),
+                            "summarizing",
+                            0,
+                        );
+                    }
                     let force_summary = wall_clock_exhausted || chat_repeating
                         || read_only_loop_terminated || skill_exploration_exhausted
+                        || thrash_loop_terminated
                         || tool_iteration_count >= MAX_TOOL_ITERATIONS - 1;
                     let should_continue = !force_summary;
                     // Pre-exhaustion action-exit hint: if the user asked for a
@@ -3979,6 +4051,43 @@ impl ChatLoopProgress {
     }
 }
 
+/// Generic consecutive-failure / script-thrashing circuit breaker.
+///
+/// Prevents a small model from grinding for 30 rounds rewriting broken scripts
+/// (`file_write` ok → `shell` fail → `file_write` ok → `shell` fail ...) when
+/// it lacks a needed capability or keeps hitting permission/environment errors.
+/// Resets cleanly whenever ANY non-`file_write`/`file_edit` tool succeeds with
+/// zero errors, so legitimate multi-step workflows are never interrupted.
+const THRASH_CONSECUTIVE_FAILED_LIMIT: usize = 5;
+const THRASH_UNVERIFIED_FAILURE_LIMIT: usize = 6;
+
+#[derive(Default, Debug)]
+struct ThrashGuard {
+    consecutive_failed_rounds: usize,
+    unverified_failure_streak: usize,
+}
+
+impl ThrashGuard {
+    fn observe_round(&mut self, round_has_errors: bool, round_had_verified_success: bool) -> bool {
+        if round_had_verified_success && !round_has_errors {
+            self.consecutive_failed_rounds = 0;
+            self.unverified_failure_streak = 0;
+            return false;
+        }
+        if round_has_errors && !round_had_verified_success {
+            self.consecutive_failed_rounds += 1;
+            self.unverified_failure_streak += 1;
+        } else if !round_has_errors {
+            // Pure file_write/file_edit round without execution verification:
+            // break the consecutive-error streak, but retain the cumulative
+            // unverified failure streak until a real tool actually succeeds.
+            self.consecutive_failed_rounds = 0;
+        }
+        self.consecutive_failed_rounds >= THRASH_CONSECUTIVE_FAILED_LIMIT
+            || self.unverified_failure_streak >= THRASH_UNVERIFIED_FAILURE_LIMIT
+    }
+}
+
 /// Loop-break decision (pure, tested): after `LOOP_BREAK_AFTER_FAILURES`
 /// failures of the EXACT same tool+arguments within one turn, refuse the
 /// next identical call with the last error and a redirect note. Returns the
@@ -4001,6 +4110,28 @@ pub(crate) fn loop_break_message(failures: u32, last_err: &str) -> Option<String
 #[cfg(test)]
 mod history_budget_tests {
     use super::*;
+
+    #[test]
+    fn thrash_guard_breaks_script_rewrite_failure_cycles_and_resets_on_success() {
+        let mut g = ThrashGuard::default();
+        // Alternating file_write (no error, unverified) and shell (error) must trip at 6 failures.
+        for _ in 0..5 {
+            assert!(!g.observe_round(true, false));
+            assert!(!g.observe_round(false, false));
+        }
+        assert!(g.observe_round(true, false));
+
+        // Any verified success resets the guard completely.
+        assert!(!g.observe_round(false, true));
+        assert_eq!(g.consecutive_failed_rounds, 0);
+        assert_eq!(g.unverified_failure_streak, 0);
+
+        // 5 consecutive failed rounds trip immediately.
+        for _ in 0..4 {
+            assert!(!g.observe_round(true, false));
+        }
+        assert!(g.observe_round(true, false));
+    }
 
     #[test]
     fn repeated_poll_state_flip_counts_toward_loop_within_ring() {

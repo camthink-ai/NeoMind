@@ -53,6 +53,31 @@ impl Default for BatchConfig {
 /// Prevents connection drops due to idle timeouts.
 const HEARTBEAT_INTERVAL_SECS: u64 = 30;
 const HEARTBEAT_TIMEOUT_SECS: u64 = 60;
+/// Maximum time allowed for a WebSocket client to complete the initial auth handshake.
+const WS_AUTH_TIMEOUT_SECS: u64 = 10;
+/// Maximum time allowed for a single WebSocket send/close before treating the peer as dead.
+const WS_SEND_TIMEOUT_SECS: u64 = 5;
+
+async fn ws_send_with_timeout(
+    socket: &mut axum::extract::ws::WebSocket,
+    msg: axum::extract::ws::Message,
+) -> bool {
+    match tokio::time::timeout(Duration::from_secs(WS_SEND_TIMEOUT_SECS), socket.send(msg)).await {
+        Ok(Ok(())) => true,
+        Ok(Err(_)) => false,
+        Err(_) => {
+            tracing::warn!(
+                timeout_secs = WS_SEND_TIMEOUT_SECS,
+                "Events WebSocket send timed out, closing connection"
+            );
+            false
+        }
+    }
+}
+
+async fn ws_close_with_timeout(socket: axum::extract::ws::WebSocket) {
+    let _ = tokio::time::timeout(Duration::from_secs(WS_SEND_TIMEOUT_SECS), socket.close()).await;
+}
 
 /// Wrapper for either filtered or unfiltered event receiver.
 enum EventBusReceiverWrapper {
@@ -568,13 +593,24 @@ pub async fn event_stream_handler(
 
     // Create a receiver for events
     let rx = create_filtered_receiver(event_bus, &params.category);
+    let shutdown_token = state.shutdown_token.clone();
 
     // Create the SSE stream
     let stream = async_stream::stream! {
         let mut rx = rx;
         let mut _counter: u64 = 0;  // Event counter (reserved for future metrics)
 
-        while let Some((event, metadata)) = rx.recv().await {
+        loop {
+            let next = tokio::select! {
+                _ = shutdown_token.cancelled() => {
+                    tracing::debug!("SSE event stream closing due to server shutdown");
+                    break;
+                }
+                ev = rx.recv() => ev,
+            };
+            let Some((event, metadata)) = next else {
+                break;
+            };
             // Apply event type filter if specified
             if !params.event_type.is_empty() {
                 let event_type = event.type_name().to_string();
@@ -668,13 +704,15 @@ pub async fn event_websocket_handler(
         None => {
             return ws.on_upgrade(|mut socket| async move {
                 use axum::extract::ws::Message;
-                let _ = socket
-                    .send(Message::Text(
+                let _ = ws_send_with_timeout(
+                    &mut socket,
+                    Message::Text(
                         serde_json::json!({"type": "Error", "message": "Event bus not available"})
                             .to_string(),
-                    ))
-                    .await;
-                let _ = socket.close().await;
+                    ),
+                )
+                .await;
+                ws_close_with_timeout(socket).await;
             });
         }
     };
@@ -682,9 +720,9 @@ pub async fn event_websocket_handler(
     ws.on_upgrade(move |mut socket| async move {
         use axum::extract::ws::Message;
 
-        let mut rx = create_filtered_receiver(&event_bus, &params.category);
         let auth_user_state = state.auth.user_state.clone();
         let auth_api_key_state = state.auth.api_key_state.clone();
+        let shutdown_token = state.shutdown_token.clone();
 
         // Check if API key was provided in query params — skip Auth message flow
         let pre_authenticated = params
@@ -693,78 +731,141 @@ pub async fn event_websocket_handler(
             .is_some_and(|key| auth_api_key_state.validate_key(key));
 
         let authenticated = if pre_authenticated {
-            let _ = socket.send(Message::Text(
-                serde_json::json!({"type": "Authenticated", "message": "Authentication successful"}).to_string()
-            )).await;
+            if !ws_send_with_timeout(
+                &mut socket,
+                Message::Text(
+                    serde_json::json!({"type": "Authenticated", "message": "Authentication successful"}).to_string(),
+                ),
+            )
+            .await
+            {
+                ws_close_with_timeout(socket).await;
+                return;
+            }
             true
         } else {
-            // Wait for Auth message (JWT token). Track success explicitly so that
-            // a natural loop exit (client half-closed / only sent Binary frames)
-            // cannot fall through into the event-sending loop unauthenticated.
-            let mut success = false;
-            while let Some(msg) = socket.recv().await {
-                match msg {
-                    Ok(Message::Text(text)) => {
-                        if let Ok(data) = serde_json::from_str::<serde_json::Value>(&text) {
-                            if data["type"] == "Auth" {
-                                // Try JWT token
-                                if let Some(token) = data["token"].as_str() {
-                                    match auth_user_state.validate_token(token) {
-                                        Ok(_) => {
-                                            tracing::info!("WebSocket event stream authenticated");
-                                            let _ = socket.send(Message::Text(
-                                                serde_json::json!({"type": "Authenticated", "message": "Authentication successful"}).to_string()
-                                            )).await;
-                                            success = true;
-                                            break;
-                                        }
-                                        Err(e) => {
-                                            tracing::warn!(error = %e, "JWT validation failed, rejecting WebSocket connection");
-                                            let _ = socket.send(Message::Text(
-                                                serde_json::json!({"type": "Error", "message": "Invalid or expired token"}).to_string()
-                                            )).await;
-                                            let _ = socket.close().await;
-                                            return;
+            // Wait for Auth message (JWT token or API key) within a bounded
+            // handshake deadline so unauthenticated connections cannot linger.
+            let auth_deadline = Duration::from_secs(WS_AUTH_TIMEOUT_SECS);
+            let auth_result = tokio::time::timeout(auth_deadline, async {
+                loop {
+                    let msg = tokio::select! {
+                        _ = shutdown_token.cancelled() => {
+                            return Ok(false);
+                        }
+                        m = socket.recv() => m,
+                    };
+                    let Some(msg) = msg else {
+                        return Ok(false);
+                    };
+                    match msg {
+                        Ok(Message::Text(text)) => {
+                            if let Ok(data) = serde_json::from_str::<serde_json::Value>(&text) {
+                                if data["type"] == "Auth" {
+                                    // Try JWT token
+                                    if let Some(token) = data["token"].as_str() {
+                                        match auth_user_state.validate_token(token) {
+                                            Ok(_) => {
+                                                tracing::info!("WebSocket event stream authenticated");
+                                                if !ws_send_with_timeout(
+                                                    &mut socket,
+                                                    Message::Text(
+                                                        serde_json::json!({"type": "Authenticated", "message": "Authentication successful"}).to_string(),
+                                                    ),
+                                                )
+                                                .await
+                                                {
+                                                    return Ok(false);
+                                                }
+                                                return Ok(true);
+                                            }
+                                            Err(e) => {
+                                                tracing::warn!(error = %e, "JWT validation failed, rejecting WebSocket connection");
+                                                let _ = ws_send_with_timeout(
+                                                    &mut socket,
+                                                    Message::Text(
+                                                        serde_json::json!({"type": "Error", "message": "Invalid or expired token"}).to_string(),
+                                                    ),
+                                                )
+                                                .await;
+                                                return Err(());
+                                            }
                                         }
                                     }
-                                }
-                                // Try API key via Auth message
-                                if let Some(api_key) = data["api_key"].as_str() {
-                                    if auth_api_key_state.validate_key(api_key) {
-                                        tracing::info!("WebSocket event stream authenticated via API key");
-                                        let _ = socket.send(Message::Text(
-                                            serde_json::json!({"type": "Authenticated", "message": "Authentication successful"}).to_string()
-                                        )).await;
-                                        success = true;
-                                        break;
-                                    } else {
-                                        tracing::warn!("Invalid API key, rejecting WebSocket connection");
-                                        let _ = socket.send(Message::Text(
-                                            serde_json::json!({"type": "Error", "message": "Invalid API key"}).to_string()
-                                        )).await;
-                                        let _ = socket.close().await;
-                                        return;
+                                    // Try API key via Auth message
+                                    if let Some(api_key) = data["api_key"].as_str() {
+                                        if auth_api_key_state.validate_key(api_key) {
+                                            tracing::info!("WebSocket event stream authenticated via API key");
+                                            if !ws_send_with_timeout(
+                                                &mut socket,
+                                                Message::Text(
+                                                    serde_json::json!({"type": "Authenticated", "message": "Authentication successful"}).to_string(),
+                                                ),
+                                            )
+                                            .await
+                                            {
+                                                return Ok(false);
+                                            }
+                                            return Ok(true);
+                                        } else {
+                                            tracing::warn!("Invalid API key, rejecting WebSocket connection");
+                                            let _ = ws_send_with_timeout(
+                                                &mut socket,
+                                                Message::Text(
+                                                    serde_json::json!({"type": "Error", "message": "Invalid API key"}).to_string(),
+                                                ),
+                                            )
+                                            .await;
+                                            return Err(());
+                                        }
                                     }
                                 }
                             }
-                        }
 
-                        // If not authenticated after first message, close connection
-                        tracing::warn!("No valid auth message received, closing WebSocket connection");
-                        let _ = socket.send(Message::Text(
-                            serde_json::json!({"type": "Error", "message": "Authentication required"})
+                            // If not authenticated after first message, close connection
+                            tracing::warn!("No valid auth message received, closing WebSocket connection");
+                            let _ = ws_send_with_timeout(
+                                &mut socket,
+                                Message::Text(
+                                    serde_json::json!({"type": "Error", "message": "Authentication required"})
+                                        .to_string(),
+                                ),
+                            )
+                            .await;
+                            return Err(());
+                        }
+                        Ok(Message::Close(_)) | Err(_) => {
+                            return Err(());
+                        }
+                        _ => {}
+                    }
+                }
+            })
+            .await;
+
+            match auth_result {
+                Ok(Ok(success)) => success,
+                Ok(Err(())) => {
+                    ws_close_with_timeout(socket).await;
+                    return;
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        timeout_secs = WS_AUTH_TIMEOUT_SECS,
+                        "WebSocket event stream authentication timed out, closing connection"
+                    );
+                    let _ = ws_send_with_timeout(
+                        &mut socket,
+                        Message::Text(
+                            serde_json::json!({"type": "Error", "message": "Authentication timeout"})
                                 .to_string(),
-                        )).await;
-                        let _ = socket.close().await;
-                        return;
-                    }
-                    Ok(Message::Close(_)) | Err(_) => {
-                        return;
-                    }
-                    _ => {}
+                        ),
+                    )
+                    .await;
+                    ws_close_with_timeout(socket).await;
+                    return;
                 }
             }
-            success
         };
 
         // Guard: never enter the event-sending loop without successful auth.
@@ -772,9 +873,13 @@ pub async fn event_websocket_handler(
         // None because the client half-closed or only sent non-Text frames).
         if !authenticated {
             tracing::warn!("WebSocket event stream closed before authentication completed");
-            let _ = socket.close().await;
+            ws_close_with_timeout(socket).await;
             return;
         }
+
+        // Subscribe to EventBus ONLY AFTER authentication succeeds so
+        // unauthenticated clients cannot allocate broadcast subscriptions.
+        let mut rx = create_filtered_receiver(&event_bus, &params.category);
 
         // Send events to the authenticated WebSocket client
         // Performance optimization: Batch events to reduce network overhead
@@ -793,6 +898,11 @@ pub async fn event_websocket_handler(
 
         loop {
             tokio::select! {
+                _ = shutdown_token.cancelled() => {
+                    tracing::debug!("Events WebSocket closing due to server shutdown");
+                    break;
+                }
+
                 // Handle incoming messages (for pong responses)
                 msg_result = socket.recv() => {
                     match msg_result {
@@ -821,9 +931,13 @@ pub async fn event_websocket_handler(
                             "Events WebSocket heartbeat timeout - no pong received for {:?}",
                             last_pong.elapsed()
                         );
-                        let _ = socket.send(Message::Text(
-                            serde_json::json!({"type": "Error", "message": "Heartbeat timeout"}).to_string()
-                        )).await;
+                        let _ = ws_send_with_timeout(
+                            &mut socket,
+                            Message::Text(
+                                serde_json::json!({"type": "Error", "message": "Heartbeat timeout"}).to_string(),
+                            ),
+                        )
+                        .await;
                         break;
                     }
 
@@ -832,7 +946,7 @@ pub async fn event_websocket_handler(
                         "type": "ping",
                         "timestamp": chrono::Utc::now().timestamp(),
                     });
-                    if socket.send(Message::Text(ping.to_string())).await.is_err() {
+                    if !ws_send_with_timeout(&mut socket, Message::Text(ping.to_string())).await {
                         tracing::debug!("Failed to send ping, client disconnected");
                         break;
                     }
@@ -864,8 +978,8 @@ pub async fn event_websocket_handler(
                                 // Flush any buffered events first
                                 if !event_buffer.is_empty() {
                                     let batch_json = assemble_batch(&event_buffer);
-                                    { let json = batch_json.clone();
-                                        let _ = socket.send(Message::Text(json)).await;
+                                    if !ws_send_with_timeout(&mut socket, Message::Text(batch_json)).await {
+                                        break;
                                     }
                                     event_buffer.clear();
                                 }
@@ -873,7 +987,7 @@ pub async fn event_websocket_handler(
                                 // Send immediate event (already serialized)
                                 let msg = Message::Text(payload.to_string());
 
-                                if socket.send(msg).await.is_err() {
+                                if !ws_send_with_timeout(&mut socket, msg).await {
                                     break;
                                 }
                             } else {
@@ -883,10 +997,8 @@ pub async fn event_websocket_handler(
                                 // Check if buffer is full
                                 if event_buffer.len() >= config.batch_size {
                                     let batch_json = assemble_batch(&event_buffer);
-                                    { let json = batch_json.clone();
-                                        if socket.send(Message::Text(json)).await.is_err() {
-                                            break;
-                                        }
+                                    if !ws_send_with_timeout(&mut socket, Message::Text(batch_json)).await {
+                                        break;
                                     }
                                     event_buffer.clear();
                                     last_flush = tokio::time::Instant::now();
@@ -897,9 +1009,7 @@ pub async fn event_websocket_handler(
                             // Channel closed, flush remaining events and exit
                             if !event_buffer.is_empty() {
                                 let batch_json = assemble_batch(&event_buffer);
-                                { let json = batch_json.clone();
-                                    let _ = socket.send(Message::Text(json)).await;
-                                }
+                                let _ = ws_send_with_timeout(&mut socket, Message::Text(batch_json)).await;
                             }
                             break;
                         }
@@ -909,10 +1019,8 @@ pub async fn event_websocket_handler(
                 _ = flush_interval.tick() => {
                     if !event_buffer.is_empty() && last_flush.elapsed() >= config.max_delay {
                         let batch_json = assemble_batch(&event_buffer);
-                        { let json = batch_json.clone();
-                            if socket.send(Message::Text(json)).await.is_err() {
-                                break;
-                            }
+                        if !ws_send_with_timeout(&mut socket, Message::Text(batch_json)).await {
+                            break;
                         }
                         event_buffer.clear();
                         last_flush = tokio::time::Instant::now();
@@ -921,7 +1029,7 @@ pub async fn event_websocket_handler(
             }
         }
 
-        let _ = socket.close().await;
+        ws_close_with_timeout(socket).await;
     })
 }
 

@@ -88,9 +88,7 @@ impl TimeSeriesStore {
                 };
                 let mut pairs: std::collections::HashSet<(String, String)> =
                     std::collections::HashSet::new();
-                let start_key = ("", "", i64::MIN);
-                let end_key = ("\u{FF}", "\u{FF}", i64::MAX);
-                for result in table.range(start_key..=end_key)? {
+                for result in table.iter()? {
                     let (key, _) = result?;
                     let (source_id, metric, _) = key.value();
                     pairs.insert((source_id.to_string(), metric.to_string()));

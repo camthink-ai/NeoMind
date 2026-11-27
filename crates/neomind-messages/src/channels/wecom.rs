@@ -18,12 +18,23 @@ fn normalize_webhook_key(raw: &str) -> Option<String> {
 
 /// WeCom channel for sending messages via robot webhook.
 #[cfg(feature = "wecom")]
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct WeComChannel {
     name: String,
     enabled: bool,
     key: String,
     client: reqwest::Client,
+}
+
+#[cfg(feature = "wecom")]
+impl std::fmt::Debug for WeComChannel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WeComChannel")
+            .field("name", &self.name)
+            .field("enabled", &self.enabled)
+            .field("key", &"[REDACTED]")
+            .finish()
+    }
 }
 
 #[cfg(feature = "wecom")]

@@ -3,6 +3,116 @@ use crate::ApiClient;
 use anyhow::Result;
 use serde_json::json;
 
+/// Percent-encode a single path segment (dashboard IDs may be non-ASCII names).
+fn encode_path_segment(seg: &str) -> String {
+    let mut out = String::with_capacity(seg.len());
+    for b in seg.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            _ => {
+                out.push_str(&format!("%{:02X}", b));
+            }
+        }
+    }
+    out
+}
+
+/// Widget types that normally expect a live `data_source` binding.
+fn expects_data_source(component_type: &str) -> bool {
+    matches!(
+        component_type,
+        "value-card"
+            | "metric-card"
+            | "counter"
+            | "led-indicator"
+            | "sparkline"
+            | "progress-bar"
+            | "line-chart"
+            | "area-chart"
+            | "bar-chart"
+            | "pie-chart"
+            | "toggle-switch"
+            | "image-display"
+            | "image-history"
+    )
+}
+
+/// Collect IDs of newly persisted data-bound widgets that still lack `data_source`.
+fn unbound_component_ids(components: &[serde_json::Value]) -> Vec<String> {
+    components
+        .iter()
+        .filter_map(|c| {
+            let ct = c.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            if !expects_data_source(ct) {
+                return None;
+            }
+            let has_ds = c
+                .get("data_source")
+                .or_else(|| c.get("dataSource"))
+                .is_some_and(|v| !v.is_null() && v.as_object().map(|o| !o.is_empty()).unwrap_or(true));
+            if has_ds {
+                return None;
+            }
+            let id = c.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+            Some(format!("{id} ({ct})"))
+        })
+        .collect()
+}
+
+/// Parse flexible expiration strings (`"24"`, `"24h"`, `"7d"`, `"30m"`, `"never"`, `"0"`)
+/// into `Option<i64>` hours expected by `POST /api/dashboards/:id/share`.
+fn parse_expires_in_hours(raw: &str) -> Result<Option<i64>> {
+    let s = raw.trim().to_ascii_lowercase();
+    if s.is_empty() || s == "never" || s == "none" || s == "0" {
+        return Ok(None);
+    }
+    if let Ok(hours) = s.parse::<i64>() {
+        if hours < 0 {
+            anyhow::bail!("--expires must be positive hours (e.g. 24, 24h, 7d), got '{raw}'");
+        }
+        return Ok(if hours == 0 { None } else { Some(hours) });
+    }
+    if let Some(num) = s.strip_suffix('h') {
+        let h: i64 = num.trim().parse().map_err(|_| {
+            anyhow::anyhow!("invalid --expires '{raw}': use hours like 24, 24h, or days like 7d")
+        })?;
+        if h <= 0 {
+            anyhow::bail!("--expires must be > 0, got '{raw}'");
+        }
+        return Ok(Some(h));
+    }
+    if let Some(num) = s.strip_suffix('d') {
+        let d: i64 = num.trim().parse().map_err(|_| {
+            anyhow::anyhow!("invalid --expires '{raw}': use hours like 24, 24h, or days like 7d")
+        })?;
+        if d <= 0 {
+            anyhow::bail!("--expires must be > 0, got '{raw}'");
+        }
+        return Ok(Some(d.saturating_mul(24)));
+    }
+    if let Some(num) = s.strip_suffix('m') {
+        let m: i64 = num.trim().parse().map_err(|_| {
+            anyhow::anyhow!("invalid --expires '{raw}': use hours like 24, 24h, or days like 7d")
+        })?;
+        if m <= 0 {
+            anyhow::bail!("--expires must be > 0, got '{raw}'");
+        }
+        return Ok(Some(((m + 59) / 60).max(1)));
+    }
+    anyhow::bail!("invalid --expires '{raw}': expected integer hours (e.g. 24), 24h, 7d, or never")
+}
+
+/// Normalize `--components` JSON: wrap a single component object into a 1-element array.
+fn normalize_components_array(val: serde_json::Value) -> serde_json::Value {
+    if val.is_object() {
+        serde_json::Value::Array(vec![val])
+    } else {
+        val
+    }
+}
+
 /// Compact grid-occupancy summary computed from a dashboard's components —
 /// lets the agent place new widgets without a follow-up get or blind guessing.
 /// Returns (occupied_rows_desc, next_free_y). Grid is 12 columns.
@@ -145,7 +255,8 @@ pub async fn list_dashboards(client: &ApiClient) -> Result<CliResponse> {
 
 /// Get dashboard by ID (or name — server resolves both).
 pub async fn get_dashboard(client: &ApiClient, id: &str) -> Result<CliResponse> {
-    let mut data = client.get(&format!("/dashboards/{}", id)).await?;
+    let enc_id = encode_path_segment(id);
+    let mut data = client.get(&format!("/dashboards/{}", enc_id)).await?;
     let comps = response_components(&data);
     let (occupied, next_free_y) = grid_summary(&comps);
     if let Some(obj) = data.as_object_mut() {
@@ -187,12 +298,23 @@ pub async fn create_dashboard(
         body["layout"] = layout_value;
     }
     if let Some(components_value) = components {
-        body["components"] = components_value;
+        body["components"] = normalize_components_array(components_value);
     }
 
     let data = client.post("/dashboards", &body).await?;
+    let comps = response_components(&data);
+    let unbound = unbound_component_ids(&comps);
+    let msg = if unbound.is_empty() {
+        "Dashboard created".to_string()
+    } else {
+        format!(
+            "Dashboard created — WARNING: {} widget(s) have no data_source bound: {}. Bind live metrics with `neomind dashboard update-component <ID> --component-id <CID> --set '{{\"data_source\":{{\"type\":\"telemetry\",\"source\":\"device\",\"id\":\"<device_id>\",\"field\":\"<metric>\",\"sourceId\":\"<device_id>\",\"metricId\":\"<metric>\"}}}}'`",
+            unbound.len(),
+            unbound.join(", ")
+        )
+    };
 
-    Ok(CliResponse::success(data, "Dashboard created"))
+    Ok(CliResponse::success(data, msg))
 }
 
 /// Update dashboard
@@ -215,16 +337,18 @@ pub async fn update_dashboard(
         body["layout"] = layout_value;
     }
     if let Some(components_value) = components {
-        body["components"] = components_value;
+        body["components"] = normalize_components_array(components_value);
     }
 
-    let data = client.put(&format!("/dashboards/{}", id), &body).await?;
+    let enc_id = encode_path_segment(id);
+    let data = client.put(&format!("/dashboards/{}", enc_id), &body).await?;
     Ok(CliResponse::success(data, "Dashboard updated"))
 }
 
 /// Delete dashboard
 pub async fn delete_dashboard(client: &ApiClient, id: &str) -> Result<CliResponse> {
-    client.delete(&format!("/dashboards/{}", id)).await?;
+    let enc_id = encode_path_segment(id);
+    client.delete(&format!("/dashboards/{}", enc_id)).await?;
     Ok(CliResponse::success(
         json!({ "id": id }),
         "Dashboard deleted",
@@ -239,9 +363,11 @@ pub async fn update_component(
     set: serde_json::Value,
 ) -> Result<CliResponse> {
     let body = json!({ "set": set });
+    let enc_id = encode_path_segment(id);
+    let enc_cid = encode_path_segment(component_id);
     let data = client
         .patch(
-            &format!("/dashboards/{}/components/{}", id, component_id),
+            &format!("/dashboards/{}/components/{}", enc_id, enc_cid),
             &body,
         )
         .await?;
@@ -264,10 +390,11 @@ pub async fn add_components(
     components: serde_json::Value,
 ) -> Result<CliResponse> {
     let body = json!({
-        "components": components,
+        "components": normalize_components_array(components),
     });
+    let enc_id = encode_path_segment(id);
     let data = client
-        .post(&format!("/dashboards/{}/components", id), &body)
+        .post(&format!("/dashboards/{}/components", enc_id), &body)
         .await?;
     let comps = response_components(&data);
     let ids: Vec<String> = comps
@@ -275,15 +402,21 @@ pub async fn add_components(
         .filter_map(|c| c.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()))
         .collect();
     let (_occupied, next_free_y) = grid_summary(&comps);
-    Ok(CliResponse::success(
-        data,
-        format!(
-            "Components added (total: {}): {} — types verified, next free row: y={} (no re-fetch needed)",
-            comps.len(),
-            if ids.is_empty() { "?".to_string() } else { ids.join(", ") },
-            next_free_y
-        ),
-    ))
+    let unbound = unbound_component_ids(&comps);
+    let mut msg = format!(
+        "Components added (total: {}): {} — types verified, next free row: y={} (no re-fetch needed)",
+        comps.len(),
+        if ids.is_empty() { "?".to_string() } else { ids.join(", ") },
+        next_free_y
+    );
+    if !unbound.is_empty() {
+        msg.push_str(&format!(
+            " | WARNING: {} widget(s) have no data_source bound: {} — bind with `update-component`",
+            unbound.len(),
+            unbound.join(", ")
+        ));
+    }
+    Ok(CliResponse::success(data, msg))
 }
 
 /// Remove components from a dashboard by ID
@@ -295,8 +428,9 @@ pub async fn remove_components(
     let body = json!({
         "ids": ids,
     });
+    let enc_id = encode_path_segment(id);
     let data = client
-        .delete_with_body(&format!("/dashboards/{}/components", id), &body)
+        .delete_with_body(&format!("/dashboards/{}/components", enc_id), &body)
         .await?;
     let inner = if data.get("removed").is_some() || data.get("remaining").is_some() {
         &data
@@ -322,11 +456,14 @@ pub async fn share_dashboard(
         "permissions": {"allow_interactive": public},
     });
     if let Some(exp) = expires {
-        body["expires_in_hours"] = json!(exp);
+        if let Some(hours) = parse_expires_in_hours(exp)? {
+            body["expires_in_hours"] = json!(hours);
+        }
     }
 
+    let enc_id = encode_path_segment(id);
     let data = client
-        .post(&format!("/dashboards/{}/share", id), &body)
+        .post(&format!("/dashboards/{}/share", enc_id), &body)
         .await?;
     Ok(CliResponse::success(data, "Dashboard shared"))
 }
@@ -345,5 +482,27 @@ mod tests {
         let (occupied, next) = grid_summary(&comps);
         assert_eq!(occupied, "0-2");
         assert_eq!(next, 3);
+    }
+
+    #[test]
+    fn parse_expires_in_hours_handles_common_forms() {
+        assert_eq!(parse_expires_in_hours("24").unwrap(), Some(24));
+        assert_eq!(parse_expires_in_hours("24h").unwrap(), Some(24));
+        assert_eq!(parse_expires_in_hours("7d").unwrap(), Some(168));
+        assert_eq!(parse_expires_in_hours("30m").unwrap(), Some(1));
+        assert_eq!(parse_expires_in_hours("never").unwrap(), None);
+        assert_eq!(parse_expires_in_hours("0").unwrap(), None);
+        assert!(parse_expires_in_hours("invalid").is_err());
+        assert!(parse_expires_in_hours("-5").is_err());
+    }
+
+    #[test]
+    fn unbound_component_ids_flags_only_missing_data_bound_widgets() {
+        let comps = vec![
+            json!({"id": "c1", "type": "value-card", "data_source": {"type": "device", "sourceId": "d1"}}),
+            json!({"id": "c2", "type": "line-chart"}),
+            json!({"id": "c3", "type": "markdown-display", "config": {"content": "hello"}}),
+        ];
+        assert_eq!(unbound_component_ids(&comps), vec!["c2 (line-chart)"]);
     }
 }

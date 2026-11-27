@@ -147,6 +147,19 @@ impl Default for TransformEngine {
     }
 }
 
+fn build_transform_http_client() -> reqwest::Client {
+    // [bounded fetch + SSRF redirect guard] reqwest's default client has NO
+    // total timeout and follows redirects automatically; url_to_base64 fetches
+    // device-controlled URLs — disallow redirects so a public URL cannot 302
+    // into loopback/metadata IPs, and cap connect/total timeouts.
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap_or_default()
+}
+
 impl TransformEngine {
     /// Create a new transform engine
     pub fn new() -> Self {
@@ -156,15 +169,7 @@ impl TransformEngine {
             extension_registry: None,
             output_registry: Arc::new(TransformOutputRegistry::new()),
             automation_store: None,
-            // [bounded fetch] reqwest's default client has NO total timeout;
-            // url_to_base64 fetches device-controlled URLs — a hanging or
-            // huge response stalled the transform task (and could OOM the
-            // process). 30s total, 10MB body cap enforced at the read site.
-            http_client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
-                .connect_timeout(std::time::Duration::from_secs(10))
-                .build()
-                .unwrap_or_default(),
+            http_client: build_transform_http_client(),
         }
     }
 }
@@ -190,15 +195,7 @@ impl TransformEngine {
             extension_registry: Some(extension_registry),
             output_registry: Arc::new(TransformOutputRegistry::new()),
             automation_store: None,
-            // [bounded fetch] reqwest's default client has NO total timeout;
-            // url_to_base64 fetches device-controlled URLs — a hanging or
-            // huge response stalled the transform task (and could OOM the
-            // process). 30s total, 10MB body cap enforced at the read site.
-            http_client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
-                .connect_timeout(std::time::Duration::from_secs(10))
-                .build()
-                .unwrap_or_default(),
+            http_client: build_transform_http_client(),
         }
     }
 }
@@ -214,15 +211,7 @@ impl TransformEngine {
             extension_registry: None,
             output_registry,
             automation_store: None,
-            // [bounded fetch] reqwest's default client has NO total timeout;
-            // url_to_base64 fetches device-controlled URLs — a hanging or
-            // huge response stalled the transform task (and could OOM the
-            // process). 30s total, 10MB body cap enforced at the read site.
-            http_client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
-                .connect_timeout(std::time::Duration::from_secs(10))
-                .build()
-                .unwrap_or_default(),
+            http_client: build_transform_http_client(),
         }
     }
 }
@@ -238,15 +227,7 @@ impl TransformEngine {
             extension_registry,
             output_registry,
             automation_store: None,
-            // [bounded fetch] reqwest's default client has NO total timeout;
-            // url_to_base64 fetches device-controlled URLs — a hanging or
-            // huge response stalled the transform task (and could OOM the
-            // process). 30s total, 10MB body cap enforced at the read site.
-            http_client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
-                .connect_timeout(std::time::Duration::from_secs(10))
-                .build()
-                .unwrap_or_default(),
+            http_client: build_transform_http_client(),
         }
     }
 }

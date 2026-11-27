@@ -107,7 +107,7 @@ fn build_smtp_transport(
 
 /// Email channel for sending messages via SMTP.
 #[cfg(feature = "email")]
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct EmailChannel {
     name: String,
     enabled: bool,
@@ -120,6 +120,23 @@ pub struct EmailChannel {
     use_tls: bool,
     /// Cached SMTP transport for reuse.
     transport: Option<SmtpTransportHandle>,
+}
+
+#[cfg(feature = "email")]
+impl std::fmt::Debug for EmailChannel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EmailChannel")
+            .field("name", &self.name)
+            .field("enabled", &self.enabled)
+            .field("smtp_server", &self.smtp_server)
+            .field("smtp_port", &self.smtp_port)
+            .field("username", &self.username)
+            .field("password", &"[REDACTED]")
+            .field("from_address", &self.from_address)
+            .field("to_addresses", &self.to_addresses)
+            .field("use_tls", &self.use_tls)
+            .finish()
+    }
 }
 
 #[cfg(feature = "email")]

@@ -451,10 +451,14 @@ impl MqttAdapter {
         // Spawn a periodic metric_cache sweep to prevent unbounded growth from
         // phantom auto-onboarded devices. Drops entries older than 30 min.
         let sweep_cache = Arc::clone(&self.metric_cache);
+        let sweep_running = running.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
             loop {
                 interval.tick().await;
+                if !*sweep_running.read().await {
+                    break;
+                }
                 let cutoff = chrono::Utc::now() - chrono::Duration::minutes(30);
                 let mut cache = sweep_cache.write().await;
                 let before = cache.len();
@@ -798,31 +802,41 @@ impl MqttAdapter {
         let uncollectable = self.uncollectable.clone();
         let data_dir_clone = self.data_dir.clone();
 
-        let (eventloop_tx, eventloop_rx) = async_channel::unbounded();
+        let (eventloop_tx, eventloop_rx) = async_channel::bounded(2048);
         let event_tx_clone = event_tx.clone();
 
         tokio::spawn(async move {
             while *running_flag.read().await {
                 match eventloop_rx.recv().await {
                     Ok(notification) => {
-                        Self::handle_mqtt_notification(
-                            notification,
-                            &config,
-                            &event_tx_clone,
-                            &event_bus,
-                            &device_types,
-                            &metric_cache,
-                            &telemetry_storage,
-                            &device_registry,
-                            &connection_status,
-                            &broker_id_clone,
-                            &extractor,
-                            &topic_to_device,
-                            &outbound_echoes,
-                            &uncollectable,
-                            data_dir_clone.read().await.as_ref(),
+                        if let Err(panic) = std::panic::AssertUnwindSafe(
+                            Self::handle_mqtt_notification(
+                                notification,
+                                &config,
+                                &event_tx_clone,
+                                &event_bus,
+                                &device_types,
+                                &metric_cache,
+                                &telemetry_storage,
+                                &device_registry,
+                                &connection_status,
+                                &broker_id_clone,
+                                &extractor,
+                                &topic_to_device,
+                                &outbound_echoes,
+                                &uncollectable,
+                                data_dir_clone.read().await.as_ref(),
+                            ),
                         )
-                        .await;
+                        .catch_unwind()
+                        .await
+                        {
+                            tracing::error!(
+                                broker = %broker_id_clone,
+                                panic = ?panic,
+                                "MQTT notification handler panicked — consumer continues"
+                            );
+                        }
                     }
                     Err(_) => break,
                 }

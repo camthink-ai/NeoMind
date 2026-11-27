@@ -78,6 +78,9 @@ impl MessageChannel for ImChannel {
     }
 
     async fn send(&self, message: &Message) -> Result<()> {
+        const MAX_CONCURRENT_PUSHES: usize = 8;
+        const PER_CHAT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
         let sessions = self
             .router
             .store()
@@ -92,7 +95,8 @@ impl MessageChannel for ImChannel {
             return Ok(());
         }
 
-        let text = Self::format(message);
+        // Resolve live (chat_id, bridge) targets up front.
+        let mut targets = Vec::new();
         for (key, _record) in sessions {
             // Keys are `<platform>:<chat_id>`. Platform names carry no colon,
             // while chat ids may, so split on the first one only.
@@ -110,16 +114,65 @@ impl MessageChannel for ImChannel {
                 tracing::debug!(platform = ?platform, "No live bridge for bound session");
                 continue;
             };
-            // One chat failing — blocked the bot, deleted the chat — must not
-            // cost the others their notification.
-            match bridge.push(chat_id, &text).await {
-                Ok(_) => tracing::debug!(chat_id = %chat_id, "IM notification delivered"),
-                Err(e) => tracing::warn!(
-                    chat_id = %chat_id,
-                    error = %e,
-                    "IM notification failed for this chat"
-                ),
+            targets.push((chat_id.to_string(), bridge));
+        }
+
+        if targets.is_empty() {
+            return Ok(());
+        }
+
+        let attempted = targets.len();
+        let text = Arc::new(Self::format(message));
+        let sem = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_PUSHES));
+        let mut join_set = tokio::task::JoinSet::new();
+
+        for (chat_id, bridge) in targets {
+            let sem = sem.clone();
+            let text = text.clone();
+            join_set.spawn(async move {
+                let _permit = sem.acquire_owned().await;
+                match tokio::time::timeout(PER_CHAT_TIMEOUT, bridge.push(&chat_id, &text)).await {
+                    Ok(Ok(_)) => {
+                        tracing::debug!(chat_id = %chat_id, "IM notification delivered");
+                        Ok(())
+                    }
+                    Ok(Err(e)) => {
+                        let scrubbed = crate::manager::scrub_credentials(&e.to_string());
+                        tracing::warn!(
+                            chat_id = %chat_id,
+                            error = %scrubbed,
+                            "IM notification failed for this chat"
+                        );
+                        Err(format!("{chat_id}: {scrubbed}"))
+                    }
+                    Err(_) => {
+                        tracing::warn!(
+                            chat_id = %chat_id,
+                            "IM notification timed out after {}s",
+                            PER_CHAT_TIMEOUT.as_secs()
+                        );
+                        Err(format!("{chat_id}: push timed out"))
+                    }
+                }
+            });
+        }
+
+        let mut succeeded = 0usize;
+        let mut failures = Vec::new();
+        while let Some(res) = join_set.join_next().await {
+            match res {
+                Ok(Ok(())) => succeeded += 1,
+                Ok(Err(err)) => failures.push(err),
+                Err(join_err) => failures.push(format!("task failed: {join_err}")),
             }
+        }
+
+        if attempted > 0 && succeeded == 0 {
+            return Err(Error::SendFailed(format!(
+                "All {} IM push attempts failed: {}",
+                attempted,
+                failures.join("; ")
+            )));
         }
 
         Ok(())
@@ -336,5 +389,45 @@ mod tests {
             1,
             "a message addressed elsewhere must not reach the IM chat"
         );
+    }
+
+    #[tokio::test]
+    async fn returns_err_when_all_attempted_pushes_fail() {
+        use crate::im_bridge::ImBridge;
+
+        struct FailingBridge;
+
+        #[async_trait]
+        impl ImBridge for FailingBridge {
+            fn platform(&self) -> ImPlatform {
+                ImPlatform::Telegram
+            }
+            async fn start(
+                self: Arc<Self>,
+                _bus: Arc<neomind_core::eventbus::EventBus>,
+            ) -> anyhow::Result<()> {
+                Ok(())
+            }
+            async fn stop(&self) -> anyhow::Result<()> {
+                Ok(())
+            }
+            async fn reply(&self, _chat_id: &str, _text: &str) -> anyhow::Result<Option<String>> {
+                anyhow::bail!("simulated delivery failure")
+            }
+        }
+
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Arc::new(ImSessionStore::open(tmp.path()).unwrap());
+        bind(&store, "telegram", "111");
+        bind(&store, "telegram", "222");
+
+        let router = Arc::new(make_router(store));
+        router.registry.register(Arc::new(FailingBridge)).await;
+
+        let err = ImChannel::new(router)
+            .send(&notification())
+            .await
+            .expect_err("all pushes failing must return Err");
+        assert!(err.to_string().contains("All 2 IM push attempts failed"));
     }
 }

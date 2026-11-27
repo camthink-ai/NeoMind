@@ -699,11 +699,14 @@ impl EmbeddedBroker {
         // allow_anonymous=false forces rmqtt to always call our auth hook,
         // even for anonymous connections. Our hook dynamically decides
         // whether to allow based on the shared auth_enabled flag.
+        let max_packet_size = config.max_payload_size.min(10 * 1024 * 1024) as u32;
         let builder = rmqtt::net::Builder::new()
             .name("neomind-broker")
             .laddr(addr)
             .reuseaddr(Some(true))
-            .allow_anonymous(false);
+            .allow_anonymous(false)
+            .max_connections(config.max_connections)
+            .max_packet_size(max_packet_size);
 
         let listener = if config.tls_enabled {
             let cert_path = config.tls_cert_path.as_deref().ok_or_else(|| {

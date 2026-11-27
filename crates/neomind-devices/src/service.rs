@@ -532,11 +532,17 @@ impl DeviceService {
             while let Some((event, _)) = rx.recv().await {
                 match event {
                     neomind_core::NeoMindEvent::DeviceOnline { device_id, .. } => {
+                        if registry.get_device(&device_id).is_none() {
+                            continue;
+                        }
                         let mut status = device_status.write().await;
                         let entry = status.entry(device_id.clone()).or_default();
                         entry.update(ConnectionStatus::Connected);
                     }
                     neomind_core::NeoMindEvent::DeviceOffline { device_id, .. } => {
+                        if registry.get_device(&device_id).is_none() {
+                            continue;
+                        }
                         let mut status = device_status.write().await;
                         let entry = status.entry(device_id.clone()).or_default();
                         entry.update(ConnectionStatus::Disconnected);
@@ -607,7 +613,7 @@ impl DeviceService {
                         // We still write them to telemetry storage below.
                         let synthetic =
                             metric.starts_with("transform.") || device_id.starts_with("transform:");
-                        if !synthetic {
+                        if !synthetic && registry.get_device(&device_id).is_some() {
                             let mut status = device_status.write().await;
                             let entry = status.entry(device_id.clone()).or_default();
                             let now_ts = chrono::Utc::now().timestamp();
@@ -2628,8 +2634,12 @@ impl DeviceService {
             .unwrap_or(0)
     }
 
-    /// Update device status (called by event listeners or adapters)
+    /// Update device status (called by event listeners or adapters).
+    /// Ignores unregistered device IDs to prevent unbounded status-map growth.
     pub async fn update_device_status(&self, device_id: &str, status: ConnectionStatus) {
+        if self.registry.get_device(device_id).is_none() {
+            return;
+        }
         let mut status_map = self.device_status.write().await;
         let entry = status_map.entry(device_id.to_string()).or_default();
         entry.update(status);

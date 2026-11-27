@@ -57,6 +57,8 @@ pub struct MentionTypeErrors {
     pub transform: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dashboard: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -123,6 +125,12 @@ pub async fn search_mentions_handler(
             Err(e) => type_errors.agent = Some(e),
         }
     }
+    if wanted.contains("dashboard") {
+        match collect_dashboards(&state, &q) {
+            Ok(items) => candidates.extend(items),
+            Err(e) => type_errors.dashboard = Some(e),
+        }
+    }
 
     // Higher score first; then type order; then label.
     candidates.sort_by(|a, b| {
@@ -178,7 +186,7 @@ pub async fn resolve_mentions_handler(
 }
 
 fn parse_types(raw: Option<&str>) -> std::collections::HashSet<&'static str> {
-    let all = ["device", "rule", "transform", "agent"];
+    let all = ["device", "rule", "transform", "agent", "dashboard"];
     let Some(raw) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
         return all.into_iter().collect();
     };
@@ -200,6 +208,9 @@ fn parse_types(raw: Option<&str>) -> std::collections::HashSet<&'static str> {
             "agent" | "agents" => {
                 set.insert("agent");
             }
+            "dashboard" | "dashboards" => {
+                set.insert("dashboard");
+            }
             _ => {}
         }
     }
@@ -216,6 +227,7 @@ fn type_rank(t: &str) -> u8 {
         "rule" => 1,
         "transform" => 2,
         "agent" => 3,
+        "dashboard" => 4,
         _ => 9,
     }
 }
@@ -388,6 +400,36 @@ async fn collect_agents(state: &ServerState, q: &str) -> Result<Vec<(i32, Mentio
     Ok(out)
 }
 
+fn collect_dashboards(state: &ServerState, q: &str) -> Result<Vec<(i32, MentionItem)>, String> {
+    let dashboards = state
+        .dashboard_store
+        .list_all()
+        .map_err(|e| format!("list failed: {e}"))?;
+    let mut out = Vec::new();
+    for d in dashboards {
+        let label = if d.name.trim().is_empty() {
+            d.id.clone()
+        } else {
+            d.name.clone()
+        };
+        let Some(score) = match_score(&label, &d.id, q) else {
+            continue;
+        };
+        out.push((
+            score,
+            MentionItem {
+                r#type: "dashboard".into(),
+                id: d.id.clone(),
+                label,
+                short_id: short_id(&d.id),
+                hint: Some(format!("{} components", d.components.len())),
+                duplicate_name: false,
+            },
+        ));
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -407,11 +449,12 @@ mod tests {
 
     #[test]
     fn parse_types_defaults_and_filters() {
-        assert_eq!(parse_types(None).len(), 4);
-        assert_eq!(parse_types(Some("")).len(), 4);
+        assert_eq!(parse_types(None).len(), 5);
+        assert_eq!(parse_types(Some("")).len(), 5);
         assert_eq!(parse_types(Some("device,agent")).len(), 2);
         assert!(parse_types(Some("rules")).contains("rule"));
-        assert_eq!(parse_types(Some("nope")).len(), 4);
+        assert!(parse_types(Some("dashboards")).contains("dashboard"));
+        assert_eq!(parse_types(Some("nope")).len(), 5);
     }
 
     #[test]

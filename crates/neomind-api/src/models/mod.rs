@@ -30,7 +30,7 @@ pub struct ChatImage {
 /// A structured object reference attached to a chat message (@-mention).
 #[derive(utoipa::ToSchema, Debug, Clone, Deserialize, serde::Serialize)]
 pub struct ChatReference {
-    /// One of: device | rule | transform | agent.
+    /// One of: device | rule | transform | agent | dashboard.
     #[serde(rename = "type")]
     pub r#type: String,
     /// Authoritative object id.

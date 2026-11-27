@@ -41,6 +41,9 @@ pub struct ImSessionRecord {
     pub last_active: i64,
 }
 
+/// Default TTL for unused invite tokens (24 hours).
+pub const DEFAULT_INVITE_TTL_SECS: i64 = 86_400;
+
 /// 一次性邀请 token 的记录。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InviteRecord {
@@ -185,12 +188,24 @@ impl ImSessionStore {
         Ok(token)
     }
 
-    /// 原子消费：未使用 → 标记 used + 绑定 chat_id，返回 true；已用/缺失 → false。
+    /// 原子消费：未使用且未过期（默认 24h TTL） → 标记 used + 绑定 chat_id，返回 true；
+    /// 已用/缺失/已过期 → 返回 false（过期记录会被立即清理）。
     ///
     /// get + conditional-set 必须在同一个写事务内，否则两个并发的 `/start`
     /// 绑定可能都看到「未使用」并双绑。
     pub fn consume_invite(&self, token: &str, chat_id: &str) -> Result<bool, anyhow::Error> {
+        self.consume_invite_with_ttl(token, chat_id, DEFAULT_INVITE_TTL_SECS)
+    }
+
+    /// 原子消费（支持自定义 TTL，秒）。
+    pub fn consume_invite_with_ttl(
+        &self,
+        token: &str,
+        chat_id: &str,
+        ttl_secs: i64,
+    ) -> Result<bool, anyhow::Error> {
         let tx = self.db.begin_write()?;
+        let now = now_secs();
         let consumed = {
             let mut t = tx.open_table(IM_INVITES_TABLE)?;
             // 先把 guard 里的数据拷出（释放不可变借用），再决定是否写入。
@@ -200,10 +215,14 @@ impl ImSessionStore {
                 None => None,
             };
             match existing {
+                Some(rec) if !rec.used && now.saturating_sub(rec.created_at) > ttl_secs => {
+                    t.remove(token)?;
+                    false
+                }
                 Some(mut rec) if !rec.used => {
                     rec.used = true;
                     rec.bound_chat_id = Some(chat_id.to_string());
-                    rec.bound_at = Some(now_secs());
+                    rec.bound_at = Some(now);
                     let json = serde_json::to_string(&rec)?;
                     t.insert(token, json.as_str())?;
                     true
@@ -213,6 +232,33 @@ impl ImSessionStore {
         };
         tx.commit()?;
         Ok(consumed)
+    }
+
+    /// 清理所有已过期（`now - created_at > ttl_secs`）的未使用 invite，返回删除数量。
+    pub fn prune_expired_invites(&self, ttl_secs: i64) -> Result<usize, anyhow::Error> {
+        let tx = self.db.begin_write()?;
+        let now = now_secs();
+        let mut removed = 0;
+        {
+            let mut t = tx.open_table(IM_INVITES_TABLE)?;
+            let expired_tokens: Vec<String> = {
+                let mut out = Vec::new();
+                for item in t.iter()? {
+                    let (k, v) = item?;
+                    let rec: InviteRecord = serde_json::from_str(v.value())?;
+                    if !rec.used && now.saturating_sub(rec.created_at) > ttl_secs {
+                        out.push(k.value().to_string());
+                    }
+                }
+                out
+            };
+            for tok in expired_tokens {
+                t.remove(tok.as_str())?;
+                removed += 1;
+            }
+        }
+        tx.commit()?;
+        Ok(removed)
     }
 
     /// 列出全部 invite（`(token, record)`），无顺序保证。
@@ -518,6 +564,44 @@ mod tests {
         let store = ImSessionStore::open(tmp.path()).unwrap();
         // 删除不存在的 invite 视为成功（幂等）。
         store.revoke_invite("ghost").unwrap();
+    }
+
+    #[test]
+    fn expired_invite_is_rejected_and_removed_on_consume_and_prune() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = ImSessionStore::open(tmp.path()).unwrap();
+
+        // Manually insert an expired unused invite (> 24h old).
+        let old_rec = InviteRecord {
+            created_at: now_secs() - DEFAULT_INVITE_TTL_SECS - 10,
+            used: false,
+            bound_chat_id: None,
+            bound_at: None,
+        };
+        let tx = store.db.begin_write().unwrap();
+        {
+            let mut t = tx.open_table(IM_INVITES_TABLE).unwrap();
+            t.insert("expired-1", serde_json::to_string(&old_rec).unwrap().as_str())
+                .unwrap();
+            t.insert("expired-2", serde_json::to_string(&old_rec).unwrap().as_str())
+                .unwrap();
+        }
+        tx.commit().unwrap();
+
+        let fresh_tok = store.create_invite().unwrap();
+
+        // Consuming an expired invite returns false and removes it.
+        assert!(!store.consume_invite("expired-1", "chat-1").unwrap());
+        assert!(!store
+            .list_invites()
+            .unwrap()
+            .iter()
+            .any(|(t, _)| t == "expired-1"));
+
+        // Pruning removes remaining expired unused invites while keeping fresh ones.
+        let pruned = store.prune_expired_invites(DEFAULT_INVITE_TTL_SECS).unwrap();
+        assert_eq!(pruned, 1);
+        assert!(store.consume_invite(&fresh_tok, "chat-2").unwrap());
     }
 
     #[test]

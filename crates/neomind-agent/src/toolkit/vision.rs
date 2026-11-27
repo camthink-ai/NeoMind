@@ -444,7 +444,7 @@ impl Tool for VisionTool {
     }
 
     fn description(&self) -> &str {
-        "Analyze images not inline in chat via VLM. Accepts /api/images/…, $cached:…, http(s) URL, path, or base64."
+        "Analyze images or locate objects via VLM (returns analysis + width/height). Accepts /api/images/…, $cached:…, http(s) URL, path, or base64."
     }
 
     fn parameters(&self) -> Value {
@@ -481,12 +481,21 @@ impl Tool for VisionTool {
         tracing::info!(image_len = image.len(), "Vision tool: resolving image");
 
         let (data, mime) = self.resolve_image(image).await?;
+        let dims = image::ImageReader::new(std::io::Cursor::new(&data))
+            .with_guessed_format()
+            .ok()
+            .and_then(|r| r.into_dimensions().ok());
         let analysis = self.analyze(&data, &mime, prompt, model).await?;
 
-        Ok(ToolOutput::success(serde_json::json!({
+        let mut payload = serde_json::json!({
             "analysis": analysis,
             "image_type": mime,
-        })))
+        });
+        if let Some((w, h)) = dims {
+            payload["width"] = serde_json::json!(w);
+            payload["height"] = serde_json::json!(h);
+        }
+        Ok(ToolOutput::success(payload))
     }
 }
 

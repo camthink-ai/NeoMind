@@ -4,12 +4,13 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use std::time::Duration;
+use tokio::sync::{broadcast, watch, Mutex};
 
 use super::PushDestination;
 
 /// MQTT target configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct MqttConfig {
     pub broker: String,
     #[serde(default = "default_port")]
@@ -24,6 +25,20 @@ pub struct MqttConfig {
     pub client_id: String,
 }
 
+impl std::fmt::Debug for MqttConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MqttConfig")
+            .field("broker", &self.broker)
+            .field("port", &self.port)
+            .field("topic", &self.topic)
+            .field("username", &self.username)
+            .field("password", &self.password.as_ref().map(|_| "[REDACTED]"))
+            .field("qos", &self.qos)
+            .field("client_id", &self.client_id)
+            .finish()
+    }
+}
+
 fn default_port() -> u16 {
     1883
 }
@@ -36,11 +51,42 @@ fn default_client_id() -> String {
     "neomind-push".to_string()
 }
 
-/// MQTT push destination with lazy connection.
+/// Events surfaced from the background rumqttc EventLoop task to `send()`.
+#[derive(Debug, Clone)]
+enum MqttLoopEvent {
+    /// Outgoing publish frame written to the broker connection (QoS 0 confirmation).
+    Published,
+    /// Broker acknowledged QoS 1 publish (`PUBACK`).
+    PubAck,
+    /// Broker completed QoS 2 publish (`PUBCOMP`).
+    PubComp,
+    /// Broker / network error observed by the eventloop.
+    Error(String),
+}
+
+/// Active MQTT client + continuously driven background EventLoop task.
+/// Dropping `MqttConnection` cancels and aborts the background task cleanly.
+struct MqttConnection {
+    client: rumqttc::AsyncClient,
+    event_tx: broadcast::Sender<MqttLoopEvent>,
+    shutdown_tx: watch::Sender<bool>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for MqttConnection {
+    fn drop(&mut self) {
+        let _ = self.shutdown_tx.send(true);
+        self.task.abort();
+    }
+}
+
+/// MQTT push destination with lazy connection and a continuously driven
+/// background eventloop (handles `PINGREQ`, reconnects, and publish ACKs).
 pub struct MqttTarget {
     config: MqttConfig,
-    client: Arc<Mutex<Option<rumqttc::AsyncClient>>>,
-    eventloop: Arc<Mutex<Option<rumqttc::EventLoop>>>,
+    conn: Arc<Mutex<Option<MqttConnection>>>,
+    /// Serializes concurrent `send()` calls so each publish observes its own ACK.
+    send_lock: Arc<Mutex<()>>,
 }
 
 impl MqttTarget {
@@ -55,15 +101,15 @@ impl MqttTarget {
         }
         Ok(Self {
             config: mc,
-            client: Arc::new(Mutex::new(None)),
-            eventloop: Arc::new(Mutex::new(None)),
+            conn: Arc::new(Mutex::new(None)),
+            send_lock: Arc::new(Mutex::new(())),
         })
     }
 
-    /// Ensure a connection exists, creating one lazily if needed.
-    async fn ensure_connected(&self) -> Result<()> {
-        let mut client_guard = self.client.lock().await;
-        if client_guard.is_none() {
+    /// Ensure a connection and its background eventloop task exist.
+    async fn ensure_connected(&self) -> Result<(rumqttc::AsyncClient, broadcast::Receiver<MqttLoopEvent>)> {
+        let mut conn_guard = self.conn.lock().await;
+        if conn_guard.is_none() {
             let client_id = format!(
                 "{}-{}",
                 self.config.client_id,
@@ -72,33 +118,89 @@ impl MqttTarget {
 
             let mut mqtt_opts =
                 rumqttc::MqttOptions::new(client_id, &self.config.broker, self.config.port);
-            mqtt_opts.set_keep_alive(std::time::Duration::from_secs(30));
+            mqtt_opts.set_keep_alive(Duration::from_secs(30));
 
             if let (Some(user), Some(pass)) = (&self.config.username, &self.config.password) {
                 mqtt_opts.set_credentials(user, pass);
             }
 
-            let (client, eventloop) = rumqttc::AsyncClient::new(mqtt_opts, 10);
-            *client_guard = Some(client);
+            let (client, mut eventloop) = rumqttc::AsyncClient::new(mqtt_opts, 64);
+            let (event_tx, _) = broadcast::channel(64);
+            let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
 
-            let mut el_guard = self.eventloop.lock().await;
-            *el_guard = Some(eventloop);
+            let tx_clone = event_tx.clone();
+            let broker_label = format!("{}:{}", self.config.broker, self.config.port);
+            let task = tokio::spawn(async move {
+                loop {
+                    tokio::select! {
+                        biased;
+                        _ = shutdown_rx.changed() => {
+                            if *shutdown_rx.borrow() {
+                                break;
+                            }
+                        }
+                        res = eventloop.poll() => {
+                            match res {
+                                Ok(rumqttc::Event::Incoming(rumqttc::Packet::PubAck(_))) => {
+                                    let _ = tx_clone.send(MqttLoopEvent::PubAck);
+                                }
+                                Ok(rumqttc::Event::Incoming(rumqttc::Packet::PubComp(_))) => {
+                                    let _ = tx_clone.send(MqttLoopEvent::PubComp);
+                                }
+                                Ok(rumqttc::Event::Outgoing(rumqttc::Outgoing::Publish(_))) => {
+                                    let _ = tx_clone.send(MqttLoopEvent::Published);
+                                }
+                                Ok(_) => {
+                                    // ConnAck, PingReq/PingResp, PubRec/PubRel, etc.
+                                    // Background loop keeps driving these continuously.
+                                }
+                                Err(e) => {
+                                    let msg = e.to_string();
+                                    tracing::debug!(
+                                        broker = %broker_label,
+                                        error = %msg,
+                                        "MQTT push target eventloop error; backing off before reconnect"
+                                    );
+                                    let _ = tx_clone.send(MqttLoopEvent::Error(msg));
+                                    tokio::select! {
+                                        _ = shutdown_rx.changed() => {
+                                            if *shutdown_rx.borrow() {
+                                                break;
+                                            }
+                                        }
+                                        _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+
+            *conn_guard = Some(MqttConnection {
+                client,
+                event_tx,
+                shutdown_tx,
+                task,
+            });
         }
-        Ok(())
+
+        let conn = conn_guard
+            .as_ref()
+            .ok_or_else(|| anyhow!("MQTT connection not initialized"))?;
+        Ok((conn.client.clone(), conn.event_tx.subscribe()))
     }
 }
 
 #[async_trait]
 impl PushDestination for MqttTarget {
     async fn send(&self, payload: &str) -> std::result::Result<(), super::DeliveryError> {
-        self.ensure_connected()
+        let _send_guard = self.send_lock.lock().await;
+
+        let (client, mut event_rx) = self
+            .ensure_connected()
             .await
             .map_err(|e| super::DeliveryError::Other(anyhow!("MQTT connect failed: {}", e)))?;
-
-        let client_guard = self.client.lock().await;
-        let client = client_guard
-            .as_ref()
-            .ok_or_else(|| super::DeliveryError::Other(anyhow!("MQTT client not initialized")))?;
 
         let qos = match self.config.qos {
             0 => rumqttc::QoS::AtMostOnce,
@@ -106,13 +208,10 @@ impl PushDestination for MqttTarget {
             _ => rumqttc::QoS::AtLeastOnce,
         };
 
-        // [bounded publish] client.publish() waits for channel capacity —
-        // with a dead broker the bounded (10) request queue fills and this
-        // await blocks FOREVER, wedging the target task so its select!
-        // cancel arm is unreachable and stop()/update/delete hang the API
-        // handler. A timeout converts the wedge into a retriable error.
+        // Enqueue the publish with a bounded timeout so a stalled queue cannot
+        // block cancellation or shutdown forever.
         tokio::time::timeout(
-            std::time::Duration::from_secs(10),
+            Duration::from_secs(10),
             client.publish(&self.config.topic, qos, false, payload.as_bytes()),
         )
         .await
@@ -123,30 +222,51 @@ impl PushDestination for MqttTarget {
         })?
         .map_err(|e| super::DeliveryError::Other(anyhow!("MQTT publish failed: {}", e)))?;
 
-        // Poll eventloop to process the publish — and PROPAGATE errors.
-        // The old `let _ = timeout(5s, poll())` discarded connection
-        // errors entirely: deliveries to an unreachable broker were
-        // logged as Success and never retried (the whole
-        // deliver_with_retry machinery was dead code for MQTT targets).
-        drop(client_guard);
-        let mut el_guard = self.eventloop.lock().await;
-        if let Some(ref mut eventloop) = *el_guard {
-            match tokio::time::timeout(std::time::Duration::from_secs(5), eventloop.poll()).await {
-                Err(_elapsed) => {
-                    // No event within 5s: not proof of failure (QoS0 sends
-                    // nothing back), leave as success.
+        // Wait for real dispatch/broker acknowledgement from the background
+        // eventloop (not a single `poll()` that merely returned `ConnAck`).
+        // Timeout MUST return Err so delivery logs and retries stay honest.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                return Err(super::DeliveryError::Other(anyhow!(
+                    "MQTT publish confirmation timed out after 10s"
+                )));
+            }
+
+            match tokio::time::timeout(remaining, event_rx.recv()).await {
+                Err(_) => {
+                    return Err(super::DeliveryError::Other(anyhow!(
+                        "MQTT publish confirmation timed out after 10s"
+                    )));
                 }
-                Ok(Err(e)) => {
+                Ok(Err(broadcast::error::RecvError::Lagged(_))) => continue,
+                Ok(Err(broadcast::error::RecvError::Closed)) => {
+                    return Err(super::DeliveryError::Other(anyhow!(
+                        "MQTT eventloop closed before publish confirmation"
+                    )));
+                }
+                Ok(Ok(MqttLoopEvent::Error(e))) => {
                     return Err(super::DeliveryError::Other(anyhow!(
                         "MQTT broker error: {}",
                         e
-                    )))
+                    )));
                 }
-                Ok(Ok(_)) => {}
+                Ok(Ok(MqttLoopEvent::Published)) if matches!(qos, rumqttc::QoS::AtMostOnce) => {
+                    return Ok(());
+                }
+                Ok(Ok(MqttLoopEvent::PubAck)) if matches!(qos, rumqttc::QoS::AtLeastOnce) => {
+                    return Ok(());
+                }
+                Ok(Ok(MqttLoopEvent::PubComp)) if matches!(qos, rumqttc::QoS::ExactlyOnce) => {
+                    return Ok(());
+                }
+                Ok(Ok(_)) => {
+                    // Intermediate event (e.g., Outgoing::Publish while awaiting PubAck for QoS1)
+                    continue;
+                }
             }
         }
-
-        Ok(())
     }
 
     fn validate_config(&self, config: &serde_json::Value) -> Result<()> {

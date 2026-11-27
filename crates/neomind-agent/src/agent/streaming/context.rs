@@ -1003,6 +1003,7 @@ fn compact_tool_results_stream_with_config(
                     end_reason: None,
                     content_nodes: None,
                     content_version: None,
+                    attachments: None,
                     timestamp: msg.timestamp,
                 };
                 result.push(summary_msg);

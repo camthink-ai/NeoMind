@@ -88,14 +88,15 @@ fn copy_file(from: &Path, to: &Path, secret: bool) -> std::io::Result<u64> {
     Ok(bytes)
 }
 
-/// Verify a copied redb file actually recovers: open it (header + recovery
-/// checks run at open) and immediately close. `Database::open` takes a path,
-/// not a handle, so the verification reads the copy — not the live file.
+/// Verify a copied redb file actually recovers and passes full integrity
+/// checks: open it and run `Database::check_integrity()` so torn copies from
+/// concurrent writes are detected rather than silently archived.
 fn verify_redb_copy(path: &Path) -> Result<(), String> {
-    // Open read-capable handle; redb recovers the file if needed. Dropping
-    // the Database closes it cleanly. We must not hold it while the caller
-    // renames the directory, so scope it here.
-    let db = Database::open(path).map_err(|e| e.to_string())?;
+    // Open read/write handle on the copy (not the live file) and run full
+    // integrity verification (page checksums + B-tree structure). Dropping
+    // the Database closes it cleanly before the caller renames the directory.
+    let mut db = Database::open(path).map_err(|e| e.to_string())?;
+    db.check_integrity().map_err(|e| e.to_string())?;
     drop(db);
     Ok(())
 }
@@ -146,6 +147,7 @@ pub fn create_backup(data_dir: &Path, app_version: &str) -> Result<BackupManifes
             return Err(BackupError::NothingToBackup(data_dir.to_path_buf()));
         }
 
+        const MAX_COPY_ATTEMPTS: usize = 3;
         for from in &db_files {
             let name = from
                 .file_name()
@@ -153,11 +155,37 @@ pub fn create_backup(data_dir: &Path, app_version: &str) -> Result<BackupManifes
                 .unwrap_or("unknown")
                 .to_string();
             let to = tmp_dir.join(&name);
-            let bytes = copy_file(from, &to, false)?;
-            verify_redb_copy(&to).map_err(|reason| BackupError::VerificationFailed {
-                file: name.clone(),
-                reason,
-            })?;
+
+            let mut bytes = 0u64;
+            let mut last_err = None;
+            for attempt in 1..=MAX_COPY_ATTEMPTS {
+                bytes = copy_file(from, &to, false)?;
+                match verify_redb_copy(&to) {
+                    Ok(()) => {
+                        last_err = None;
+                        break;
+                    }
+                    Err(reason) => {
+                        if attempt < MAX_COPY_ATTEMPTS {
+                            tracing::warn!(
+                                category = "backup",
+                                file = %name,
+                                attempt,
+                                reason = %reason,
+                                "Backup copy failed integrity check (possible torn read), retrying"
+                            );
+                            std::thread::sleep(std::time::Duration::from_millis(100));
+                        }
+                        last_err = Some(reason);
+                    }
+                }
+            }
+            if let Some(reason) = last_err {
+                return Err(BackupError::VerificationFailed {
+                    file: name.clone(),
+                    reason,
+                });
+            }
             db_count += 1;
             total_bytes += bytes;
             files.push(BackupFileEntry {
@@ -403,5 +431,42 @@ mod tests {
             assert_eq!(mode, 0o600, "secret must stay 0600 in backups");
         }
         assert!(secret_copy.exists());
+    }
+
+    #[test]
+    fn corrupted_redb_fails_integrity_verification_and_discards_tmp() {
+        let dir = data_dir();
+        let db_path = dir.path().join("corrupt.redb");
+        make_db(&db_path);
+
+        // Corrupt bytes inside the database file so open/check_integrity fails.
+        let mut bytes = std::fs::read(&db_path).unwrap();
+        assert!(!bytes.is_empty());
+        for b in bytes.iter_mut() {
+            *b ^= 0xFF;
+        }
+        std::fs::write(&db_path, &bytes).unwrap();
+
+        let err = create_backup(dir.path(), "test").unwrap_err();
+        assert!(
+            matches!(err, BackupError::VerificationFailed { ref file, .. } if file == "corrupt.redb"),
+            "expected VerificationFailed for corrupt.redb, got {err:?}"
+        );
+
+        // Partial .tmp directory must be cleaned up on verification failure.
+        let root = dir.path().join(BACKUP_DIR_NAME);
+        let leftovers: Vec<_> = std::fs::read_dir(&root)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .collect();
+        assert!(leftovers.is_empty(), "no .tmp backup dir should remain");
+    }
+
+    #[test]
+    fn verify_redb_copy_passes_integrity_check_on_valid_db() {
+        let dir = data_dir();
+        let db_path = dir.path().join("valid.redb");
+        make_db(&db_path);
+        assert!(verify_redb_copy(&db_path).is_ok());
     }
 }

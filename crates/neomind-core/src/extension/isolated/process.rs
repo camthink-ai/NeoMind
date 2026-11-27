@@ -15,7 +15,7 @@
 //!
 //! This design is based on patterns from mature RPC frameworks like tarpc.
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
@@ -31,52 +31,164 @@ use super::{ErrorKind, IpcFrame, IpcMessage, IpcResponse, IsolatedExtensionError
 use crate::extension::system::{ExtensionMetadata, ExtensionMetricValue};
 use serde_json::Value;
 
-/// Helper function to send a message to the extension process
-/// Used for sending IpcMessage types (like CapabilityResult)
-fn send_message_to_extension(
-    stdin: &Arc<Mutex<Option<BufWriter<std::process::ChildStdin>>>>,
+/// Capacity of the bounded channel feeding the dedicated OS stdin writer thread.
+const STDIN_WRITER_QUEUE_CAPACITY: usize = 256;
+
+/// Default timeout for enqueueing a frame to the stdin writer thread.
+/// Prevents wedged extensions with full pipe buffers from hanging Tokio tasks.
+const STDIN_SEND_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Shared handle to the bounded stdin writer channel.
+type StdinSenderSlot = Arc<std::sync::RwLock<Option<tokio::sync::mpsc::Sender<Vec<u8>>>>>;
+
+/// RAII guard that cancels an `InFlightRequests` entry on Drop unless disarmed.
+/// Ensures send failures, early returns, timeouts, or cancelled futures never leak
+/// pending request IDs (which would pin `pending_count() > 0` and blind the health monitor).
+struct InFlightGuard<'a> {
+    in_flight: &'a InFlightRequests,
+    request_id: u64,
+    armed: bool,
+}
+
+impl<'a> InFlightGuard<'a> {
+    fn new(in_flight: &'a InFlightRequests, request_id: u64) -> Self {
+        Self {
+            in_flight,
+            request_id,
+            armed: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for InFlightGuard<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            self.in_flight.cancel(self.request_id);
+        }
+    }
+}
+
+/// Authoritatively inject `_extension_id` into capability invocation params,
+/// overwriting any caller-supplied value so extensions cannot spoof another extension's identity.
+fn inject_extension_id(mut params: Value, extension_id: &str) -> Value {
+    match &mut params {
+        Value::Object(map) => {
+            map.insert(
+                "_extension_id".to_string(),
+                Value::String(extension_id.to_string()),
+            );
+            params
+        }
+        Value::Null => {
+            let mut map = serde_json::Map::new();
+            map.insert(
+                "_extension_id".to_string(),
+                Value::String(extension_id.to_string()),
+            );
+            Value::Object(map)
+        }
+        _ => params,
+    }
+}
+
+/// Read optional capability allowlist from `<extension_dir>/manifest.json`.
+/// Checks `required_capabilities` first, then `permissions`. Returns `None` when
+/// no manifest is present or both fields are omitted/empty (backward compatible).
+fn load_manifest_allowed_capabilities(extension_dir: &std::path::Path) -> Option<HashSet<String>> {
+    let manifest_path = extension_dir.join("manifest.json");
+    let raw = std::fs::read_to_string(&manifest_path).ok()?;
+    let manifest: Value = serde_json::from_str(&raw).ok()?;
+
+    let list = manifest
+        .get("required_capabilities")
+        .and_then(|v| v.as_array())
+        .filter(|arr| !arr.is_empty())
+        .or_else(|| {
+            manifest
+                .get("permissions")
+                .and_then(|v| v.as_array())
+                .filter(|arr| !arr.is_empty())
+        })?;
+
+    let set: HashSet<String> = list
+        .iter()
+        .filter_map(|v| v.as_str().map(|s| s.trim().to_string()))
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    if set.is_empty() {
+        None
+    } else {
+        Some(set)
+    }
+}
+
+/// Check whether `capability_name` is permitted by an optional manifest allowlist.
+fn is_capability_allowed(allowed: Option<&HashSet<String>>, capability_name: &str) -> bool {
+    match allowed {
+        None => true,
+        Some(set) => set.contains("*") || set.contains(capability_name),
+    }
+}
+
+/// Async helper to enqueue an `IpcMessage` (like `CapabilityResult` or `EventPush`)
+/// onto the bounded stdin writer channel with a timeout, avoiding blocking I/O on
+/// Tokio workers and avoiding `try_lock()` silent drops under contention.
+async fn send_message_to_extension(
+    stdin_tx: &StdinSenderSlot,
     extension_id: &str,
     message: IpcMessage,
 ) {
-    match message.to_bytes() {
+    let encoded = match message.to_bytes() {
         Ok(bytes) => {
             let frame = IpcFrame::new(bytes);
-            let encoded = frame.encode();
-
-            // Try to send - use try_lock to avoid blocking the receiver thread
-            if let Ok(mut stdin_guard) = stdin.try_lock() {
-                if let Some(stdin_writer) = stdin_guard.as_mut() {
-                    if let Err(e) = stdin_writer.write_all(&encoded) {
-                        warn!(
-                            extension_id = %extension_id,
-                            error = %e,
-                            "Failed to send message to extension"
-                        );
-                    } else if let Err(e) = stdin_writer.flush() {
-                        warn!(
-                            extension_id = %extension_id,
-                            error = %e,
-                            "Failed to flush message to extension"
-                        );
-                    } else {
-                        debug!(
-                            extension_id = %extension_id,
-                            "Message sent to extension"
-                        );
-                    }
-                }
-            } else {
-                warn!(
-                    extension_id = %extension_id,
-                    "Could not acquire stdin lock to send message"
-                );
-            }
+            frame.encode()
         }
         Err(e) => {
             warn!(
                 extension_id = %extension_id,
                 error = %e,
                 "Failed to serialize message"
+            );
+            return;
+        }
+    };
+
+    let tx_opt = stdin_tx
+        .read()
+        .unwrap_or_else(|e| {
+            tracing::error!(error = %e, "Stdin channel RwLock poisoned, recovering");
+            e.into_inner()
+        })
+        .clone();
+
+    let Some(tx) = tx_opt else {
+        warn!(
+            extension_id = %extension_id,
+            "Cannot send message to extension: stdin writer not initialized"
+        );
+        return;
+    };
+
+    match tokio::time::timeout(STDIN_SEND_TIMEOUT, tx.send(encoded)).await {
+        Ok(Ok(())) => {
+            debug!(extension_id = %extension_id, "Message sent to extension");
+        }
+        Ok(Err(_)) => {
+            warn!(
+                extension_id = %extension_id,
+                "Failed to send message to extension: stdin writer channel closed"
+            );
+        }
+        Err(_) => {
+            warn!(
+                extension_id = %extension_id,
+                timeout_secs = STDIN_SEND_TIMEOUT.as_secs(),
+                "Timed out sending message to extension: stdin writer queue full"
             );
         }
     }
@@ -282,6 +394,8 @@ pub enum CrashEvent {
 #[derive(Debug, Clone, Copy)]
 pub enum IpcFailureStage {
     ReadLength,
+    ReadPayload,
+    DrainOversized,
 }
 
 impl CrashEvent {
@@ -350,10 +464,10 @@ pub struct IsolatedExtension {
     extension_id: String,
     /// Path to extension binary
     extension_path: std::path::PathBuf,
-    /// Child process handle
-    process: Mutex<Option<Child>>,
-    /// Stdin writer (for sending messages)
-    stdin: Arc<Mutex<Option<BufWriter<std::process::ChildStdin>>>>,
+    /// Child process handle (shared with receiver thread for clean reaping on crash)
+    process: Arc<Mutex<Option<Child>>>,
+    /// Bounded channel feeding the dedicated OS stdin writer thread
+    stdin_tx: StdinSenderSlot,
     /// In-flight request tracker
     in_flight: InFlightRequests,
     /// Shutdown signal for the receiver thread
@@ -384,11 +498,13 @@ pub struct IsolatedExtension {
     active_sessions: Arc<tokio::sync::RwLock<std::collections::HashSet<String>>>,
     /// ✨ FIX: Session invalidation callback - called when extension restarts
     session_invalidation_tx: Mutex<Option<tokio::sync::mpsc::UnboundedSender<String>>>,
-    /// Extension death notification channel
-    death_tx: Arc<Mutex<Option<broadcast::Sender<()>>>>,
+    /// Extension death notification channel (std::sync::Mutex so receiver thread never misses it)
+    death_tx: Arc<std::sync::Mutex<Option<broadcast::Sender<()>>>>,
     /// Capability provider for handling InvokeCapability requests from extension
     capability_provider:
         Arc<std::sync::RwLock<Option<Arc<dyn super::super::context::ExtensionCapabilityProvider>>>>,
+    /// Optional manifest-declared capability allowlist (None = unrestricted)
+    allowed_capabilities: Arc<std::sync::RwLock<Option<HashSet<String>>>>,
     /// Crash loop detection: consecutive crash count
     consecutive_crashes: AtomicU32,
     /// Human-readable reason for the most recent crash (exited/signal/IPC
@@ -413,8 +529,8 @@ impl IsolatedExtension {
         Self {
             extension_id: extension_id.into(),
             extension_path: extension_path.into(),
-            process: Mutex::new(None),
-            stdin: Arc::new(Mutex::new(None)),
+            process: Arc::new(Mutex::new(None)),
+            stdin_tx: Arc::new(std::sync::RwLock::new(None)),
             in_flight: InFlightRequests::new(Duration::from_secs(config.command_timeout_secs)),
             shutdown_tx: Mutex::new(None),
             descriptor: Mutex::new(None),
@@ -428,8 +544,9 @@ impl IsolatedExtension {
             ipc_buffer_pool,
             active_sessions: Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())),
             session_invalidation_tx: Mutex::new(None),
-            death_tx: Arc::new(Mutex::new(None)),
+            death_tx: Arc::new(std::sync::Mutex::new(None)),
             capability_provider: Arc::new(std::sync::RwLock::new(None)),
+            allowed_capabilities: Arc::new(std::sync::RwLock::new(None)),
             start_time: Mutex::new(None),
             // Crash loop detection
             consecutive_crashes: AtomicU32::new(0),
@@ -694,13 +811,23 @@ impl IsolatedExtension {
             );
         }
 
+        // Load optional manifest-declared capability allowlist for host-side gating
+        {
+            let allowed = load_manifest_allowed_capabilities(&extension_dir_absolute);
+            let mut guard = self
+                .allowed_capabilities
+                .write()
+                .unwrap_or_else(|e| e.into_inner());
+            *guard = allowed;
+        }
+
         let mut child = cmd
             .spawn()
             .map_err(|e| IsolatedExtensionError::SpawnFailed(e.to_string()))?;
 
-        let stdin = BufWriter::new(child.stdin.take().ok_or_else(|| {
+        let child_stdin = child.stdin.take().ok_or_else(|| {
             IsolatedExtensionError::SpawnFailed("Child stdin not available".to_string())
-        })?);
+        })?;
         let stdout = BufReader::new(child.stdout.take().ok_or_else(|| {
             IsolatedExtensionError::SpawnFailed("Child stdout not available".to_string())
         })?);
@@ -712,10 +839,50 @@ impl IsolatedExtension {
         let pid = child.id();
 
         *process_guard = Some(child);
-        *self.stdin.lock().await = Some(stdin);
         *self.process_id.lock().await = Some(pid);
         self.running.store(true, Ordering::SeqCst);
         *self.start_time.lock().await = Some(SystemTime::now());
+
+        // Spawn dedicated OS writer thread fed by a bounded mpsc channel so
+        // blocking pipe writes never wedge Tokio worker threads or deadlock ping()/stop().
+        let (stdin_tx, mut stdin_rx) =
+            tokio::sync::mpsc::channel::<Vec<u8>>(STDIN_WRITER_QUEUE_CAPACITY);
+        {
+            let mut guard = self.stdin_tx.write().unwrap_or_else(|e| e.into_inner());
+            *guard = Some(stdin_tx);
+        }
+        let writer_ext_id = self.extension_id.clone();
+        let writer_running = self.running.clone();
+        std::thread::Builder::new()
+            .name(format!("ext-stdin-{}", self.extension_id))
+            .spawn(move || {
+                let mut writer = BufWriter::new(child_stdin);
+                while let Some(bytes) = stdin_rx.blocking_recv() {
+                    if let Err(e) = writer.write_all(&bytes).and_then(|_| writer.flush()) {
+                        if writer_running.load(Ordering::SeqCst) {
+                            warn!(
+                                extension_id = %writer_ext_id,
+                                error = %e,
+                                "Stdin writer thread failed to write IPC frame to extension"
+                            );
+                        } else {
+                            debug!(
+                                extension_id = %writer_ext_id,
+                                error = %e,
+                                "Stdin writer thread stopped after shutdown"
+                            );
+                        }
+                        break;
+                    }
+                }
+                debug!(extension_id = %writer_ext_id, "Stdin writer thread exiting");
+            })
+            .map_err(|e| {
+                IsolatedExtensionError::SpawnFailed(format!(
+                    "Failed to spawn stdin writer thread: {}",
+                    e
+                ))
+            })?;
 
         // Start the background receiver thread
         let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel();
@@ -742,7 +909,7 @@ impl IsolatedExtension {
         };
 
         let extension_id_for_push = self.extension_id.clone();
-        let stdin_ref = self.stdin.clone();
+        let stdin_tx_ref = self.stdin_tx.clone();
         let running_for_push = self.running.clone();
 
         tokio::spawn(async move {
@@ -761,19 +928,7 @@ impl IsolatedExtension {
                             timestamp: chrono::Utc::now().timestamp_millis(),
                         };
 
-                        // Send message to extension
-                        if let Ok(frame) = msg.to_bytes() {
-                            let ipc_frame = IpcFrame::new(frame);
-                            let bytes = ipc_frame.encode();
-
-                            let mut stdin_guard: tokio::sync::MutexGuard<
-                                Option<BufWriter<std::process::ChildStdin>>,
-                            > = stdin_ref.lock().await;
-                            if let Some(stdin) = stdin_guard.as_mut() {
-                                let _ = stdin.write_all(&bytes);
-                                let _ = stdin.flush();
-                            }
-                        }
+                        send_message_to_extension(&stdin_tx_ref, &extension_id_for_push, msg).await;
                     }
                     None => {
                         tracing::info!(
@@ -790,8 +945,9 @@ impl IsolatedExtension {
         // Note: We need to register the request BEFORE sending the message to avoid race condition
         // The extension will respond with Ready message using request_id=0
 
-        // Register the request first
+        // Register the request first (RAII guard cancels request_id=0 on early error/drop)
         let rx = self.in_flight.register_with_id(0);
+        let mut init_guard = InFlightGuard::new(&self.in_flight, 0);
 
         // Then send the Init message
         self.send_message(&IpcMessage::Init {
@@ -837,6 +993,7 @@ impl IsolatedExtension {
                     ))
                 }
             })?;
+        init_guard.disarm();
 
         match response {
             IpcResponse::Ready { descriptor } => {
@@ -873,93 +1030,59 @@ impl IsolatedExtension {
         let extension_id = self.extension_id.clone();
         let in_flight = self.in_flight.clone();
         let running = self.running.clone();
+        let process = self.process.clone();
         // ✨ FIX: Pass buffer pool to receiver thread
         let ipc_buffer_pool = self.ipc_buffer_pool.clone();
         // Push output channel for forwarding PushOutput messages
         let push_output_tx = self.push_output_tx.clone();
         // Capability provider for handling InvokeCapability requests
         let capability_provider = self.capability_provider.clone();
-        // Stdin for sending responses
-        let stdin = self.stdin.clone();
+        // Optional manifest capability allowlist
+        let allowed_capabilities = self.allowed_capabilities.clone();
+        // Bounded stdin writer channel for sending responses
+        let stdin_tx = self.stdin_tx.clone();
         // Death notification channel
         let death_tx = self.death_tx.clone();
 
         std::thread::spawn(move || {
             debug!(extension_id = %extension_id, "Receiver thread started");
+            let mut exit_crash: Option<(CrashEvent, std::io::Error)> = None;
 
-            loop {
+            'recv_loop: loop {
                 // Check for shutdown signal (non-blocking)
                 match shutdown_rx.try_recv() {
                     Ok(()) => {
                         debug!(extension_id = %extension_id, "Receiver thread received shutdown");
-                        break;
+                        break 'recv_loop;
                     }
                     Err(std::sync::mpsc::TryRecvError::Empty) => {}
                     Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                         debug!(extension_id = %extension_id, "Shutdown channel disconnected");
-                        break;
+                        break 'recv_loop;
                     }
                 }
 
                 // Read length prefix (4 bytes) - this is blocking but that's OK in a dedicated thread
                 let mut len_bytes = [0u8; 4];
-                match stdout.read_exact(&mut len_bytes) {
-                    Ok(()) => {}
-                    Err(e) => {
-                        // 🔧 Phase 1: Structured crash detection
-                        let crash_event = if e.kind() == std::io::ErrorKind::UnexpectedEof {
-                            CrashEvent::UnexpectedExit {
-                                exit_code: None,
-                                signal: None,
-                            }
-                        } else if e.kind() == std::io::ErrorKind::BrokenPipe {
-                            CrashEvent::IpcFailure {
-                                reason: "Broken pipe".to_string(),
-                                stage: IpcFailureStage::ReadLength,
-                            }
-                        } else {
-                            CrashEvent::IpcFailure {
-                                reason: format!("{}: {}", e.kind(), e),
-                                stage: IpcFailureStage::ReadLength,
-                            }
-                        };
-
-                        warn!(
-                            extension_id = %extension_id,
-                            crash_event = %crash_event.description(),
-                            error_kind = ?e.kind(),
-                            error = %e,
-                            "Extension process crashed"
-                        );
-
-                        running.store(false, Ordering::SeqCst);
-
-                        // 🔧 FIX: Immediately reap the child process to prevent zombies.
-                        // On Unix, a dead child stays as a zombie until waitpid() is called.
-                        // The `Child` handle in `self.process` is behind a tokio async mutex
-                        // which this std thread cannot lock, so we use the raw PID instead.
-                        #[cfg(unix)]
-                        {
-                            let pid = child_pid as libc::pid_t;
-                            let mut status: libc::c_int = 0;
-                            let ret = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
-                            if ret > 0 {
-                                debug!(
-                                    extension_id = %extension_id,
-                                    pid = child_pid,
-                                    "Reaped crashed extension process (waitpid)"
-                                );
-                            }
+                if let Err(e) = stdout.read_exact(&mut len_bytes) {
+                    let crash_event = if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                        CrashEvent::UnexpectedExit {
+                            exit_code: None,
+                            signal: None,
                         }
-
-                        // Send death notification to manager
-                        if let Ok(tx_guard) = death_tx.try_lock() {
-                            if let Some(sender) = tx_guard.as_ref() {
-                                let _ = sender.send(());
-                            }
+                    } else if e.kind() == std::io::ErrorKind::BrokenPipe {
+                        CrashEvent::IpcFailure {
+                            reason: "Broken pipe".to_string(),
+                            stage: IpcFailureStage::ReadLength,
                         }
-                        break;
-                    }
+                    } else {
+                        CrashEvent::IpcFailure {
+                            reason: format!("{}: {}", e.kind(), e),
+                            stage: IpcFailureStage::ReadLength,
+                        }
+                    };
+                    exit_crash = Some((crash_event, e));
+                    break 'recv_loop;
                 }
 
                 let len = u32::from_le_bytes(len_bytes) as usize;
@@ -973,8 +1096,19 @@ impl IsolatedExtension {
                         let to_read = remaining.min(drain_buf.len());
                         if let Err(e) = stdout.read_exact(&mut drain_buf[..to_read]) {
                             error!(extension_id = %extension_id, error = %e, "Failed to drain oversized response");
-                            running.store(false, Ordering::SeqCst);
-                            break;
+                            let crash_event = if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                                CrashEvent::UnexpectedExit {
+                                    exit_code: None,
+                                    signal: None,
+                                }
+                            } else {
+                                CrashEvent::IpcFailure {
+                                    reason: format!("{}: {}", e.kind(), e),
+                                    stage: IpcFailureStage::DrainOversized,
+                                }
+                            };
+                            exit_crash = Some((crash_event, e));
+                            break 'recv_loop;
                         }
                         remaining -= to_read;
                     }
@@ -987,9 +1121,19 @@ impl IsolatedExtension {
 
                 if let Err(e) = stdout.read_exact(payload.as_mut()) {
                     error!(extension_id = %extension_id, error = %e, "Failed to read response payload");
-                    // Buffer automatically returned to pool when dropped
-                    running.store(false, Ordering::SeqCst);
-                    break;
+                    let crash_event = if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                        CrashEvent::UnexpectedExit {
+                            exit_code: None,
+                            signal: None,
+                        }
+                    } else {
+                        CrashEvent::IpcFailure {
+                            reason: format!("{}: {}", e.kind(), e),
+                            stage: IpcFailureStage::ReadPayload,
+                        }
+                    };
+                    exit_crash = Some((crash_event, e));
+                    break 'recv_loop;
                 }
 
                 // Parse response — segmented binary payloads (push hot
@@ -1038,6 +1182,34 @@ impl IsolatedExtension {
                             "Received CapabilityRequest from extension"
                         );
 
+                        // Enforce optional manifest capability allowlist
+                        let permitted = allowed_capabilities
+                            .read()
+                            .map(|guard| is_capability_allowed(guard.as_ref(), &capability))
+                            .unwrap_or(true);
+                        if !permitted {
+                            warn!(
+                                extension_id = %extension_id,
+                                capability = %capability,
+                                "Blocked capability request not declared in extension manifest"
+                            );
+                            let error_message = IpcMessage::CapabilityResult {
+                                request_id,
+                                result: serde_json::json!({}),
+                                error: Some(format!(
+                                    "Permission denied: extension '{}' is not permitted to invoke capability '{}'",
+                                    extension_id, capability
+                                )),
+                            };
+                            let stdin_clone = stdin_tx.clone();
+                            let ext_id = extension_id.clone();
+                            rt_handle.spawn(async move {
+                                send_message_to_extension(&stdin_clone, &ext_id, error_message)
+                                    .await;
+                            });
+                            continue;
+                        }
+
                         // Get the capability provider
                         let provider_opt = capability_provider.read()
                             .map_err(|e| {
@@ -1054,35 +1226,35 @@ impl IsolatedExtension {
                             ) {
                                 Some(c) => c,
                                 None => {
-                                    // Send error response as IpcMessage
+                                    // Send error response asynchronously via bounded writer channel
                                     let error_message = IpcMessage::CapabilityResult {
                                         request_id,
                                         result: serde_json::json!({}),
                                         error: Some(format!("Unknown capability: {}", capability)),
                                     };
-                                    send_message_to_extension(&stdin, &extension_id, error_message);
+                                    let stdin_clone = stdin_tx.clone();
+                                    let ext_id = extension_id.clone();
+                                    rt_handle.spawn(async move {
+                                        send_message_to_extension(
+                                            &stdin_clone,
+                                            &ext_id,
+                                            error_message,
+                                        )
+                                        .await;
+                                    });
                                     continue;
                                 }
                             };
 
                             // Spawn capability invocation onto the runtime so the receiver
                             // thread is NOT blocked while the capability runs.
-                            let stdin_clone = stdin.clone();
+                            let stdin_clone = stdin_tx.clone();
                             let ext_id = extension_id.clone();
                             rt_handle.spawn(async move {
-                                // Inject extension_id into params for device_register so the
-                                // capability provider can set adapter_id on the device config
-                                let params = match cap {
-                                    super::super::context::ExtensionCapability::DeviceRegister => {
-                                        let mut p = params.as_object().cloned().unwrap_or_default();
-                                        p.insert(
-                                            "_extension_id".to_string(),
-                                            serde_json::json!(ext_id),
-                                        );
-                                        serde_json::Value::Object(p)
-                                    }
-                                    _ => params,
-                                };
+                                // Always inject authoritative `_extension_id` for ALL capability
+                                // requests (overwriting any caller-supplied value) so providers
+                                // can enforce ownership and attribute events accurately.
+                                let params = inject_extension_id(params, &ext_id);
                                 let result = provider.invoke_capability(cap, &params).await;
 
                                 let message = match result {
@@ -1098,7 +1270,7 @@ impl IsolatedExtension {
                                     },
                                 };
 
-                                send_message_to_extension(&stdin_clone, &ext_id, message);
+                                send_message_to_extension(&stdin_clone, &ext_id, message).await;
                             });
                         } else {
                             // No capability provider configured
@@ -1111,7 +1283,12 @@ impl IsolatedExtension {
                                 result: serde_json::json!({}),
                                 error: Some("No capability provider configured".to_string()),
                             };
-                            send_message_to_extension(&stdin, &extension_id, error_message);
+                            let stdin_clone = stdin_tx.clone();
+                            let ext_id = extension_id.clone();
+                            rt_handle.spawn(async move {
+                                send_message_to_extension(&stdin_clone, &ext_id, error_message)
+                                    .await;
+                            });
                         }
                     }
                 } else if let Some(request_id) = response.request_id() {
@@ -1166,10 +1343,90 @@ impl IsolatedExtension {
                 // Note: payload is automatically returned to pool when dropped (RAII)
             }
 
+            // Consolidated cleanup for ANY receiver thread exit (EOF, broken pipe,
+            // mid-frame payload read error, oversized drain error, or shutdown).
+            running.store(false, Ordering::SeqCst);
+
             // Cancel any pending requests on exit (sync — no block_on needed)
             let count = in_flight.cancel_all();
             if count > 0 {
                 debug!(extension_id = %extension_id, count, "Cancelled pending requests");
+            }
+
+            if let Some((crash_event, io_err)) = exit_crash {
+                warn!(
+                    extension_id = %extension_id,
+                    crash_event = %crash_event.description(),
+                    error_kind = ?io_err.kind(),
+                    error = %io_err,
+                    "Extension process crashed"
+                );
+
+                // Reap the child process cross-platform to prevent zombies.
+                // Use try_lock so we never contend with stop()/start()/kill_internal().
+                let mut reaped = false;
+                if let Ok(mut guard) = process.try_lock() {
+                    if let Some(mut child) = guard.take() {
+                        for _ in 0..10 {
+                            match child.try_wait() {
+                                Ok(Some(status)) => {
+                                    debug!(
+                                        extension_id = %extension_id,
+                                        pid = child_pid,
+                                        ?status,
+                                        "Reaped crashed extension process"
+                                    );
+                                    reaped = true;
+                                    break;
+                                }
+                                Ok(None) => {
+                                    std::thread::sleep(Duration::from_millis(20));
+                                }
+                                Err(e) => {
+                                    debug!(
+                                        extension_id = %extension_id,
+                                        pid = child_pid,
+                                        error = %e,
+                                        "Error checking exited extension process"
+                                    );
+                                    reaped = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if !reaped {
+                            warn!(
+                                extension_id = %extension_id,
+                                pid = child_pid,
+                                "Extension process still alive after stdout EOF/error, force killing to reap"
+                            );
+                            let _ = child.kill();
+                            let _ = child.wait();
+                            reaped = true;
+                        }
+                    }
+                }
+                if !reaped {
+                    #[cfg(unix)]
+                    {
+                        let pid = child_pid as libc::pid_t;
+                        let mut status: libc::c_int = 0;
+                        let ret = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
+                        if ret > 0 {
+                            debug!(
+                                extension_id = %extension_id,
+                                pid = child_pid,
+                                "Reaped crashed extension process (waitpid)"
+                            );
+                        }
+                    }
+                }
+
+                // Send death notification to manager
+                let tx_guard = death_tx.lock().unwrap_or_else(|e| e.into_inner());
+                if let Some(sender) = tx_guard.as_ref() {
+                    let _ = sender.send(());
+                }
             }
 
             debug!(extension_id = %extension_id, "Receiver thread exiting");
@@ -1187,24 +1444,37 @@ impl IsolatedExtension {
         // Register for ShutdownAck before sending Shutdown message.
         // The runner should respond with IpcResponse::ShutdownAck.
         let rx = self.in_flight.register_with_id(0);
+        let mut shutdown_ack_guard = InFlightGuard::new(&self.in_flight, 0);
 
-        // Send shutdown message to extension FIRST (before killing receiver thread)
-        // The runner will respond with ShutdownAck and then exit
-        let _ = self.send_message(&IpcMessage::Shutdown).await;
-
-        // Wait for ShutdownAck with a 2-second timeout (instead of blind sleep).
-        // This gives the extension time to flush state via its stop() lifecycle.
-        match self
-            .in_flight
-            .wait_with_timeout(0, rx, std::time::Duration::from_secs(2))
+        // Send shutdown message with a short 1s timeout so a wedged extension
+        // (full stdin pipe) cannot block stop(); proceed immediately to SIGKILL if blocked.
+        let shutdown_sent = self
+            .send_message_with_timeout(&IpcMessage::Shutdown, Duration::from_secs(1))
             .await
-        {
-            Ok(_) => {
-                debug!(extension_id = %self.extension_id, "Received ShutdownAck from extension");
+            .is_ok();
+
+        if shutdown_sent {
+            // Wait for ShutdownAck with a 2-second timeout (instead of blind sleep).
+            // This gives the extension time to flush state via its stop() lifecycle.
+            match self
+                .in_flight
+                .wait_with_timeout(0, rx, std::time::Duration::from_secs(2))
+                .await
+            {
+                Ok(_) => {
+                    shutdown_ack_guard.disarm();
+                    debug!(extension_id = %self.extension_id, "Received ShutdownAck from extension");
+                }
+                Err(_) => {
+                    warn!(extension_id = %self.extension_id, "Timeout waiting for ShutdownAck, proceeding with shutdown");
+                }
             }
-            Err(_) => {
-                warn!(extension_id = %self.extension_id, "Timeout waiting for ShutdownAck, proceeding with shutdown");
-            }
+        } else {
+            drop(shutdown_ack_guard);
+            warn!(
+                extension_id = %self.extension_id,
+                "Failed or timed out sending Shutdown to extension, proceeding immediately to SIGKILL"
+            );
         }
 
         // Now send shutdown signal to receiver thread
@@ -1212,39 +1482,49 @@ impl IsolatedExtension {
             let _ = tx.send(());
         }
 
-        // ✅ FIX: Wait for process to exit with timeout
-        // If graceful shutdown fails, force kill after 5 seconds
-        if let Some(mut child) = process_guard.take() {
-            // ✅ FIX: Wait with polling to prevent hanging on stuck processes
-            let start = std::time::Instant::now();
-            let timeout = std::time::Duration::from_secs(5);
+        // Close stdin writer channel so the OS writer thread exits (and signals EOF to child)
+        {
+            let mut guard = self.stdin_tx.write().unwrap_or_else(|e| e.into_inner());
+            *guard = None;
+        }
 
-            loop {
-                match child.try_wait() {
-                    Ok(Some(status)) => {
-                        debug!(extension_id = %self.extension_id, ?status, "Extension process exited");
-                        break;
-                    }
-                    Ok(None) => {
-                        if start.elapsed() >= timeout {
-                            warn!(extension_id = %self.extension_id, "Process did not exit, force killing");
+        // ✅ FIX: Wait for process to exit with timeout
+        // If Shutdown couldn't be sent (wedged pipe), force kill immediately;
+        // otherwise poll asynchronously with tokio::time::sleep up to 5 seconds.
+        if let Some(mut child) = process_guard.take() {
+            if !shutdown_sent {
+                let _ = child.kill();
+                let _ = child.wait();
+            } else {
+                let start = std::time::Instant::now();
+                let timeout = std::time::Duration::from_secs(5);
+
+                loop {
+                    match child.try_wait() {
+                        Ok(Some(status)) => {
+                            debug!(extension_id = %self.extension_id, ?status, "Extension process exited");
+                            break;
+                        }
+                        Ok(None) => {
+                            if start.elapsed() >= timeout {
+                                warn!(extension_id = %self.extension_id, "Process did not exit, force killing");
+                                let _ = child.kill();
+                                let _ = child.wait();
+                                break;
+                            }
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        }
+                        Err(e) => {
+                            warn!(extension_id = %self.extension_id, error = %e, "Error waiting for process");
                             let _ = child.kill();
                             let _ = child.wait();
                             break;
                         }
-                        std::thread::sleep(std::time::Duration::from_millis(100));
-                    }
-                    Err(e) => {
-                        warn!(extension_id = %self.extension_id, error = %e, "Error waiting for process");
-                        let _ = child.kill();
-                        let _ = child.wait();
-                        break;
                     }
                 }
             }
         }
 
-        *self.stdin.lock().await = None;
         self.running.store(false, Ordering::SeqCst);
 
         // Cancel any pending requests
@@ -1300,8 +1580,9 @@ impl IsolatedExtension {
             counter.fetch_sub(1, Ordering::SeqCst);
         });
 
-        // Register the request and get a receiver
+        // Register the request and get a receiver (RAII guard cancels on send error/drop)
         let (request_id, rx) = self.in_flight.register();
+        let mut in_flight_guard = InFlightGuard::new(&self.in_flight, request_id);
 
         debug!(
             extension_id = %self.extension_id,
@@ -1329,7 +1610,10 @@ impl IsolatedExtension {
             )
             .await
         {
-            Ok(r) => r,
+            Ok(r) => {
+                in_flight_guard.disarm();
+                r
+            }
             Err(super::in_flight::InFlightError::Timeout(ms)) => {
                 // The extension process is stuck (infinite loop, deadlock,
                 // unreachable network call). Previously we only cancelled the
@@ -1381,6 +1665,7 @@ impl IsolatedExtension {
         }
 
         let (request_id, rx) = self.in_flight.register();
+        let mut in_flight_guard = InFlightGuard::new(&self.in_flight, request_id);
 
         self.send_message_with_retry(&IpcMessage::ProduceMetrics { request_id })
             .await?;
@@ -1406,6 +1691,7 @@ impl IsolatedExtension {
                     IsolatedExtensionError::IpcError("Response channel closed".to_string())
                 }
             })?;
+        in_flight_guard.disarm();
 
         match response {
             IpcResponse::Metrics { metrics, .. } => Ok(metrics),
@@ -1428,6 +1714,7 @@ impl IsolatedExtension {
         }
 
         let (request_id, rx) = self.in_flight.register();
+        let mut in_flight_guard = InFlightGuard::new(&self.in_flight, request_id);
 
         self.send_message_with_retry(&IpcMessage::GetDescriptor { request_id })
             .await?;
@@ -1453,6 +1740,7 @@ impl IsolatedExtension {
                     IsolatedExtensionError::IpcError("Response channel closed".to_string())
                 }
             })?;
+        in_flight_guard.disarm();
 
         match response {
             IpcResponse::Descriptor { descriptor, .. } => {
@@ -1483,6 +1771,7 @@ impl IsolatedExtension {
         }
 
         let (request_id, rx) = self.in_flight.register();
+        let mut in_flight_guard = InFlightGuard::new(&self.in_flight, request_id);
 
         self.send_message_with_retry(&IpcMessage::GetStats { request_id })
             .await?;
@@ -1497,6 +1786,7 @@ impl IsolatedExtension {
                     IsolatedExtensionError::IpcError("Response channel closed".to_string())
                 }
             })?;
+        in_flight_guard.disarm();
 
         match response {
             IpcResponse::Stats {
@@ -1597,6 +1887,7 @@ impl IsolatedExtension {
 
         // Register the request and get a receiver
         let (request_id, rx) = self.in_flight.register();
+        let mut in_flight_guard = InFlightGuard::new(&self.in_flight, request_id);
 
         let _start = Instant::now();
 
@@ -1629,6 +1920,7 @@ impl IsolatedExtension {
                     IsolatedExtensionError::IpcError("Response channel closed".to_string())
                 }
             })?;
+        in_flight_guard.disarm();
 
         match response {
             IpcResponse::BatchResults {
@@ -1675,6 +1967,7 @@ impl IsolatedExtension {
         }
 
         let (request_id, rx) = self.in_flight.register();
+        let mut in_flight_guard = InFlightGuard::new(&self.in_flight, request_id);
 
         if self
             .send_message(&IpcMessage::HealthCheck { request_id })
@@ -1689,7 +1982,10 @@ impl IsolatedExtension {
             .wait_with_timeout(request_id, rx, Duration::from_secs(5))
             .await
         {
-            Ok(IpcResponse::Health { healthy, .. }) => Ok(healthy),
+            Ok(IpcResponse::Health { healthy, .. }) => {
+                in_flight_guard.disarm();
+                Ok(healthy)
+            }
             _ => Ok(false),
         }
     }
@@ -1707,6 +2003,7 @@ impl IsolatedExtension {
         }
 
         let (request_id, rx) = self.in_flight.register();
+        let mut in_flight_guard = InFlightGuard::new(&self.in_flight, request_id);
 
         self.send_message_with_retry(&IpcMessage::GetStreamCapability { request_id })
             .await?;
@@ -1721,6 +2018,7 @@ impl IsolatedExtension {
                     IsolatedExtensionError::IpcError("Response channel closed".to_string())
                 }
             })?;
+        in_flight_guard.disarm();
 
         match response {
             IpcResponse::StreamCapability { capability, .. } => match capability {
@@ -1760,6 +2058,7 @@ impl IsolatedExtension {
 
         // Register request and get receiver for response
         let (request_id, rx) = self.in_flight.register();
+        let mut in_flight_guard = InFlightGuard::new(&self.in_flight, request_id);
 
         self.send_message(&IpcMessage::InitStreamSession {
             request_id,
@@ -1770,11 +2069,18 @@ impl IsolatedExtension {
         })
         .await?;
 
-        // Wait for StreamSessionInit response with timeout
-        let response = tokio::time::timeout(Duration::from_secs(10), rx)
+        // Wait for StreamSessionInit response with timeout (auto-cancels on timeout)
+        let response = self
+            .in_flight
+            .wait_with_timeout(request_id, rx, Duration::from_secs(10))
             .await
-            .map_err(|_| IsolatedExtensionError::Timeout(10000))?
-            .map_err(|_| IsolatedExtensionError::ChannelClosed)?;
+            .map_err(|e| match e {
+                super::in_flight::InFlightError::Timeout(ms) => IsolatedExtensionError::Timeout(ms),
+                super::in_flight::InFlightError::ChannelClosed => {
+                    IsolatedExtensionError::ChannelClosed
+                }
+            })?;
+        in_flight_guard.disarm();
 
         match response {
             IpcResponse::StreamSessionInit { success: true, .. } => Ok(()),
@@ -1820,6 +2126,7 @@ impl IsolatedExtension {
 
         // Register request and get receiver for response
         let (request_id, rx) = self.in_flight.register();
+        let mut in_flight_guard = InFlightGuard::new(&self.in_flight, request_id);
 
         // Send message with request_id
         self.send_message(&IpcMessage::ProcessStreamChunk {
@@ -1829,11 +2136,18 @@ impl IsolatedExtension {
         })
         .await?;
 
-        // Wait for response with timeout (10s for streaming operations)
-        let response = tokio::time::timeout(Duration::from_secs(10), rx)
+        // Wait for response with timeout (10s for streaming operations, auto-cancels on timeout)
+        let response = self
+            .in_flight
+            .wait_with_timeout(request_id, rx, Duration::from_secs(10))
             .await
-            .map_err(|_| IsolatedExtensionError::Timeout(10000))?
-            .map_err(|_| IsolatedExtensionError::ChannelClosed)?;
+            .map_err(|e| match e {
+                super::in_flight::InFlightError::Timeout(ms) => IsolatedExtensionError::Timeout(ms),
+                super::in_flight::InFlightError::ChannelClosed => {
+                    IsolatedExtensionError::ChannelClosed
+                }
+            })?;
+        in_flight_guard.disarm();
 
         // Parse response
         match response {
@@ -1890,6 +2204,7 @@ impl IsolatedExtension {
 
         // Register request and get receiver for response
         let (request_id, rx) = self.in_flight.register();
+        let mut in_flight_guard = InFlightGuard::new(&self.in_flight, request_id);
 
         self.send_message(&IpcMessage::CloseStreamSession {
             request_id,
@@ -1897,11 +2212,18 @@ impl IsolatedExtension {
         })
         .await?;
 
-        // Wait for StreamSessionClosed response with timeout
-        let response = tokio::time::timeout(Duration::from_secs(10), rx)
+        // Wait for StreamSessionClosed response with timeout (auto-cancels on timeout)
+        let response = self
+            .in_flight
+            .wait_with_timeout(request_id, rx, Duration::from_secs(10))
             .await
-            .map_err(|_| IsolatedExtensionError::Timeout(10000))?
-            .map_err(|_| IsolatedExtensionError::ChannelClosed)?;
+            .map_err(|e| match e {
+                super::in_flight::InFlightError::Timeout(ms) => IsolatedExtensionError::Timeout(ms),
+                super::in_flight::InFlightError::ChannelClosed => {
+                    IsolatedExtensionError::ChannelClosed
+                }
+            })?;
+        in_flight_guard.disarm();
 
         match response {
             IpcResponse::StreamSessionClosed { total_frames, .. } => {
@@ -2025,7 +2347,8 @@ impl IsolatedExtension {
     /// This is called when the extension process dies unexpectedly.
     /// The provided sender is used to notify the manager to restart the extension.
     pub async fn set_death_notification(&self, tx: broadcast::Sender<()>) {
-        *self.death_tx.lock().await = Some(tx);
+        let mut guard = self.death_tx.lock().unwrap_or_else(|e| e.into_inner());
+        *guard = Some(tx);
     }
 
     // =========================================================================
@@ -2057,6 +2380,7 @@ impl IsolatedExtension {
 
         // Register request and get receiver for response
         let (request_id, rx) = self.in_flight.register();
+        let mut in_flight_guard = InFlightGuard::new(&self.in_flight, request_id);
 
         debug!(
             extension_id = %self.extension_id,
@@ -2087,6 +2411,7 @@ impl IsolatedExtension {
                     IsolatedExtensionError::IpcError("Response channel closed".to_string())
                 }
             })?;
+        in_flight_guard.disarm();
 
         match response {
             IpcResponse::ChunkResult {
@@ -2134,6 +2459,7 @@ impl IsolatedExtension {
 
         // Register request and get receiver for response
         let (request_id, rx) = self.in_flight.register();
+        let mut in_flight_guard = InFlightGuard::new(&self.in_flight, request_id);
 
         debug!(
             extension_id = %self.extension_id,
@@ -2164,6 +2490,7 @@ impl IsolatedExtension {
                     IsolatedExtensionError::IpcError("Response channel closed".to_string())
                 }
             })?;
+        in_flight_guard.disarm();
 
         match response {
             IpcResponse::PushStarted { success, error, .. } => {
@@ -2199,6 +2526,7 @@ impl IsolatedExtension {
 
         // Register request and get receiver for response
         let (request_id, rx) = self.in_flight.register();
+        let mut in_flight_guard = InFlightGuard::new(&self.in_flight, request_id);
 
         debug!(
             extension_id = %self.extension_id,
@@ -2229,6 +2557,7 @@ impl IsolatedExtension {
                     IsolatedExtensionError::IpcError("Response channel closed".to_string())
                 }
             })?;
+        in_flight_guard.disarm();
 
         match response {
             IpcResponse::PushStopped { success, .. } => {
@@ -2348,10 +2677,20 @@ impl IsolatedExtension {
     // Internal helper methods
 
     async fn send_message(&self, msg: &IpcMessage) -> IsolatedResult<()> {
-        let mut stdin_guard = self.stdin.lock().await;
+        self.send_message_with_timeout(msg, STDIN_SEND_TIMEOUT)
+            .await
+    }
 
-        let stdin = stdin_guard
-            .as_mut()
+    async fn send_message_with_timeout(
+        &self,
+        msg: &IpcMessage,
+        timeout: Duration,
+    ) -> IsolatedResult<()> {
+        let tx = self
+            .stdin_tx
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
             .ok_or(IsolatedExtensionError::NotInitialized)?;
 
         let payload = msg
@@ -2361,14 +2700,13 @@ impl IsolatedExtension {
         let frame = IpcFrame::new(payload);
         let bytes = frame.encode();
 
-        stdin
-            .write_all(&bytes)
-            .map_err(|e| IsolatedExtensionError::IpcError(e.to_string()))?;
-        stdin
-            .flush()
-            .map_err(|e| IsolatedExtensionError::IpcError(e.to_string()))?;
-
-        Ok(())
+        match tokio::time::timeout(timeout, tx.send(bytes)).await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(_)) => Err(IsolatedExtensionError::IpcError(
+                "Extension stdin writer channel closed".to_string(),
+            )),
+            Err(_) => Err(IsolatedExtensionError::Timeout(timeout.as_millis() as u64)),
+        }
     }
 
     /// 🔧 Phase 2: Send message with retry logic for transient failures
@@ -2381,7 +2719,16 @@ impl IsolatedExtension {
             match self.send_message(msg).await {
                 Ok(()) => return Ok(()),
                 Err(e) => {
-                    if retries >= max_retries {
+                    // Don't burn multiple full send timeouts on a wedged writer queue
+                    // or uninitialized channel; fail fast so callers/health monitors react.
+                    if retries >= max_retries
+                        || matches!(
+                            e,
+                            IsolatedExtensionError::Timeout(_)
+                                | IsolatedExtensionError::NotInitialized
+                                | IsolatedExtensionError::NotRunning
+                        )
+                    {
                         return Err(e);
                     }
 
@@ -2439,6 +2786,12 @@ impl IsolatedExtension {
         // Send shutdown signal to receiver thread
         if let Some(tx) = self.shutdown_tx.lock().await.take() {
             let _ = tx.send(());
+        }
+
+        // Drop stdin writer channel so the dedicated writer thread exits once the child dies
+        {
+            let mut guard = self.stdin_tx.write().unwrap_or_else(|e| e.into_inner());
+            *guard = None;
         }
 
         if let Some(mut child) = process_guard.take() {
@@ -2704,28 +3057,35 @@ impl IsolatedExtension {
     /// This method queries the extension process for its event subscriptions
     /// via the GetEventSubscriptions IPC message.
     pub async fn get_event_subscriptions(&self) -> IsolatedResult<Vec<String>> {
-        // Register a new request
+        // Register a new request (RAII guard cancels on send error/timeout/drop)
         let (request_id, rx) = self.in_flight.register();
+        let mut in_flight_guard = InFlightGuard::new(&self.in_flight, request_id);
 
         // Send GetEventSubscriptions message
         self.send_message_with_retry(&IpcMessage::GetEventSubscriptions { request_id })
             .await?;
 
-        // Wait for response with timeout
+        // Wait for response with timeout (auto-cancels request_id on timeout)
         let timeout_duration = Duration::from_secs(5);
-        match tokio::time::timeout(timeout_duration, rx).await {
-            Ok(Ok(response)) => match response {
-                IpcResponse::EventSubscriptions { event_types, .. } => Ok(event_types),
-                IpcResponse::Error { error, .. } => Err(IsolatedExtensionError::SpawnFailed(error)),
-                _ => Err(IsolatedExtensionError::SpawnFailed(
-                    "Unexpected response type".to_string(),
-                )),
-            },
-            Ok(Err(_)) => Err(IsolatedExtensionError::SpawnFailed(
-                "Response channel closed".to_string(),
-            )),
-            Err(_) => Err(IsolatedExtensionError::SpawnFailed(
-                "Request timeout".to_string(),
+        let response = self
+            .in_flight
+            .wait_with_timeout(request_id, rx, timeout_duration)
+            .await
+            .map_err(|e| match e {
+                super::in_flight::InFlightError::Timeout(_) => {
+                    IsolatedExtensionError::SpawnFailed("Request timeout".to_string())
+                }
+                super::in_flight::InFlightError::ChannelClosed => {
+                    IsolatedExtensionError::SpawnFailed("Response channel closed".to_string())
+                }
+            })?;
+        in_flight_guard.disarm();
+
+        match response {
+            IpcResponse::EventSubscriptions { event_types, .. } => Ok(event_types),
+            IpcResponse::Error { error, .. } => Err(IsolatedExtensionError::SpawnFailed(error)),
+            _ => Err(IsolatedExtensionError::SpawnFailed(
+                "Unexpected response type".to_string(),
             )),
         }
     }
@@ -2806,33 +3166,35 @@ impl IsolatedExtension {
         if !self.running.load(Ordering::SeqCst) {
             return Err(IsolatedExtensionError::NotRunning);
         }
+        let probe_timeout = Duration::from_secs(self.config.health_check_timeout_secs.max(1));
         let (request_id, rx) = self.in_flight.register();
-        if let Err(e) = self
-            .send_message_with_retry(&IpcMessage::Ping {
+        let mut in_flight_guard = InFlightGuard::new(&self.in_flight, request_id);
+
+        // Send with bounded timeout so a wedged stdin pipe fails fast instead of deadlocking ping()
+        self.send_message_with_timeout(
+            &IpcMessage::Ping {
                 request_id,
                 timestamp: chrono::Utc::now().timestamp_millis(),
-            })
-            .await
-        {
-            // Cancel our own entry on send failure: a leaked pending entry
-            // pins pending_count() ≥ 1 forever, which makes the health
-            // monitor skip every future probe (hang detection silently dead).
-            self.in_flight.cancel(request_id);
-            return Err(e);
-        }
+            },
+            probe_timeout,
+        )
+        .await?;
+
         match self
             .in_flight
-            .wait_with_timeout(
-                request_id,
-                rx,
-                Duration::from_secs(self.config.health_check_timeout_secs.max(1)),
-            )
+            .wait_with_timeout(request_id, rx, probe_timeout)
             .await
         {
-            Ok(IpcResponse::Pong { .. }) => Ok(()),
-            Ok(other) => Err(IsolatedExtensionError::InvalidResponse(format!(
-                "expected Pong, got {other:?}"
-            ))),
+            Ok(IpcResponse::Pong { .. }) => {
+                in_flight_guard.disarm();
+                Ok(())
+            }
+            Ok(other) => {
+                in_flight_guard.disarm();
+                Err(IsolatedExtensionError::InvalidResponse(format!(
+                    "expected Pong, got {other:?}"
+                )))
+            }
             Err(super::in_flight::InFlightError::Timeout(ms)) => {
                 Err(IsolatedExtensionError::Timeout(ms))
             }
@@ -3034,6 +3396,12 @@ fn capture_stderr_loop<R: std::io::BufRead>(
 
 impl Drop for IsolatedExtension {
     fn drop(&mut self) {
+        // Close stdin writer channel so the OS writer thread closes the child's stdin
+        // (signaling graceful EOF) and exits cleanly.
+        if let Ok(mut guard) = self.stdin_tx.write() {
+            *guard = None;
+        }
+
         if let Ok(mut child) = self.process.try_lock() {
             if let Some(mut proc) = child.take() {
                 let extension_id = self.extension_id.clone();
@@ -3329,5 +3697,112 @@ mod tests {
             .description()
             .contains("IPC failure during ReadLength"));
         assert!(event.description().contains("Broken pipe"));
+    }
+
+    #[test]
+    fn test_inject_extension_id_overwrites_spoofed_value() {
+        let spoofed = serde_json::json!({
+            "device_id": "dev-1",
+            "_extension_id": "victim-ext"
+        });
+        let sanitized = inject_extension_id(spoofed, "attacker-ext");
+        assert_eq!(
+            sanitized.get("_extension_id").and_then(|v| v.as_str()),
+            Some("attacker-ext")
+        );
+        assert_eq!(
+            sanitized.get("device_id").and_then(|v| v.as_str()),
+            Some("dev-1")
+        );
+
+        // Null params should also receive _extension_id
+        let from_null = inject_extension_id(Value::Null, "ext-a");
+        assert_eq!(
+            from_null.get("_extension_id").and_then(|v| v.as_str()),
+            Some("ext-a")
+        );
+    }
+
+    #[test]
+    fn test_manifest_allowed_capabilities_gate() {
+        let tmp = scratch_dir("caps");
+        // No manifest -> unrestricted
+        assert!(load_manifest_allowed_capabilities(&tmp).is_none());
+        assert!(is_capability_allowed(None, "device_unregister"));
+
+        // Manifest with empty permissions -> unrestricted
+        std::fs::write(tmp.join("manifest.json"), r#"{"id":"e","permissions":[]}"#).unwrap();
+        assert!(load_manifest_allowed_capabilities(&tmp).is_none());
+
+        // Manifest with explicit required_capabilities -> enforced
+        std::fs::write(
+            tmp.join("manifest.json"),
+            r#"{"id":"e","required_capabilities":["device_metrics_read","event_publish"]}"#,
+        )
+        .unwrap();
+        let allowed = load_manifest_allowed_capabilities(&tmp);
+        assert!(is_capability_allowed(
+            allowed.as_ref(),
+            "device_metrics_read"
+        ));
+        assert!(is_capability_allowed(allowed.as_ref(), "event_publish"));
+        assert!(!is_capability_allowed(
+            allowed.as_ref(),
+            "device_unregister"
+        ));
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_in_flight_guard_cancels_on_drop_and_respects_disarm() {
+        let in_flight = InFlightRequests::new(Duration::from_secs(5));
+
+        let (id1, _rx1) = in_flight.register();
+        assert_eq!(in_flight.pending_count(), 1);
+        {
+            let _guard = InFlightGuard::new(&in_flight, id1);
+            // Dropped without disarm -> cancels id1
+        }
+        assert_eq!(in_flight.pending_count(), 0);
+
+        let (id2, _rx2) = in_flight.register();
+        assert_eq!(in_flight.pending_count(), 1);
+        {
+            let mut guard = InFlightGuard::new(&in_flight, id2);
+            guard.disarm();
+        }
+        assert_eq!(in_flight.pending_count(), 1);
+        in_flight.cancel(id2);
+        assert_eq!(in_flight.pending_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_send_message_times_out_when_writer_queue_full() {
+        let ext = IsolatedExtension::new(
+            "wedged-ext",
+            "/nonexistent/extension.dylib",
+            IsolatedExtensionConfig::default(),
+        );
+        // Install a capacity-1 channel whose receiver is never drained (simulating wedged pipe)
+        let (tx, _rx) = tokio::sync::mpsc::channel::<Vec<u8>>(1);
+        tx.try_send(vec![1, 2, 3]).unwrap();
+        *ext.stdin_tx.write().unwrap() = Some(tx);
+
+        let result = ext
+            .send_message_with_timeout(
+                &IpcMessage::Ping {
+                    request_id: 1,
+                    timestamp: 0,
+                },
+                Duration::from_millis(50),
+            )
+            .await;
+
+        assert!(
+            matches!(result, Err(IsolatedExtensionError::Timeout(_))),
+            "expected Timeout on full stdin queue, got {:?}",
+            result
+        );
     }
 }

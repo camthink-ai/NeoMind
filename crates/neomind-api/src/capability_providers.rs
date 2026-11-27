@@ -396,6 +396,26 @@ impl DeviceCapabilityProvider {
                 ExtensionCapability::DeviceUnregister,
             ))?;
 
+        // Enforce host-side device ownership when invoked by an extension:
+        // an extension may only unregister devices whose adapter_id matches its own ID.
+        if let Some(ext_id) = params.get("_extension_id").and_then(|v| v.as_str()) {
+            let device = device_service.get_device(device_id).ok_or_else(|| {
+                CapabilityError::InvalidParameters(format!("Device '{}' not found", device_id))
+            })?;
+            if device.adapter_id.as_deref() != Some(ext_id) {
+                tracing::warn!(
+                    extension_id = %ext_id,
+                    device_id = %device_id,
+                    device_owner = ?device.adapter_id,
+                    "Rejected unauthorized device_unregister attempt"
+                );
+                return Err(CapabilityError::ProviderError(format!(
+                    "Permission denied: extension '{}' cannot unregister device '{}' owned by {:?}",
+                    ext_id, device_id, device.adapter_id
+                )));
+            }
+        }
+
         device_service
             .unregister_device(device_id)
             .await
@@ -499,7 +519,26 @@ impl EventCapabilityProvider {
             .and_then(|v| v.as_str())
             .ok_or_else(|| CapabilityError::InvalidParameters("Missing event_type".to_string()))?;
 
-        let payload = params.get("payload").cloned().unwrap_or(json!({}));
+        let mut payload = params.get("payload").cloned().unwrap_or(json!({}));
+
+        // Attach authoritative source extension ID so extension-published custom events
+        // are attributable and auditable (overwriting any caller-supplied value).
+        if let Some(ext_id) = params.get("_extension_id").and_then(|v| v.as_str()) {
+            match &mut payload {
+                Value::Object(map) => {
+                    map.insert(
+                        "_source_extension_id".to_string(),
+                        Value::String(ext_id.to_string()),
+                    );
+                }
+                _ => {
+                    payload = json!({
+                        "value": payload,
+                        "_source_extension_id": ext_id,
+                    });
+                }
+            }
+        }
 
         self.event_bus
             .publish_sync(neomind_core::event::NeoMindEvent::Custom {
@@ -955,6 +994,17 @@ impl ExtensionCallCapabilityProvider {
             .ok_or_else(|| {
                 CapabilityError::InvalidParameters("Missing extension_id".to_string())
             })?;
+
+        // Loop guard: prevent an extension from calling itself via extension_call,
+        // which would deadlock its single-threaded IPC command loop.
+        if let Some(caller_id) = params.get("_extension_id").and_then(|v| v.as_str()) {
+            if caller_id == extension_id {
+                return Err(CapabilityError::InvalidParameters(format!(
+                    "Extension '{}' cannot call itself via extension_call",
+                    caller_id
+                )));
+            }
+        }
 
         let command = params
             .get("command")
@@ -2550,3 +2600,183 @@ fn parse_command_from_json(v: &Value) -> Option<neomind_devices::CommandDefiniti
 
 // ============================================================================
 // HTTP Capability Provider
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use neomind_devices::{ConnectionConfig, DeviceConfig, DeviceRegistry};
+
+    #[tokio::test]
+    async fn test_device_unregister_enforces_extension_ownership() {
+        let registry = Arc::new(DeviceRegistry::new());
+        let event_bus = EventBus::new();
+        let device_service = Arc::new(DeviceService::new(registry, event_bus));
+
+        // Register the device type template first
+        device_service
+            .register_template(neomind_devices::DeviceTypeTemplate {
+                device_type: "sensor".to_string(),
+                name: "Test Sensor".to_string(),
+                description: "Test".to_string(),
+                categories: vec![],
+                mode: neomind_devices::DeviceTypeMode::Full,
+                metrics: vec![],
+                uplink_samples: vec![],
+                commands: vec![],
+                default_offline_timeout_secs: None,
+                store_raw: None,
+                builtin_version: None,
+                ct_prov: None,
+            })
+            .await
+            .unwrap();
+
+        // Register a device owned by "ext-alpha"
+        device_service
+            .register_device(DeviceConfig {
+                device_id: "dev-alpha-1".to_string(),
+                name: "Alpha Sensor".to_string(),
+                device_type: "sensor".to_string(),
+                adapter_type: "extension".to_string(),
+                connection_config: ConnectionConfig::default(),
+                adapter_id: Some("ext-alpha".to_string()),
+                last_seen: 0,
+                offline_timeout_secs: None,
+            })
+            .await
+            .unwrap();
+
+        // Register an unowned device (adapter_id = None, e.g. manual/non-extension device)
+        let _ = device_service
+            .register_device(DeviceConfig {
+                device_id: "dev-unowned-1".to_string(),
+                name: "Unowned Sensor".to_string(),
+                device_type: "sensor".to_string(),
+                adapter_type: "mqtt".to_string(),
+                connection_config: ConnectionConfig::default(),
+                adapter_id: None,
+                last_seen: 0,
+                offline_timeout_secs: None,
+            })
+            .await;
+        assert!(
+            device_service.get_device("dev-unowned-1").is_some(),
+            "unowned device must be present in registry"
+        );
+
+        let services =
+            CapabilityServices::new().with_service(keys::DEVICE_SERVICE, device_service.clone());
+        let provider = DeviceCapabilityProvider::new(services);
+
+        // Extension B cannot unregister Extension A's device
+        let err = provider
+            .invoke_capability(
+                ExtensionCapability::DeviceUnregister,
+                &json!({
+                    "device_id": "dev-alpha-1",
+                    "_extension_id": "ext-beta",
+                }),
+            )
+            .await
+            .expect_err("ext-beta must not unregister ext-alpha's device");
+        assert!(
+            err.to_string().contains("Permission denied"),
+            "unexpected error: {}",
+            err
+        );
+        assert!(device_service.get_device("dev-alpha-1").is_some());
+
+        // Extension cannot unregister a non-extension (adapter_id = None) device
+        let err = provider
+            .invoke_capability(
+                ExtensionCapability::DeviceUnregister,
+                &json!({
+                    "device_id": "dev-unowned-1",
+                    "_extension_id": "ext-alpha",
+                }),
+            )
+            .await
+            .expect_err("ext-alpha must not unregister unowned device");
+        assert!(
+            err.to_string().contains("Permission denied"),
+            "unexpected error: {}",
+            err
+        );
+        assert!(device_service.get_device("dev-unowned-1").is_some());
+
+        // Extension A CAN unregister its own device
+        let res = provider
+            .invoke_capability(
+                ExtensionCapability::DeviceUnregister,
+                &json!({
+                    "device_id": "dev-alpha-1",
+                    "_extension_id": "ext-alpha",
+                }),
+            )
+            .await
+            .expect("owner extension should unregister its own device");
+        assert_eq!(res.get("success").and_then(|v| v.as_bool()), Some(true));
+        assert!(device_service.get_device("dev-alpha-1").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_event_publish_attaches_authoritative_source_extension_id() {
+        let event_bus = Arc::new(EventBus::new());
+        let mut rx = event_bus.subscribe();
+        let provider = EventCapabilityProvider::new(event_bus);
+
+        provider
+            .invoke_capability(
+                ExtensionCapability::EventPublish,
+                &json!({
+                    "event_type": "custom_alert",
+                    "payload": {
+                        "msg": "hello",
+                        "_source_extension_id": "spoofed-ext",
+                    },
+                    "_extension_id": "real-ext",
+                }),
+            )
+            .await
+            .unwrap();
+
+        let (event, _meta) = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+            .await
+            .expect("event should arrive")
+            .expect("channel should be open");
+
+        match event {
+            neomind_core::event::NeoMindEvent::Custom { event_type, data } => {
+                assert_eq!(event_type, "custom_alert");
+                assert_eq!(
+                    data.get("_source_extension_id").and_then(|v| v.as_str()),
+                    Some("real-ext")
+                );
+                assert_eq!(data.get("msg").and_then(|v| v.as_str()), Some("hello"));
+            }
+            other => panic!("expected Custom event, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_extension_call_rejects_self_recursion() {
+        let provider = ExtensionCallCapabilityProvider::new(CapabilityServices::new());
+        let err = provider
+            .invoke_capability(
+                ExtensionCapability::ExtensionCall,
+                &json!({
+                    "extension_id": "ext-self",
+                    "command": "ping",
+                    "_extension_id": "ext-self",
+                }),
+            )
+            .await
+            .expect_err("self-call should be rejected");
+        assert!(
+            err.to_string().contains("cannot call itself"),
+            "unexpected error: {}",
+            err
+        );
+    }
+}

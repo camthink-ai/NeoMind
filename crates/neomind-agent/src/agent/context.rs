@@ -117,6 +117,7 @@ pub fn compact_tool_results(messages: &[AgentMessage], keep_recent: usize) -> Ve
                     end_reason: None,
                     content_nodes: None,
                     content_version: None,
+                    attachments: None,
                     timestamp: msg.timestamp,
                 });
             }
@@ -439,6 +440,7 @@ pub fn compact_conversation(
             end_reason: None,
             content_nodes: None,
             content_version: None,
+            attachments: None,
             timestamp,
         });
     }

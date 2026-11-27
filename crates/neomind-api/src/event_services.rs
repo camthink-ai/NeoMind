@@ -75,12 +75,32 @@ impl TransformEventService {
                 tracing::info!("Transform event service started - subscribing to device events");
 
                 // Track pending device data and debounce timers
-                // (device_id -> (raw_data, latest_timestamp, timer_handle))
+                // (device_id -> (generation, AbortHandle))
                 // [bounded + shared] All three grow per device_id — dynamic MQTT
                 // client ids made them unbounded, and completed debounce handles
-                // lingered until the device's next event. Shared via
-                // parking_lot::Mutex so the debounce task can self-remove its
-                // handle; data maps are pruned by oldest timestamp at cap.
+                // lingered until the device's next event. Storing AbortHandle
+                // directly for the debounce task (with a monotonic generation)
+                // lets new arrivals & cap-pruning abort the real timer task and
+                // ensures cleanup only removes its own generation.
+                struct DebounceEntryGuard {
+                    timers: std::sync::Arc<
+                        parking_lot::Mutex<HashMap<String, (u64, tokio::task::AbortHandle)>>,
+                    >,
+                    device_id: String,
+                    generation: u64,
+                }
+                impl Drop for DebounceEntryGuard {
+                    fn drop(&mut self) {
+                        let mut map = self.timers.lock();
+                        if map
+                            .get(&self.device_id)
+                            .is_some_and(|(g, _)| *g == self.generation)
+                        {
+                            map.remove(&self.device_id);
+                        }
+                    }
+                }
+
                 const MAX_TRACKED_DEVICES: usize = 1024;
                 let device_raw_data: std::sync::Arc<
                     parking_lot::Mutex<HashMap<String, serde_json::Value>>,
@@ -88,8 +108,9 @@ impl TransformEventService {
                 let device_latest_ts: std::sync::Arc<parking_lot::Mutex<HashMap<String, i64>>> =
                     std::sync::Arc::new(parking_lot::Mutex::new(HashMap::new()));
                 let device_timers: std::sync::Arc<
-                    parking_lot::Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
+                    parking_lot::Mutex<HashMap<String, (u64, tokio::task::AbortHandle)>>,
                 > = std::sync::Arc::new(parking_lot::Mutex::new(HashMap::new()));
+                let mut timer_gen: u64 = 0;
 
                 // Throttle map for execution-stat persistence: transform_id -> last persist instant.
                 // The first execution of a transform flushes immediately (so last_executed appears
@@ -144,7 +165,14 @@ impl TransformEventService {
                                     .collect();
                                 ts_map.retain(|k, _| !drop.contains(k));
                                 device_raw_data.lock().retain(|k, _| !drop.contains(k));
-                                device_timers.lock().retain(|k, _| !drop.contains(k));
+                                {
+                                    let mut timers = device_timers.lock();
+                                    for k in &drop {
+                                        if let Some((_, handle)) = timers.remove(k) {
+                                            handle.abort();
+                                        }
+                                    }
+                                }
                             }
                             ts_map.insert(device_id.clone(), timestamp);
                         }
@@ -198,11 +226,6 @@ impl TransformEventService {
                             .get_device(&device_id)
                             .map(|d| d.device_type.clone());
 
-                        // Cancel existing timer for this device if any
-                        if let Some(existing_timer) = device_timers.lock().remove(&device_id) {
-                            existing_timer.abort();
-                        }
-
                         // Clone needed values for the async task
                         let device_id_clone = device_id.clone();
                         let event_bus_clone = event_bus.clone();
@@ -214,9 +237,27 @@ impl TransformEventService {
                         let exec_flush_clone = exec_flush.clone();
                         let value_provider_clone = value_provider.clone();
                         let rule_engine_clone = rule_engine.clone();
+                        let timers_for_cleanup = device_timers.clone();
+                        let cleanup_id = device_id.clone();
 
-                        // Schedule a new debounce timer
+                        timer_gen = timer_gen.wrapping_add(1);
+                        let current_gen = timer_gen;
+
+                        // Cancel existing timer for this device and schedule a new
+                        // debounce task atomically under the timers lock so the
+                        // entry exists before the task's cleanup guard can drop.
+                        let mut timers = device_timers.lock();
+                        if let Some((_, existing_handle)) = timers.remove(&device_id) {
+                            existing_handle.abort();
+                        }
+
                         let timer_handle = tokio::spawn(async move {
+                            let _cleanup_guard = DebounceEntryGuard {
+                                timers: timers_for_cleanup,
+                                device_id: cleanup_id,
+                                generation: current_gen,
+                            };
+
                             // Wait for the debounce delay
                             tokio::time::sleep(tokio::time::Duration::from_millis(DEBOUNCE_MS))
                                 .await;
@@ -376,23 +417,15 @@ impl TransformEventService {
                             }
                         });
 
-                        // Store the timer handle (the task self-removes it when it
-                        // completes — see the cleanup at the end of the task body).
-                        let timers_for_cleanup = device_timers.clone();
-                        let cleanup_id = device_id.clone();
-                        let wrapped_handle = tokio::spawn(async move {
-                            let _ = timer_handle.await;
-                            // Debounce task finished (fired or aborted): drop our own
-                            // entry so one-shot / never-again devices don't linger.
-                            timers_for_cleanup.lock().remove(&cleanup_id);
-                        });
-                        device_timers.lock().insert(device_id, wrapped_handle);
+                        // Store the actual debounce task's AbortHandle directly
+                        // (no wrapper task detaching the inner JoinHandle).
+                        timers.insert(device_id, (current_gen, timer_handle.abort_handle()));
                     }
                 }
 
                 // Abort all pending timers when shutting down
-                for (_, timer) in device_timers.lock().drain() {
-                    timer.abort();
+                for (_, (_, handle)) in device_timers.lock().drain() {
+                    handle.abort();
                 }
 
                 tracing::info!("Transform event service stopped");

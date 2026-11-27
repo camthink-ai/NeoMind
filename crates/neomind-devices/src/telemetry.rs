@@ -288,11 +288,15 @@ impl TimeSeriesStorage {
             self.swap_store(new_store.clone());
             let _ = self.loaded_tx.send(true);
 
-            // Buffered writes would be invisible to the scan below — force
-            // them into the placeholder's storage first.
-            if let Err(e) = old.flush() {
+            // Buffered writes would be invisible to the scan below — flush
+            // them into the placeholder's storage and stop its background
+            // 500ms flush task so the replaced in-memory store does not leak.
+            let old_for_shutdown = Arc::clone(&old);
+            if let Err(e) =
+                tokio::task::spawn_blocking(move || old_for_shutdown.shutdown()).await
+            {
                 tracing::warn!(category = "storage", error = %e,
-                    "flush of placeholder telemetry before drain failed — buffered points may be lost");
+                    "shutdown of placeholder telemetry before drain failed — buffered points may be lost");
             }
             let series = old
                 .list_series_scan()

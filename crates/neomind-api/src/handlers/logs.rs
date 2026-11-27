@@ -13,11 +13,12 @@
 
 use std::io::Write;
 
-use axum::extract::{Query, State};
+use axum::extract::{Extension, Query, State};
 use axum::http::{header, StatusCode};
 use axum::response::IntoResponse;
 use chrono::{Local, NaiveDate};
 
+use crate::auth_users::{SessionInfo, UserRole};
 use crate::models::ErrorResponse;
 use crate::server::ServerState;
 
@@ -107,8 +108,15 @@ const MAX_TOTAL_BYTES_READ: u64 = 512 * 1024 * 1024; // 512 MiB
 )]
 pub async fn download_logs_handler(
     State(state): State<ServerState>,
+    Extension(session): Extension<SessionInfo>,
     Query(params): Query<LogsDownloadParams>,
 ) -> Result<axum::response::Response, ErrorResponse> {
+    if session.role != UserRole::Admin {
+        return Err(ErrorResponse::forbidden(
+            "Administrator privileges are required to download system logs",
+        ));
+    }
+
     let log_dir = state.data_dir.join("logs");
 
     if !log_dir.is_dir() {

@@ -10,13 +10,25 @@ use super::MessageChannel;
 
 /// Telegram channel for sending messages via Bot API.
 #[cfg(feature = "telegram")]
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct TelegramChannel {
     name: String,
     enabled: bool,
     token: String,
     chat_id: String,
     client: reqwest::Client,
+}
+
+#[cfg(feature = "telegram")]
+impl std::fmt::Debug for TelegramChannel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TelegramChannel")
+            .field("name", &self.name)
+            .field("enabled", &self.enabled)
+            .field("token", &"[REDACTED]")
+            .field("chat_id", &self.chat_id)
+            .finish()
+    }
 }
 
 #[cfg(feature = "telegram")]

@@ -77,42 +77,31 @@ pub(crate) async fn resolve_input_mapping(
                                 } else {
                                     // It's a URL — fetch and convert to base64.
                                     // [SSRF guard] the URL comes from DEVICE DATA —
-                                    // without this check a compromised device could
-                                    // make the server fetch internal endpoints
-                                    // (cloud metadata at 169.254.169.254, admin
-                                    // panels, etc.) and exfiltrate the base64 into
-                                    // transform outputs. Same shared rules as the
-                                    // agent's web_fetch tool.
-                                    let url_allowed = reqwest::Url::parse(s)
-                                        .ok()
-                                        .and_then(|u| match u.scheme() {
-                                            "http" | "https" => u
-                                                .host_str()
-                                                .map(|h| !neomind_core::net::is_private_host(h)),
-                                            _ => Some(false),
-                                        })
-                                        .unwrap_or(false);
-                                    if !url_allowed {
+                                    // resolve DNS and reject any private/local/reserved
+                                    // IP (including CGNAT & IPv4-mapped IPv6) before
+                                    // connecting; the shared client also disables redirects.
+                                    if let Err(reason) =
+                                        neomind_core::net::resolve_and_validate_public_url(s).await
+                                    {
                                         tracing::warn!(
                                             url = %s,
                                             key = %key,
-                                            "url_to_base64: blocked non-HTTP(s) or private-network URL (SSRF guard)"
+                                            reason = %reason,
+                                            "url_to_base64: blocked URL (SSRF guard)"
                                         );
                                         resolved.insert(key.clone(), extracted);
                                         continue;
                                     }
                                     match http_client.get(s).send().await {
-                                        Ok(resp) => {
+                                        Ok(mut resp) => {
                                             // [size cap] reject declared-oversized bodies up
-                                            // front (a device-controlled URL could otherwise
-                                            // feed an arbitrarily large payload into base64
-                                            // + redb). The 30s client timeout bounds the
-                                            // transfer duration for lying/chunked bodies.
-                                            const MAX_FETCH_BYTES: u64 = 10 * 1024 * 1024;
+                                            // front AND enforce a hard 10 MB streaming cap on
+                                            // chunked/lying bodies so a device-controlled URL
+                                            // cannot OOM the process.
+                                            const MAX_FETCH_BYTES: usize = 10 * 1024 * 1024;
                                             if resp
                                                 .content_length()
-                                                .map(|l| l > MAX_FETCH_BYTES)
-                                                .unwrap_or(false)
+                                                .is_some_and(|l| l > MAX_FETCH_BYTES as u64)
                                             {
                                                 tracing::warn!(
                                                     "url_to_base64: body too large for {}, skipping",
@@ -120,38 +109,63 @@ pub(crate) async fn resolve_input_mapping(
                                                 );
                                                 resolved.insert(key.clone(), extracted);
                                             } else {
-                                                match resp.bytes().await {
-                                                    Ok(bytes) => {
-                                                        use base64::Engine;
-                                                        let b64 = base64::engine::general_purpose::STANDARD
-                                                    .encode(&bytes);
-                                                        resolved.insert(
-                                                            key.clone(),
-                                                            Value::String(b64),
-                                                        );
-
-                                                        // Try to get image dimensions for normalization
-                                                        if let Ok(reader) =
-                                                            ::image::ImageReader::new(
-                                                                std::io::Cursor::new(&bytes),
-                                                            )
-                                                            .with_guessed_format()
-                                                        {
-                                                            if let Ok(dims) =
-                                                                reader.into_dimensions()
+                                                let mut bytes = Vec::new();
+                                                let mut exceeded = false;
+                                                let mut read_err = None;
+                                                loop {
+                                                    match resp.chunk().await {
+                                                        Ok(Some(chunk)) => {
+                                                            if bytes
+                                                                .len()
+                                                                .saturating_add(chunk.len())
+                                                                > MAX_FETCH_BYTES
                                                             {
-                                                                image_dimensions
-                                                                    .insert(key.clone(), dims);
+                                                                exceeded = true;
+                                                                break;
                                                             }
+                                                            bytes.extend_from_slice(&chunk);
+                                                        }
+                                                        Ok(None) => break,
+                                                        Err(e) => {
+                                                            read_err = Some(e);
+                                                            break;
                                                         }
                                                     }
-                                                    Err(e) => {
-                                                        tracing::warn!(
-                                                            "Failed to read response bytes for {}: {}",
-                                                            key,
-                                                            e
-                                                        );
-                                                        resolved.insert(key.clone(), extracted);
+                                                }
+                                                if exceeded {
+                                                    tracing::warn!(
+                                                        "url_to_base64: streamed body exceeded {} bytes for {}, skipping",
+                                                        MAX_FETCH_BYTES,
+                                                        key
+                                                    );
+                                                    resolved.insert(key.clone(), extracted);
+                                                } else if let Some(e) = read_err {
+                                                    tracing::warn!(
+                                                        "Failed to read response bytes for {}: {}",
+                                                        key,
+                                                        e
+                                                    );
+                                                    resolved.insert(key.clone(), extracted);
+                                                } else {
+                                                    use base64::Engine;
+                                                    let b64 =
+                                                        base64::engine::general_purpose::STANDARD
+                                                            .encode(&bytes);
+                                                    resolved.insert(
+                                                        key.clone(),
+                                                        Value::String(b64),
+                                                    );
+
+                                                    // Try to get image dimensions for normalization
+                                                    if let Ok(reader) = ::image::ImageReader::new(
+                                                        std::io::Cursor::new(&bytes),
+                                                    )
+                                                    .with_guessed_format()
+                                                    {
+                                                        if let Ok(dims) = reader.into_dimensions() {
+                                                            image_dimensions
+                                                                .insert(key.clone(), dims);
+                                                        }
                                                     }
                                                 }
                                             }

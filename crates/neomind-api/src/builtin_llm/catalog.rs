@@ -38,6 +38,56 @@ pub fn format_is_wellformed(f: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
+/// Validate a single filesystem path segment (model `id`, `file_name`, or
+/// `mmproj.file_name`) from the remote catalog so a compromised or malformed
+/// catalog cannot inject path traversal (`..`, `/`, `\`, leading `.`, NUL).
+pub fn is_safe_path_segment(s: &str) -> bool {
+    !s.is_empty()
+        && !s.starts_with('.')
+        && !s.contains('/')
+        && !s.contains('\\')
+        && !s.contains("..")
+        && !s.contains('\0')
+}
+
+/// Validate a parsed catalog entry before exposing it to download/storage paths.
+fn is_valid_catalog_entry(m: &CatalogModel) -> bool {
+    if !format_is_wellformed(&m.format) {
+        tracing::warn!(
+            id = %m.id,
+            format = %m.format,
+            "catalog: entry has a malformed format string — skipping"
+        );
+        return false;
+    }
+    if !is_safe_path_segment(&m.id) {
+        tracing::warn!(
+            id = %m.id,
+            "catalog: entry has unsafe id path segment — skipping"
+        );
+        return false;
+    }
+    if !is_safe_path_segment(&m.file_name) {
+        tracing::warn!(
+            id = %m.id,
+            file_name = %m.file_name,
+            "catalog: entry has unsafe file_name path segment — skipping"
+        );
+        return false;
+    }
+    if let Some(mm) = m.mmproj.as_ref() {
+        if !is_safe_path_segment(&mm.file_name) {
+            tracing::warn!(
+                id = %m.id,
+                mmproj_file_name = %mm.file_name,
+                "catalog: entry has unsafe mmproj.file_name path segment — skipping"
+            );
+            return false;
+        }
+    }
+    true
+}
+
 #[derive(Debug, Clone, serde::Serialize, Deserialize)]
 pub struct CatalogModel {
     pub id: String,
@@ -199,21 +249,13 @@ async fn fetch_catalog_uncached() -> Option<Vec<CatalogModel>> {
             return None;
         }
     };
-    // Shape-check `format` per entry: an unknown-but-wellformed vendor
-    // format (rkllm, a future dxnn, …) MUST survive parsing — it becomes an
-    // "unsupported on this platform" entry later. Only malformed strings
-    // (spaces, uppercase, …) are dropped, and they drop alone.
+    // Validate format and path segments per entry: an unknown-but-wellformed
+    // vendor format (rkllm, a future dxnn, …) survives parsing, while
+    // malformed formats or path-traversal ids/filenames are dropped alone.
     let models: Vec<CatalogModel> = parsed
         .models
         .into_iter()
-        .filter(|m| {
-            let ok = format_is_wellformed(&m.format);
-            if !ok {
-                tracing::warn!(id = %m.id, format = %m.format,
-                    "catalog: entry has a malformed format string — skipping");
-            }
-            ok
-        })
+        .filter(is_valid_catalog_entry)
         .collect();
     Some(models)
 }
@@ -329,5 +371,48 @@ mod tests {
         assert_eq!(kept[1].format, "dxnn");
         // Untouched gguf entries keep working regardless.
         assert_eq!(kept[2].format, "gguf");
+    }
+
+    #[test]
+    fn path_segment_validation_rejects_traversal_and_unsafe_entries() {
+        for good in ["gemma4-e2b", "minicpm-v-4.7-1b", "model.Q4_K_M.gguf"] {
+            assert!(is_safe_path_segment(good), "expected safe: {good}");
+        }
+        for bad in [
+            "",
+            ".",
+            "..",
+            ".hidden",
+            "../evil",
+            "a/b",
+            "a\\b",
+            "foo..bar",
+            "bad\0name",
+        ] {
+            assert!(!is_safe_path_segment(bad), "expected rejected: {bad:?}");
+        }
+
+        let raw = r#"{"models":[
+            {"id":"../escape","name":"BadId","file_name":"m.gguf","sha256":"aa",
+             "quant":"q4_0","hf_repo":"r","hf_file":"m.gguf","size_bytes":1,"default_ctx":8192},
+            {"id":"good-id","name":"BadFile","file_name":"sub/m.gguf","sha256":"aa",
+             "quant":"q4_0","hf_repo":"r","hf_file":"m.gguf","size_bytes":1,"default_ctx":8192},
+            {"id":"good-id-2","name":"BadMmproj","file_name":"m.gguf","sha256":"aa",
+             "quant":"q4_0","hf_repo":"r","hf_file":"m.gguf","size_bytes":1,"default_ctx":8192,
+             "mmproj":{"file_name":"../../evil.gguf","sha256":"bb","hf_repo":"r",
+                       "hf_file":"mm.gguf","size_bytes":2}},
+            {"id":"valid-model","name":"Valid","file_name":"valid.gguf","sha256":"dd",
+             "quant":"q4_0","hf_repo":"r","hf_file":"valid.gguf","size_bytes":1,"default_ctx":8192,
+             "mmproj":{"file_name":"valid-mmproj.gguf","sha256":"ee","hf_repo":"r",
+                       "hf_file":"valid-mmproj.gguf","size_bytes":2}}
+        ]}"#;
+        let parsed: CatalogRoot = serde_json::from_str(raw).expect("parses");
+        let kept: Vec<CatalogModel> = parsed
+            .models
+            .into_iter()
+            .filter(is_valid_catalog_entry)
+            .collect();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].id, "valid-model");
     }
 }

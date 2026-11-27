@@ -1,10 +1,21 @@
 //! Tests for sessions handlers.
 
-use axum::extract::{Path, Query, State};
+use axum::extract::{Extension, Path, Query, State};
 use axum::Json;
+use neomind_api::auth_users::{SessionInfo as AuthSessionInfo, UserRole};
 use neomind_api::handlers::sessions::*;
 use neomind_api::handlers::ServerState;
 use neomind_api::models::ChatRequest;
+
+fn test_admin_extension() -> Option<Extension<AuthSessionInfo>> {
+    Some(Extension(AuthSessionInfo {
+        user_id: "test-admin".to_string(),
+        username: "admin".to_string(),
+        role: UserRole::Admin,
+        created_at: 0,
+        expires_at: i64::MAX,
+    }))
+}
 
 async fn create_test_server_state() -> ServerState {
     crate::common::create_test_server_state().await
@@ -37,7 +48,7 @@ mod tests {
             page: 1,
             page_size: 20,
         };
-        let result = list_sessions_handler(State(state), Query(query)).await;
+        let result = list_sessions_handler(State(state), Query(query), None).await;
         assert!(result.is_ok());
         let response = result.unwrap();
         let value = response.0.data.unwrap();
@@ -52,7 +63,7 @@ mod tests {
             page: 1,
             page_size: 10,
         };
-        let result = list_sessions_handler(State(state), Query(query)).await;
+        let result = list_sessions_handler(State(state), Query(query), None).await;
         assert!(result.is_ok());
         let response = result.unwrap();
         assert!(response.0.data.is_some());
@@ -64,7 +75,7 @@ mod tests {
     async fn test_get_session_handler_not_found() {
         let state = create_test_server_state().await;
         let result =
-            get_session_handler(State(state), Path("nonexistent_session".to_string())).await;
+            get_session_handler(State(state), Path("nonexistent_session".to_string()), None).await;
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert_eq!(err.status, axum::http::StatusCode::NOT_FOUND);
@@ -111,6 +122,7 @@ mod tests {
         let result = update_session_handler(
             State(state),
             Path("nonexistent_session".to_string()),
+            None,
             Json(req),
         )
         .await;
@@ -120,7 +132,7 @@ mod tests {
     #[tokio::test]
     async fn test_cleanup_sessions_handler() {
         let state = create_test_server_state().await;
-        let result = cleanup_sessions_handler(State(state)).await;
+        let result = cleanup_sessions_handler(State(state), test_admin_extension()).await;
         assert!(result.is_ok());
         let response = result.unwrap();
         let value = response.0.data.unwrap();
@@ -148,6 +160,7 @@ mod tests {
         let result = chat_handler(
             State(state),
             Path("nonexistent_session".to_string()),
+            None,
             Json(req),
         )
         .await;
@@ -189,7 +202,7 @@ mod tests {
             authorize_new_operation: None,
             client_request_id: None,
         };
-        let result = chat_handler(State(state), Path(session_id.clone()), Json(req)).await;
+        let result = chat_handler(State(state), Path(session_id.clone()), None, Json(req)).await;
         // Either Ok with timeout message or Err with something other than NOT_FOUND
         match result {
             Ok(resp) => {

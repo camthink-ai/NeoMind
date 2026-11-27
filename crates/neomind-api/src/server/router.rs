@@ -16,10 +16,29 @@ use super::types::MAX_REQUEST_BODY_SIZE;
 use crate::auth::hybrid_auth_middleware;
 use crate::auth_users::jwt_auth_middleware;
 
-/// Block `UserRole::Viewer` from mutating or actuating AI Agents (`POST` create/invoke/execute/status,
-/// `PUT` update, `DELETE` delete/clear). Read-only `POST` endpoints (`plan-preview`, `test-preview`,
-/// `dry-run`, `executions/details`, `validate-*`) remain permitted for viewers.
-async fn reject_viewer_agent_mutation(
+/// Read-only `POST` endpoints that remain permitted for `UserRole::Viewer` accounts.
+fn is_viewer_read_only_post(path: &str) -> bool {
+    matches!(
+        path,
+        "/api/rules/validate"
+            | "/api/rules/explain"
+            | "/api/telemetry/query"
+            | "/api/devices/current-batch"
+            | "/api/auth/logout"
+            | "/api/auth/refresh"
+            | "/api/agents/plan-preview"
+            | "/api/agents/validate-cron"
+            | "/api/agents/validate-llm"
+            | "/api/skills/match"
+            | "/api/mentions/resolve"
+            | "/api/config/validate"
+    ) || (path.starts_with("/api/agents/") && path.ends_with("/executions/details"))
+}
+
+/// Block `UserRole::Viewer` from mutating or actuating resources across `protected_routes`
+/// (`POST`/`PUT`/`PATCH`/`DELETE`), while still allowing explicitly read-only `POST` query
+/// and validation endpoints.
+async fn reject_viewer_mutations(
     req: axum::extract::Request,
     next: middleware::Next,
 ) -> axum::response::Response {
@@ -31,21 +50,39 @@ async fn reject_viewer_agent_mutation(
     if is_viewer {
         let method = req.method();
         let path = req.uri().path();
-        let is_read_only_post = method == axum::http::Method::POST
-            && (path.ends_with("/plan-preview")
-                || path.ends_with("/executions/details")
-                || path.ends_with("/validate-cron")
-                || path.ends_with("/validate-llm"));
+        let is_read_only_post =
+            *method == axum::http::Method::POST && is_viewer_read_only_post(path);
         let is_mutation = matches!(
             *method,
             axum::http::Method::PUT | axum::http::Method::DELETE | axum::http::Method::PATCH
         ) || (*method == axum::http::Method::POST && !is_read_only_post);
         if is_mutation {
             return crate::models::ErrorResponse::forbidden(
-                "Viewer accounts have read-only access to AI Agents",
+                "Viewer accounts have read-only access",
             )
             .into_response();
         }
+    }
+    next.run(req).await
+}
+
+/// Require `UserRole::Admin` on high-privilege routes.
+/// Must run AFTER `hybrid_auth_middleware` (or `jwt_auth_middleware`) so `SessionInfo`
+/// is present in request extensions. Fails closed with 403 Forbidden if absent or non-Admin.
+async fn require_admin_middleware(
+    req: axum::extract::Request,
+    next: middleware::Next,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let is_admin = req
+        .extensions()
+        .get::<crate::auth_users::SessionInfo>()
+        .is_some_and(|u| u.role == crate::auth_users::UserRole::Admin);
+    if !is_admin {
+        return crate::models::ErrorResponse::forbidden(
+            "Administrator privileges are required for this operation",
+        )
+        .into_response();
     }
     next.run(req).await
 }
@@ -256,18 +293,10 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         // `rate_limit_middleware` to prevent flooding. Per-device tokens, adapter
         // API keys, and IP allowlists are enforced inside the handler/adapter.
         // The read-only `webhook-url` GET lives in protected_routes (admin lookup).
-        // Onboarding API (public - system setup status)
+        // Onboarding API (public - read-only setup status; dismiss/reset require auth)
         .route(
             "/api/onboarding/status",
             get(onboarding::get_onboarding_status_handler),
-        )
-        .route(
-            "/api/onboarding/dismiss",
-            post(onboarding::dismiss_onboarding_handler),
-        )
-        .route(
-            "/api/onboarding/reset",
-            post(onboarding::reset_onboarding_handler),
         );
 
     // JWT protected routes (require JWT token authentication)
@@ -349,9 +378,15 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             "/api/stats/data-dir/refresh",
             post(stats::refresh_data_dir_usage_handler),
         )
-        // Diagnostic log archive download (admin/auth-only) — bundles
-        // data/logs/*.log.* into a zip for support flows.
-        .route("/api/logs/download", get(logs::download_logs_handler))
+        // Onboarding mutations (moved from public - require auth + non-Viewer)
+        .route(
+            "/api/onboarding/dismiss",
+            post(onboarding::dismiss_onboarding_handler),
+        )
+        .route(
+            "/api/onboarding/reset",
+            post(onboarding::reset_onboarding_handler),
+        )
         // Webhook URL lookup — admin/UI helper, not for devices. Moved here from
         // public_routes to stop leaking device existence (404 vs 200) and the
         // configured NEOMIND_SERVER_URL to unauthenticated callers.
@@ -393,48 +428,11 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             "/api/messages/channels/stats",
             get(message_channels::get_channel_stats_handler),
         )
-        // === IM Bridges (read - expose running bridge platforms) ===
-        .route("/api/im-bridges", get(im_bridges::list_bridges_handler))
-        .route(
-            "/api/im-bridges/:id/invites",
-            get(im_bridges::list_invites_handler),
-        )
-        .route(
-            "/api/im-bridges/:id/allowlist",
-            get(im_bridges::list_allowlist_handler),
-        )
-        .route(
-            "/api/im-bridges/:id/sessions",
-            get(im_bridges::list_sessions_handler),
-        )
         // === Skills (moved from public - expose skill configs) ===
         .route("/api/skills", get(skills::list_skills_handler))
         .route("/api/skills/match", post(skills::match_skills_handler))
         .route("/api/skills/:id", get(skills::get_skill_handler))
-        // === Extension write operations (moved from public) ===
-        .route(
-            "/api/extensions/:id",
-            delete(extensions::unregister_extension_handler),
-        )
-        // Run/load enable, AI master, and per-command toggles. Distinct paths
-        // so they don't get shadowed by the `:id` catch-all above.
-        .route(
-            "/api/extensions/:id/enabled",
-            axum::routing::patch(extensions::set_extension_enabled_handler),
-        )
-        .route(
-            "/api/extensions/:id/ai-enabled",
-            axum::routing::patch(extensions::set_extension_ai_enabled_handler),
-        )
-        .route(
-            "/api/extensions/:id/commands/:cmd/enabled",
-            axum::routing::patch(extensions::set_extension_command_enabled_handler),
-        )
-        .route(
-            "/api/extensions/:id/logs",
-            get(extensions::get_extension_logs_handler)
-                .delete(extensions::clear_extension_logs_handler),
-        )
+        // === Extension runtime read & invocation operations ===
         .route(
             "/api/extensions/:id/descriptor",
             get(extensions::get_extension_descriptor_handler),
@@ -458,10 +456,6 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         .route(
             "/api/extensions/:id/invoke",
             post(extensions::invoke_extension_handler),
-        )
-        .route(
-            "/api/extensions/:id/reload",
-            post(extensions::reload_extension_handler),
         )
         // === Event publishing (requires auth) ===
         .route("/api/events", post(events::publish_event_handler))
@@ -738,12 +732,8 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             "/api/messages/channels/:name/test",
             post(message_channels::test_channel_handler),
         )
-        // Data Push API
+        // Data Push API (read-only; mutations & test require Admin below)
         .route("/api/data-push", get(data_push::list_push_targets_handler))
-        .route(
-            "/api/data-push",
-            post(data_push::create_push_target_handler),
-        )
         .route(
             "/api/data-push/stats",
             get(data_push::get_push_stats_handler),
@@ -751,26 +741,6 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         .route(
             "/api/data-push/:id",
             get(data_push::get_push_target_handler),
-        )
-        .route(
-            "/api/data-push/:id",
-            put(data_push::update_push_target_handler),
-        )
-        .route(
-            "/api/data-push/:id",
-            delete(data_push::delete_push_target_handler),
-        )
-        .route(
-            "/api/data-push/:id/test",
-            post(data_push::test_push_target_handler),
-        )
-        .route(
-            "/api/data-push/:id/start",
-            post(data_push::start_push_target_handler),
-        )
-        .route(
-            "/api/data-push/:id/stop",
-            post(data_push::stop_push_target_handler),
         )
         .route(
             "/api/data-push/:id/logs",
@@ -803,65 +773,23 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             "/api/messages/channels/:name/enabled",
             put(message_channels::toggle_enabled_handler),
         )
-        // IM Bridges API (write operations - create + delete bridges)
-        .route("/api/im-bridges", post(im_bridges::create_bridge_handler))
-        .route(
-            "/api/im-bridges/:id",
-            delete(im_bridges::delete_bridge_handler),
-        )
-        .route(
-            "/api/im-bridges/:id/invites",
-            post(im_bridges::create_invite_handler),
-        )
-        .route(
-            "/api/im-bridges/:id/invites/:token",
-            delete(im_bridges::revoke_invite_handler),
-        )
-        .route(
-            "/api/im-bridges/:id/allowlist/:chat_id",
-            delete(im_bridges::remove_allowlist_handler),
-        )
-        .route(
-            "/api/im-bridges/:id/sessions/:chat_id/reset",
-            post(im_bridges::reset_session_handler),
-        )
         // LLM Generation API (one-shot, no session)
         .route("/api/llm/generate", post(settings::llm_generate_handler))
-        // Global Timezone Settings API
+        // Global Timezone Settings API (read-only; mutations require Admin below)
         .route("/api/settings/timezone", get(settings::get_timezone))
-        .route("/api/settings/timezone", put(settings::update_timezone))
         .route("/api/settings/timezones", get(settings::list_timezones))
-        // Retention Configuration API
+        // Retention Configuration API (read-only; mutations require Admin below)
         .route(
             "/api/settings/retention",
             get(settings::get_retention_config),
         )
-        .route(
-            "/api/settings/retention",
-            put(settings::update_retention_config),
-        )
-        // Backup schedule (Settings → Preferences): same exposure class as
-        // the retention config. The manual trigger stays admin-only.
+        // Backup schedule (read-only; mutations require Admin below)
         .route(
             "/api/settings/backup-config",
             get(settings::get_backup_config),
         )
-        .route(
-            "/api/settings/backup-config",
-            put(settings::update_backup_config),
-        )
-        .route(
-            "/api/settings/retention/cleanup",
-            post(settings::trigger_retention_cleanup),
-        )
-        .route(
-            "/api/settings/agent",
-            get(settings::get_agent_defaults).put(settings::update_agent_defaults),
-        )
-        .route(
-            "/api/settings/device",
-            get(settings::get_device_defaults).put(settings::update_device_defaults),
-        )
+        .route("/api/settings/agent", get(settings::get_agent_defaults))
+        .route("/api/settings/device", get(settings::get_device_defaults))
         // Unified Automations API
         .route(
             "/api/automations",
@@ -1005,8 +933,7 @@ pub fn create_router_with_state(state: ServerState) -> Router {
                 .route(
                     "/api/agents/:id/messages/:message_id",
                     delete(agents::delete_user_message),
-                )
-                .layer(middleware::from_fn(reject_viewer_agent_mutation)),
+                ),
         )
         // System Memory API (Markdown-based)
         .route("/api/memory", get(memory::get_all_memory))
@@ -1056,34 +983,13 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             "/api/mqtt/unsubscribe/:device_id",
             post(mqtt::unsubscribe_device_handler),
         )
-        // External Brokers API
+        // External Brokers API (read-only; mutations & test require Admin below)
         .route("/api/brokers", get(mqtt::list_brokers_handler))
-        .route("/api/brokers", post(mqtt::create_broker_handler))
         .route("/api/brokers/:id", get(mqtt::get_broker_handler))
-        .route("/api/brokers/:id", put(mqtt::update_broker_handler))
-        .route("/api/brokers/:id", delete(mqtt::delete_broker_handler))
-        .route("/api/brokers/:id/test", post(mqtt::test_broker_handler))
-        // Embedded Broker Config API
+        // Embedded Broker Config API (read-only; mutations require Admin below)
         .route(
             "/api/mqtt/broker-config",
             get(mqtt::get_broker_config_handler),
-        )
-        .route(
-            "/api/mqtt/broker-config",
-            put(mqtt::update_broker_config_handler),
-        )
-        .route(
-            "/api/mqtt/broker-config/credentials",
-            post(mqtt::add_credential_handler),
-        )
-        .route(
-            "/api/mqtt/broker-config/credentials/delete",
-            post(mqtt::delete_credential_handler),
-        )
-        .route("/api/mqtt/broker-config/tls", put(mqtt::upload_tls_handler))
-        .route(
-            "/api/mqtt/broker-config/tls/generate",
-            post(mqtt::generate_tls_handler),
         )
         .route(
             "/api/mqtt/broker-config/tls/ca-cert",
@@ -1092,9 +998,8 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         // Stats API (devices and rules require auth, system info is public)
         .route("/api/stats/devices", get(stats::get_device_stats_handler))
         .route("/api/stats/rules", get(stats::get_rule_stats_handler))
-        // Config Import/Export API
+        // Config Export/Validate API (import requires Admin below)
         .route("/api/config/export", get(config::export_config_handler))
-        .route("/api/config/import", post(config::import_config_handler))
         .route(
             "/api/config/validate",
             post(config::validate_config_handler),
@@ -1164,80 +1069,12 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             "/api/dashboards/:id/share/:token",
             delete(dashboards::revoke_share_handler),
         )
-        // Auth management API (also protected)
-        .route("/api/auth/keys", get(auth_handlers::list_keys_handler))
-        .route("/api/auth/keys", post(auth_handlers::create_key_handler))
-        .route(
-            "/api/auth/keys/:id",
-            delete(auth_handlers::delete_key_handler),
-        )
-        // Extensions API (write operations - protected)
-        .route(
-            "/api/extensions",
-            post(extensions::register_extension_handler),
-        )
-        .route(
-            "/api/extensions/:id/uninstall",
-            delete(extensions::uninstall_extension_handler),
-        )
-        .route(
-            "/api/extensions/:id/start",
-            post(extensions::start_extension_handler),
-        )
-        .route(
-            "/api/extensions/:id/stop",
-            post(extensions::stop_extension_handler),
-        )
-        // Extension Configuration (protected)
-        .route(
-            "/api/extensions/:id/config",
-            get(extensions::get_extension_config_handler),
-        )
-        .route(
-            "/api/extensions/:id/config",
-            put(extensions::update_extension_config_handler),
-        )
-        // Extension Marketplace (install endpoint - protected)
-        .route(
-            "/api/extensions/market/install",
-            post(extensions::install_marketplace_extension_handler),
-        )
-        // Extension sync (protected - manual sync from /extensions/ directory)
-        .route(
-            "/api/extensions/sync",
-            post(extensions::sync_extensions_handler),
-        )
+        // Extension sync status (read-only)
         .route(
             "/api/extensions/sync-status",
             get(extensions::get_sync_status_handler),
         )
-        // LLM Backends API (write operations - protected)
-        .route(
-            "/api/llm-backends",
-            post(llm_backends::create_backend_handler),
-        )
-        .route(
-            "/api/llm-backends/:id",
-            put(llm_backends::update_backend_handler),
-        )
-        .route(
-            "/api/llm-backends/:id",
-            delete(llm_backends::delete_backend_handler),
-        )
-        .route(
-            "/api/llm-backends/:id/activate",
-            post(llm_backends::activate_backend_handler),
-        )
-        .route(
-            "/api/llm-backends/:id/test",
-            post(llm_backends::test_backend_handler),
-        )
-        .route(
-            "/api/llm-backends/:id/capabilities",
-            axum::routing::patch(llm_backends::update_capabilities_override_handler),
-        )
-        // Builtin LLM API (bundled LFM2.5-2.6B — status/download/delete/restart/activate).
-        // Protected like the llm-backends write ops (hybrid auth: JWT or API key).
+        // Builtin LLM read-only endpoints (status, catalog, runtime badge)
         .route(
             "/api/builtin-llm/status",
             get(crate::builtin_llm::handlers::status_handler),
@@ -1246,47 +1083,6 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             "/api/builtin-llm/models",
             get(crate::builtin_llm::handlers::models_handler),
         )
-        .route(
-            "/api/builtin-llm/download",
-            post(crate::builtin_llm::handlers::download_handler),
-        )
-        .route(
-            "/api/builtin-llm/download/cancel",
-            post(crate::builtin_llm::handlers::download_cancel_handler),
-        )
-        .route(
-            "/api/builtin-llm/import-local",
-            post(crate::builtin_llm::handlers::import_local_handler),
-        )
-        // Multipart GGUF upload — streamed to disk; GGUFs run to ~5 GB so
-        // this route alone gets a raised body limit (default is 2 MB).
-        .route(
-            "/api/builtin-llm/upload-model",
-            axum::routing::post(crate::builtin_llm::handlers::upload_model_handler).layer(
-                axum::extract::DefaultBodyLimit::max(12 * 1024 * 1024 * 1024),
-            ),
-        )
-        .route(
-            "/api/builtin-llm/model",
-            delete(crate::builtin_llm::handlers::delete_model_handler),
-        )
-        .route(
-            "/api/builtin-llm/restart",
-            post(crate::builtin_llm::handlers::restart_handler),
-        )
-        // Deliberate stop (no file deletion); the persisted flag suppresses
-        // bootstrap/watchdog respawn until the next restart. Same hybrid-auth
-        // class as restart itself.
-        .route(
-            "/api/builtin-llm/stop",
-            post(crate::builtin_llm::handlers::stop_handler),
-        )
-        .route(
-            "/api/builtin-llm/activate",
-            post(crate::builtin_llm::handlers::activate_handler),
-        )
-        // Runtime status is read-only (settings-card badge) — hybrid auth
-        // like the siblings; the mutating runtime endpoints are admin-only.
         .route(
             "/api/builtin-llm/runtime",
             get(crate::builtin_llm::handlers::runtime_status_handler),
@@ -1304,15 +1100,7 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             "/api/instances/:id/test",
             post(instances::test_instance_handler),
         )
-        // Frontend Component API (protected - install/uninstall/list)
-        .route(
-            "/api/frontend-components/from-path",
-            post(frontend_components::install_component_from_path_handler),
-        )
-        .route(
-            "/api/frontend-components/market/install",
-            post(frontend_components::market_install_handler),
-        )
+        // Frontend Component read-only endpoints (install/uninstall require Admin below)
         .route(
             "/api/frontend-components/updates",
             get(frontend_components::check_updates_handler),
@@ -1323,9 +1111,252 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         )
         .route(
             "/api/frontend-components/:id",
-            get(frontend_components::get_component_handler)
-                .delete(frontend_components::uninstall_component_handler),
+            get(frontend_components::get_component_handler),
         )
+        // High-privilege routes requiring UserRole::Admin (JWT Admin or wildcard `*` API key)
+        .merge(
+            Router::new()
+                // Diagnostic log archive download (admin-only)
+                .route("/api/logs/download", get(logs::download_logs_handler))
+                // Auth API key management (admin-only)
+                .route("/api/auth/keys", get(auth_handlers::list_keys_handler))
+                .route("/api/auth/keys", post(auth_handlers::create_key_handler))
+                .route(
+                    "/api/auth/keys/:id",
+                    delete(auth_handlers::delete_key_handler),
+                )
+                // Extensions management, config & logs (admin-only)
+                .route(
+                    "/api/extensions",
+                    post(extensions::register_extension_handler),
+                )
+                .route(
+                    "/api/extensions/:id",
+                    delete(extensions::unregister_extension_handler),
+                )
+                .route(
+                    "/api/extensions/:id/uninstall",
+                    delete(extensions::uninstall_extension_handler),
+                )
+                .route(
+                    "/api/extensions/:id/start",
+                    post(extensions::start_extension_handler),
+                )
+                .route(
+                    "/api/extensions/:id/stop",
+                    post(extensions::stop_extension_handler),
+                )
+                .route(
+                    "/api/extensions/:id/reload",
+                    post(extensions::reload_extension_handler),
+                )
+                .route(
+                    "/api/extensions/:id/enabled",
+                    axum::routing::patch(extensions::set_extension_enabled_handler),
+                )
+                .route(
+                    "/api/extensions/:id/ai-enabled",
+                    axum::routing::patch(extensions::set_extension_ai_enabled_handler),
+                )
+                .route(
+                    "/api/extensions/:id/commands/:cmd/enabled",
+                    axum::routing::patch(extensions::set_extension_command_enabled_handler),
+                )
+                .route(
+                    "/api/extensions/:id/config",
+                    get(extensions::get_extension_config_handler),
+                )
+                .route(
+                    "/api/extensions/:id/config",
+                    put(extensions::update_extension_config_handler),
+                )
+                .route(
+                    "/api/extensions/:id/logs",
+                    get(extensions::get_extension_logs_handler)
+                        .delete(extensions::clear_extension_logs_handler),
+                )
+                .route(
+                    "/api/extensions/market/install",
+                    post(extensions::install_marketplace_extension_handler),
+                )
+                .route(
+                    "/api/extensions/sync",
+                    post(extensions::sync_extensions_handler),
+                )
+                // Frontend Component install/uninstall (admin-only)
+                .route(
+                    "/api/frontend-components/from-path",
+                    post(frontend_components::install_component_from_path_handler),
+                )
+                .route(
+                    "/api/frontend-components/market/install",
+                    post(frontend_components::market_install_handler),
+                )
+                .route(
+                    "/api/frontend-components/:id",
+                    delete(frontend_components::uninstall_component_handler),
+                )
+                // IM Bridges API (all routes admin-only)
+                .route("/api/im-bridges", get(im_bridges::list_bridges_handler))
+                .route("/api/im-bridges", post(im_bridges::create_bridge_handler))
+                .route(
+                    "/api/im-bridges/:id",
+                    delete(im_bridges::delete_bridge_handler),
+                )
+                .route(
+                    "/api/im-bridges/:id/invites",
+                    get(im_bridges::list_invites_handler),
+                )
+                .route(
+                    "/api/im-bridges/:id/invites",
+                    post(im_bridges::create_invite_handler),
+                )
+                .route(
+                    "/api/im-bridges/:id/invites/:token",
+                    delete(im_bridges::revoke_invite_handler),
+                )
+                .route(
+                    "/api/im-bridges/:id/allowlist",
+                    get(im_bridges::list_allowlist_handler),
+                )
+                .route(
+                    "/api/im-bridges/:id/allowlist/:chat_id",
+                    delete(im_bridges::remove_allowlist_handler),
+                )
+                .route(
+                    "/api/im-bridges/:id/sessions",
+                    get(im_bridges::list_sessions_handler),
+                )
+                .route(
+                    "/api/im-bridges/:id/sessions/:chat_id/reset",
+                    post(im_bridges::reset_session_handler),
+                )
+                // Builtin LLM mutating operations (admin-only; upload-model lives in extension_upload_routes outside limited_routes)
+                .route(
+                    "/api/builtin-llm/download",
+                    post(crate::builtin_llm::handlers::download_handler),
+                )
+                .route(
+                    "/api/builtin-llm/download/cancel",
+                    post(crate::builtin_llm::handlers::download_cancel_handler),
+                )
+                .route(
+                    "/api/builtin-llm/import-local",
+                    post(crate::builtin_llm::handlers::import_local_handler),
+                )
+                .route(
+                    "/api/builtin-llm/model",
+                    delete(crate::builtin_llm::handlers::delete_model_handler),
+                )
+                .route(
+                    "/api/builtin-llm/restart",
+                    post(crate::builtin_llm::handlers::restart_handler),
+                )
+                .route(
+                    "/api/builtin-llm/stop",
+                    post(crate::builtin_llm::handlers::stop_handler),
+                )
+                .route(
+                    "/api/builtin-llm/activate",
+                    post(crate::builtin_llm::handlers::activate_handler),
+                )
+                // Data Push mutating/test operations (admin-only)
+                .route(
+                    "/api/data-push",
+                    post(data_push::create_push_target_handler),
+                )
+                .route(
+                    "/api/data-push/:id",
+                    put(data_push::update_push_target_handler),
+                )
+                .route(
+                    "/api/data-push/:id",
+                    delete(data_push::delete_push_target_handler),
+                )
+                .route(
+                    "/api/data-push/:id/test",
+                    post(data_push::test_push_target_handler),
+                )
+                .route(
+                    "/api/data-push/:id/start",
+                    post(data_push::start_push_target_handler),
+                )
+                .route(
+                    "/api/data-push/:id/stop",
+                    post(data_push::stop_push_target_handler),
+                )
+                // LLM Backends mutating/test operations (admin-only)
+                .route(
+                    "/api/llm-backends",
+                    post(llm_backends::create_backend_handler),
+                )
+                .route(
+                    "/api/llm-backends/:id",
+                    put(llm_backends::update_backend_handler),
+                )
+                .route(
+                    "/api/llm-backends/:id",
+                    delete(llm_backends::delete_backend_handler),
+                )
+                .route(
+                    "/api/llm-backends/:id/activate",
+                    post(llm_backends::activate_backend_handler),
+                )
+                .route(
+                    "/api/llm-backends/:id/test",
+                    post(llm_backends::test_backend_handler),
+                )
+                .route(
+                    "/api/llm-backends/:id/capabilities",
+                    axum::routing::patch(llm_backends::update_capabilities_override_handler),
+                )
+                // External Brokers & Embedded MQTT Broker Config mutating operations (admin-only)
+                .route("/api/brokers", post(mqtt::create_broker_handler))
+                .route("/api/brokers/:id", put(mqtt::update_broker_handler))
+                .route("/api/brokers/:id", delete(mqtt::delete_broker_handler))
+                .route("/api/brokers/:id/test", post(mqtt::test_broker_handler))
+                .route(
+                    "/api/mqtt/broker-config",
+                    put(mqtt::update_broker_config_handler),
+                )
+                .route(
+                    "/api/mqtt/broker-config/credentials",
+                    post(mqtt::add_credential_handler),
+                )
+                .route(
+                    "/api/mqtt/broker-config/credentials/delete",
+                    post(mqtt::delete_credential_handler),
+                )
+                .route("/api/mqtt/broker-config/tls", put(mqtt::upload_tls_handler))
+                .route(
+                    "/api/mqtt/broker-config/tls/generate",
+                    post(mqtt::generate_tls_handler),
+                )
+                // Config import (admin-only)
+                .route("/api/config/import", post(config::import_config_handler))
+                // System Settings mutating operations (admin-only)
+                .route("/api/settings/timezone", put(settings::update_timezone))
+                .route(
+                    "/api/settings/retention",
+                    put(settings::update_retention_config),
+                )
+                .route(
+                    "/api/settings/backup-config",
+                    put(settings::update_backup_config),
+                )
+                .route(
+                    "/api/settings/retention/cleanup",
+                    post(settings::trigger_retention_cleanup),
+                )
+                .route("/api/settings/agent", put(settings::update_agent_defaults))
+                .route(
+                    "/api/settings/device",
+                    put(settings::update_device_defaults),
+                )
+                .route_layer(middleware::from_fn(require_admin_middleware)),
+        )
+        // Enforce read-only access for UserRole::Viewer across all protected routes
+        .route_layer(middleware::from_fn(reject_viewer_mutations))
         // Apply rate limiting middleware to all protected routes
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -1416,21 +1447,32 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             "/api/system/upgrade/status",
             get(system::upgrade_status_handler),
         )
+        // Enforce Admin role on all admin_routes (runs after jwt_auth_middleware)
+        .route_layer(middleware::from_fn(require_admin_middleware))
         // Apply JWT authentication middleware
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
             jwt_auth_middleware,
         ));
 
-    // Extension upload routes with larger body limit (100MB for large extension packages)
-    // This needs to be a separate router to apply a different body limit
-    // Use DefaultBodyLimit::max() for the route-specific limit
+    // Large upload routes merged OUTSIDE `limited_routes` so the global 10 MB
+    // `RequestBodyLimitLayer` does not cap extension packages (100 MB) or
+    // GGUF model uploads (12 GB). Admin-only via `require_admin_middleware`.
     let extension_upload_routes = Router::new()
         .route(
             "/api/extensions/upload/file",
             post(extensions::upload_extension_file_handler)
                 .layer(DefaultBodyLimit::max(MAX_EXTENSION_UPLOAD_SIZE)),
         )
+        // Multipart GGUF upload — streamed to disk; GGUFs run to ~5 GB so
+        // this route lives outside `limited_routes` with a 12 GB limit.
+        .route(
+            "/api/builtin-llm/upload-model",
+            post(crate::builtin_llm::handlers::upload_model_handler)
+                .layer(DefaultBodyLimit::max(12 * 1024 * 1024 * 1024)),
+        )
+        // Enforce Admin role (runs after hybrid_auth_middleware)
+        .route_layer(middleware::from_fn(require_admin_middleware))
         // Apply hybrid authentication middleware
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -1442,7 +1484,7 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             rate_limit_middleware,
         ));
 
-    // Frontend component upload routes with 5MB body limit
+    // Frontend component upload routes with 5MB body limit (admin-only)
     // Separate router for multipart upload with custom body limit
     let component_upload_routes = Router::new()
         .route(
@@ -1450,6 +1492,8 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             post(frontend_components::install_component_handler)
                 .layer(DefaultBodyLimit::max(5 * 1024 * 1024)),
         )
+        // Enforce Admin role (runs after hybrid_auth_middleware)
+        .route_layer(middleware::from_fn(require_admin_middleware))
         // Apply hybrid authentication middleware
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -1565,4 +1609,182 @@ async fn cache_headers_middleware(
     }
 
     response
+}
+
+#[cfg(test)]
+mod rbac_tests {
+    use super::*;
+    use crate::auth_users::UserRole;
+    use axum::body::Body;
+    use axum::http::{Method, Request, StatusCode};
+    use tower::ServiceExt;
+
+    async fn send_req(
+        app: &Router,
+        method: Method,
+        uri: &str,
+        bearer: Option<&str>,
+    ) -> StatusCode {
+        let mut builder = Request::builder().method(method).uri(uri);
+        if let Some(tok) = bearer {
+            builder = builder.header("authorization", format!("Bearer {tok}"));
+        }
+        let req = builder
+            .header("content-type", "application/json")
+            .body(Body::from("{}"))
+            .unwrap();
+        app.clone().oneshot(req).await.unwrap().status()
+    }
+
+    #[tokio::test]
+    async fn router_enforces_global_rbac_and_onboarding_auth() {
+        let state = ServerState::new_for_testing().await;
+        let (_, viewer_tok) = state
+            .auth
+            .user_state
+            .register("rbac_viewer", "ViewerPass123", UserRole::Viewer)
+            .await
+            .unwrap();
+        let (_, user_tok) = state
+            .auth
+            .user_state
+            .register("rbac_user", "UserPass123", UserRole::User)
+            .await
+            .unwrap();
+        let (_, admin_tok) = state
+            .auth
+            .user_state
+            .register("rbac_admin", "AdminPass123", UserRole::Admin)
+            .await
+            .unwrap();
+        let (wildcard_key, _) = state
+            .auth
+            .api_key_state
+            .create_key("admin-key".to_string(), vec!["*".to_string()])
+            .await;
+        let (scoped_key, _) = state
+            .auth
+            .api_key_state
+            .create_key("scoped-key".to_string(), vec!["read".to_string()])
+            .await;
+
+        let app = create_router_with_state(state);
+
+        // 1. P2-6: Onboarding mutations require authentication (not public).
+        assert_eq!(
+            send_req(&app, Method::POST, "/api/onboarding/dismiss", None).await,
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            send_req(&app, Method::POST, "/api/onboarding/reset", None).await,
+            StatusCode::UNAUTHORIZED
+        );
+
+        // 2. Viewer: read-only GET and safe read-only POST allowed; mutations blocked with 403.
+        assert_eq!(
+            send_req(&app, Method::GET, "/api/devices", Some(&viewer_tok)).await,
+            StatusCode::OK
+        );
+        assert_ne!(
+            send_req(&app, Method::POST, "/api/rules/validate", Some(&viewer_tok)).await,
+            StatusCode::FORBIDDEN
+        );
+        assert_ne!(
+            send_req(
+                &app,
+                Method::POST,
+                "/api/devices/current-batch",
+                Some(&viewer_tok)
+            )
+            .await,
+            StatusCode::FORBIDDEN
+        );
+        for (method, path) in [
+            (Method::POST, "/api/dashboards"),
+            (Method::POST, "/api/devices"),
+            (Method::DELETE, "/api/rules/nonexistent"),
+            (Method::POST, "/api/onboarding/dismiss"),
+            (Method::POST, "/api/onboarding/reset"),
+            (Method::POST, "/api/agents"),
+        ] {
+            assert_eq!(
+                send_req(&app, method.clone(), path, Some(&viewer_tok)).await,
+                StatusCode::FORBIDDEN,
+                "Viewer must be forbidden from {method} {path}"
+            );
+        }
+
+        // 3. Regular User (and non-wildcard API key): read-only status allowed, admin routes 403.
+        assert_eq!(
+            send_req(&app, Method::GET, "/api/llm-backends", Some(&user_tok)).await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            send_req(&app, Method::GET, "/api/data-push", Some(&user_tok)).await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            send_req(
+                &app,
+                Method::GET,
+                "/api/builtin-llm/status",
+                Some(&user_tok)
+            )
+            .await,
+            StatusCode::OK
+        );
+        for (method, path) in [
+            (Method::GET, "/api/im-bridges"),
+            (Method::POST, "/api/im-bridges"),
+            (Method::POST, "/api/extensions"),
+            (Method::POST, "/api/extensions/market/install"),
+            (Method::DELETE, "/api/extensions/ext1"),
+            (Method::GET, "/api/extensions/ext1/config"),
+            (Method::PUT, "/api/extensions/ext1/config"),
+            (Method::POST, "/api/extensions/ext1/reload"),
+            (Method::POST, "/api/extensions/upload/file"),
+            (Method::POST, "/api/builtin-llm/upload-model"),
+            (Method::POST, "/api/builtin-llm/restart"),
+            (Method::POST, "/api/builtin-llm/stop"),
+            (Method::POST, "/api/data-push"),
+            (Method::POST, "/api/data-push/t1/test"),
+            (Method::POST, "/api/llm-backends"),
+            (Method::POST, "/api/brokers"),
+            (Method::PUT, "/api/mqtt/broker-config"),
+            (Method::GET, "/api/logs/download"),
+            (Method::POST, "/api/config/import"),
+            (Method::PUT, "/api/settings/timezone"),
+            (Method::POST, "/api/frontend-components"),
+            (Method::DELETE, "/api/frontend-components/c1"),
+            (Method::GET, "/api/auth/keys"),
+            (Method::POST, "/api/auth/keys"),
+        ] {
+            assert_eq!(
+                send_req(&app, method.clone(), path, Some(&user_tok)).await,
+                StatusCode::FORBIDDEN,
+                "User must be forbidden from {method} {path}"
+            );
+            assert_eq!(
+                send_req(&app, method.clone(), path, Some(&scoped_key)).await,
+                StatusCode::FORBIDDEN,
+                "Non-wildcard API key must be forbidden from {method} {path}"
+            );
+        }
+
+        // 4. Admin JWT & wildcard API key pass admin middleware.
+        // (`GET /api/im-bridges` returns 503 in test state because IM router isn't started,
+        // proving auth + admin RBAC succeeded rather than returning 401/403.)
+        let im_admin_status =
+            send_req(&app, Method::GET, "/api/im-bridges", Some(&admin_tok)).await;
+        assert_ne!(im_admin_status, StatusCode::UNAUTHORIZED);
+        assert_ne!(im_admin_status, StatusCode::FORBIDDEN);
+        assert_eq!(
+            send_req(&app, Method::GET, "/api/auth/keys", Some(&admin_tok)).await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            send_req(&app, Method::GET, "/api/auth/keys", Some(&wildcard_key)).await,
+            StatusCode::OK
+        );
+    }
 }

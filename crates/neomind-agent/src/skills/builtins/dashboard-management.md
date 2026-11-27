@@ -96,8 +96,8 @@ Creating dashboards with data-bound components is the most complex CLI operation
 {"id": "my-unique-id", "type": "value-card", "title": "Temp", "position": {"x": 0, "y": 0, "w": 4, "h": 2}}
 ```
 
-- `id` + `type` + `position` are REQUIRED; `title`, `data_source`, `display`, `config` are optional.
-- `position` is an OBJECT with four required integers `x, y, w, h` — never a number or an array.
+- `id` + `type` are REQUIRED; `position` is optional (if omitted or overlapping, the server auto-arranges widgets cleanly on the 12-column grid — KPI tiles balanced on top, charts/media below); `title`, `data_source`, `display`, `config` are optional (`data_source` is required for live values on data widgets; the CLI warns if left unbound).
+- When specifying `position`, use an OBJECT with four integers `x, y, w, h` — never a number or an array.
 - `type` must be a real widget type (`widget list`); a typo'd type is rejected on add.
 - CUSTOM widget (files under `frontend-components/`): register it FIRST — `neomind widget install <dir>` — then use the widget's ID as `type` (e.g. `"type": "drawing-component"`). `"custom"` is the manifest's category, NOT a valid type.
 - Unsure about the shape? `dashboard get <ID>` prints existing components — copy one and change the fields (safest for unfamiliar widget types).
@@ -508,9 +508,12 @@ neomind dashboard add-components <ID> --components '[
 ## Share Dashboard
 
 ```bash
-neomind dashboard share <ID> --public
-neomind dashboard share <ID> --expires 3600
+neomind dashboard share <ID> --public=true
+neomind dashboard share <ID> --public=true --expires 24h
+neomind dashboard share <ID> --public=true --expires 7d
+neomind dashboard share <ID> --public=true --expires never
 ```
+`--expires` accepts hours (`24`, `24h`), days (`7d`), minutes (`30m`), or `never`.
 
 ## Common Errors & Solutions
 

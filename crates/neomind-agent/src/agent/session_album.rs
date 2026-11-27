@@ -74,50 +74,96 @@ pub fn append_attached_handles(
 }
 
 /// Build album from conversation memory (first-seen path order, deduped).
+///
+/// Includes both user-uploaded images and durable `/api/images/...` outputs
+/// produced by assistant tool calls (e.g. `image_edit`) or persisted image
+/// attachments, so follow-up turns ("圈出图片中的钢筋" after rotating) see
+/// the newly edited image as the latest entry instead of only the original.
 pub fn build_session_album(messages: &[AgentMessage]) -> Vec<SessionImageEntry> {
     let mut by_path: HashMap<String, usize> = HashMap::new();
     let mut entries: Vec<SessionImageEntry> = Vec::new();
 
-    for msg in messages {
-        if msg.role != "user" {
-            continue;
-        }
-        let Some(images) = msg.images.as_ref() else {
-            continue;
+    let mut push_path = |raw_path: &str, caption: Option<String>, source_text: Option<String>| {
+        let Some(path) = durable_image_path(raw_path) else {
+            return;
         };
-        let source = {
-            let t = msg.content.trim();
-            if t.is_empty() {
-                None
-            } else {
-                Some(t.chars().take(80).collect::<String>())
+        if let Some(&idx) = by_path.get(path) {
+            if entries[idx].caption.is_none() {
+                if let Some(cap) = caption.filter(|c| !c.trim().is_empty()) {
+                    entries[idx].caption = Some(cap);
+                }
             }
-        };
-        for image in images {
-            let Some(path) = durable_image_path(&image.data) else {
+            return;
+        }
+        let index = (entries.len() as u32) + 1;
+        by_path.insert(path.to_string(), entries.len());
+        entries.push(SessionImageEntry {
+            index,
+            path: path.to_string(),
+            caption: caption.filter(|c| !c.trim().is_empty()),
+            source_user_text: source_text,
+        });
+    };
+
+    for msg in messages {
+        if msg.role == "user" {
+            let Some(images) = msg.images.as_ref() else {
                 continue;
             };
-            if let Some(&idx) = by_path.get(path) {
-                // Prefer a later non-empty caption if the first sighting had none.
-                if entries[idx].caption.is_none() {
-                    if let Some(cap) = image.caption.as_ref().filter(|c| !c.trim().is_empty()) {
-                        entries[idx].caption = Some(cap.clone());
+            let source = {
+                let t = msg.content.trim();
+                if t.is_empty() {
+                    None
+                } else {
+                    Some(t.chars().take(80).collect::<String>())
+                }
+            };
+            for image in images {
+                push_path(&image.data, image.caption.clone(), source.clone());
+            }
+        } else if msg.role == "assistant" {
+            // 1. Persisted `image` attachments on the assistant reply.
+            if let Some(attachments) = msg.attachments.as_ref() {
+                for att in attachments {
+                    if att.get("kind").and_then(|v| v.as_str()) == Some("image") {
+                        if let Some(url) = att
+                            .get("imageUrl")
+                            .or_else(|| att.get("image_url"))
+                            .and_then(|v| v.as_str())
+                        {
+                            let title = att
+                                .get("title")
+                                .and_then(|v| v.as_str())
+                                .map(str::to_string);
+                            push_path(url, None, title.or_else(|| Some("generated image".into())));
+                        }
                     }
                 }
-                continue;
             }
-            let index = (entries.len() as u32) + 1;
-            by_path.insert(path.to_string(), entries.len());
-            entries.push(SessionImageEntry {
-                index,
-                path: path.to_string(),
-                caption: image
-                    .caption
-                    .as_ref()
-                    .filter(|c| !c.trim().is_empty())
-                    .cloned(),
-                source_user_text: source.clone(),
-            });
+            // 2. Durable `/api/images/...` outputs from `image_edit` tool calls
+            //    (covers in-memory history before attachments are hydrated).
+            if let Some(calls) = msg.tool_calls.as_ref() {
+                for tc in calls {
+                    if tc.name != "image_edit" {
+                        continue;
+                    }
+                    if let Some(res) = tc.result.as_ref() {
+                        let parsed = match res {
+                            serde_json::Value::String(s) => serde_json::from_str::<serde_json::Value>(s).ok(),
+                            other => Some(other.clone()),
+                        };
+                        if let Some(val) = parsed {
+                            let url = val
+                                .get("url")
+                                .or_else(|| val.get("data").and_then(|d| d.get("url")))
+                                .and_then(|v| v.as_str());
+                            if let Some(url) = url {
+                                push_path(url, None, Some("edited image".into()));
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
     entries
@@ -173,7 +219,7 @@ pub fn format_album_prompt_block(
     let omitted = start;
     let mut out = String::from(
         "## Session images (durable refs — pass these paths to vision / OCR / image_edit)\n\
-         Pixels may be omitted on text-only models; paths remain valid. Do not invent absolute HTTP URLs.\n",
+         Pixels may be omitted on text-only models; paths remain valid. Do not invent absolute HTTP URLs. In shell, /api/images/<path> maps to $NEOMIND_IMAGES_DIR/<path>.\n",
     );
     if omitted > 0 {
         out.push_str(&format!(
@@ -318,6 +364,28 @@ mod tests {
         assert_eq!(
             resolve_album_ref(&album, "/api/images/chat-aaa.jpg").map(|e| e.index),
             Some(1)
+        );
+    }
+
+    #[test]
+    fn album_includes_assistant_edited_images_as_latest() {
+        let mut assistant = AgentMessage::assistant("Rotated.");
+        assistant.attachments = Some(vec![serde_json::json!({
+            "kind": "image",
+            "title": "Edited image",
+            "imageUrl": "/api/images/rotated-123.jpg"
+        })]);
+        let history = vec![
+            msg_with("/api/images/chat-orig.jpg", None, "rotate this"),
+            assistant,
+        ];
+        let album = build_session_album(&history);
+        assert_eq!(album.len(), 2);
+        assert_eq!(album[0].path, "/api/images/chat-orig.jpg");
+        assert_eq!(album[1].path, "/api/images/rotated-123.jpg");
+        assert_eq!(
+            latest_album_entry(&album).map(|e| e.path.as_str()),
+            Some("/api/images/rotated-123.jpg")
         );
     }
 

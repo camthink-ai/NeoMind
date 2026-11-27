@@ -131,11 +131,16 @@ impl PathValidator {
         // `memory` tool: the store enforces per-file char budgets and write
         // serialization that a raw file write bypasses (live incident: a chat
         // asked to clean up memory rewrote a memory file via file_write,
-        // skipping every limit). Lexical check is sufficient here — the path
-        // already passed the containment check above. Custom storage paths
-        // outside the default directory are out of file tools' sandbox anyway.
+        // skipping every limit). Canonicalize both memory_dir and target (or
+        // its nearest existing ancestor) so relative data_dir or symlinks
+        // (e.g. /var -> /private/var or an in-sandbox symlink to memory/)
+        // cannot bypass the guard.
         let memory_dir = self.data_dir.join("memory");
-        if resolved.starts_with(&memory_dir) {
+        let in_memory_lexical = resolved.starts_with(&memory_dir);
+        let in_memory_canonical = Self::canonicalize_with_nonexistent_tail(&memory_dir)
+            .zip(Self::canonicalize_with_nonexistent_tail(&resolved))
+            .is_some_and(|(canon_mem, canon_target)| canon_target.starts_with(&canon_mem));
+        if in_memory_lexical || in_memory_canonical {
             return Err(ToolError::PermissionDenied(format!(
                 "Path '{}' is inside the memory store. Use the `memory` tool \
                  (action=read/rewrite/...) instead of file tools.",
@@ -192,6 +197,27 @@ impl PathValidator {
             }
             current = current.parent()?;
         }
+    }
+
+    /// Canonicalize `path`, or if it does not yet exist, canonicalize its
+    /// longest existing ancestor and re-append the remaining non-existent
+    /// path components.
+    fn canonicalize_with_nonexistent_tail(path: &Path) -> Option<PathBuf> {
+        if path.exists() {
+            return path.canonicalize().ok();
+        }
+        let mut tail = Vec::new();
+        let mut current = path;
+        while !current.exists() {
+            let name = current.file_name()?;
+            tail.push(name.to_os_string());
+            current = current.parent()?;
+        }
+        let mut base = current.canonicalize().ok()?;
+        for component in tail.into_iter().rev() {
+            base.push(component);
+        }
+        Some(base)
     }
 }
 
@@ -396,6 +422,53 @@ mod tests {
         assert!(v.resolve_path("memory-notes.md").is_ok());
         assert!(v.resolve_path("memory-backup/x.md").is_ok());
         assert!(v.resolve_path("skills/memory-guide.md").is_ok());
+    }
+
+    #[test]
+    fn test_memory_guard_blocks_canonical_and_symlink_bypasses() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let real_data = dir.path().join("real_data");
+        std::fs::create_dir_all(real_data.join("memory")).unwrap();
+
+        #[cfg(unix)]
+        {
+            // 1. Validator rooted at a symlinked data_dir; attacker supplies
+            //    the canonical absolute path to bypass lexical starts_with.
+            let linked_data = dir.path().join("linked_data");
+            std::os::unix::fs::symlink(&real_data, &linked_data).unwrap();
+            let v = PathValidator::new(linked_data.clone());
+            let canonical_target = real_data
+                .canonicalize()
+                .unwrap()
+                .join("memory")
+                .join("USER.md");
+            let err = v
+                .resolve_path(canonical_target.to_str().unwrap())
+                .expect_err("canonical path into memory/ must be denied");
+            assert!(err.to_string().contains("memory"), "got: {err}");
+
+            // 2. Symlink inside data_dir pointing to data_dir/memory.
+            let mem_alias = real_data.join("mem_alias");
+            std::os::unix::fs::symlink(real_data.join("memory"), &mem_alias).unwrap();
+            let v_real = PathValidator::new(real_data.clone());
+            let err = v_real
+                .resolve_path("mem_alias/new_subdir/KNOWLEDGE.md")
+                .expect_err("in-sandbox symlink into memory/ must be denied");
+            assert!(err.to_string().contains("memory"), "got: {err}");
+        }
+
+        // 3. Guard still applies even when data_dir/memory does not exist yet.
+        let fresh_data = dir.path().join("fresh_data");
+        std::fs::create_dir_all(&fresh_data).unwrap();
+        let v_fresh = PathValidator::new(fresh_data.clone());
+        let canon_new_mem = fresh_data
+            .canonicalize()
+            .unwrap()
+            .join("memory")
+            .join("USER.md");
+        assert!(v_fresh
+            .resolve_path(canon_new_mem.to_str().unwrap())
+            .is_err());
     }
 
     #[test]

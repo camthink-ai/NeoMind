@@ -161,6 +161,15 @@ impl<'de> Deserialize<'de> for ComparisonOperator {
     }
 }
 
+const REGEX_CACHE_MAX: usize = 512;
+
+fn regex_cache() -> &'static std::sync::RwLock<std::collections::HashMap<String, regex::Regex>> {
+    static REGEX_CACHE: std::sync::OnceLock<
+        std::sync::RwLock<std::collections::HashMap<String, regex::Regex>>,
+    > = std::sync::OnceLock::new();
+    REGEX_CACHE.get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()))
+}
+
 impl ComparisonOperator {
     /// Evaluate a numeric comparison.
     pub fn evaluate(&self, left: f64, right: f64) -> bool {
@@ -187,13 +196,9 @@ impl ComparisonOperator {
             Self::Regex => {
                 // Cache compiled regexes — Regex::new is expensive and was
                 // re-run on every condition evaluation (hot path for
-                // high-frequency string rules). Read-locked on cache hits;
-                // write only on first sighting of a pattern.
-                static REGEX_CACHE: std::sync::OnceLock<
-                    std::sync::RwLock<std::collections::HashMap<String, regex::Regex>>,
-                > = std::sync::OnceLock::new();
-                let cache = REGEX_CACHE
-                    .get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()));
+                // high-frequency string rules). Bounded to REGEX_CACHE_MAX
+                // entries so dynamic/unbounded patterns cannot leak memory.
+                let cache = regex_cache();
                 if let Ok(guard) = cache.read() {
                     if let Some(r) = guard.get(right) {
                         return r.is_match(left);
@@ -203,6 +208,9 @@ impl ComparisonOperator {
                     Ok(r) => {
                         let matched = r.is_match(left);
                         if let Ok(mut guard) = cache.write() {
+                            if guard.len() >= REGEX_CACHE_MAX && !guard.contains_key(right) {
+                                guard.clear();
+                            }
                             guard.entry(right.to_string()).or_insert(r);
                         }
                         matched
@@ -990,6 +998,22 @@ mod tests {
             let action: RuleAction = serde_json::from_value(json)
                 .unwrap_or_else(|e| panic!("{expected} must still deserialize: {e}"));
             assert_eq!(action.action_type(), expected);
+        }
+    }
+
+    #[test]
+    fn regex_cache_stays_bounded() {
+        for i in 0..(REGEX_CACHE_MAX + 150) {
+            let pattern = format!("^bounded_pat_{i}$");
+            let input = format!("bounded_pat_{i}");
+            assert!(ComparisonOperator::Regex.evaluate_str(&input, &pattern));
+            let len = regex_cache().read().unwrap().len();
+            assert!(
+                len <= REGEX_CACHE_MAX,
+                "REGEX_CACHE exceeded cap: {} > {}",
+                len,
+                REGEX_CACHE_MAX
+            );
         }
     }
 }

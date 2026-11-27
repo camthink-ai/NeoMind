@@ -1065,6 +1065,25 @@ fn sha256_of_file(path: &Path) -> Result<String, String> {
     Ok(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
 }
 
+/// Defense-in-depth admin check for destructive / privileged builtin-LLM
+/// handlers (import, upload, delete, stop, restart).
+fn require_admin(user: Option<&crate::auth_users::SessionInfo>) -> Result<(), ErrorResponse> {
+    match user {
+        Some(session) if session.role == crate::auth_users::UserRole::Admin => Ok(()),
+        _ => Err(ErrorResponse::forbidden("Admin access required")),
+    }
+}
+
+/// RAII guard that removes a staged upload temp file on drop so mid-stream
+/// upload failures or client disconnects never leak multi-GB files.
+struct TempFileCleanupGuard(PathBuf);
+
+impl Drop for TempFileCleanupGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 /// POST /api/builtin-llm/import-local — body `{ "path": "/abs/to/model.gguf" }`.
 ///
 /// The open-catalog local channel: register an arbitrary GGUF into the builtin
@@ -1082,8 +1101,10 @@ fn sha256_of_file(path: &Path) -> Result<String, String> {
 )]
 pub async fn import_local_handler(
     State(state): State<crate::server::types::ServerState>,
+    user: Option<Extension<crate::auth_users::SessionInfo>>,
     Json(req): Json<serde_json::Value>,
 ) -> HandlerResult<serde_json::Value> {
+    require_admin(user.as_deref())?;
     let path = req
         .get("path")
         .and_then(|v| v.as_str())
@@ -1098,7 +1119,7 @@ pub async fn import_local_handler(
 /// Stream an uploaded GGUF to a temp file, then run it through the same
 /// import pipeline as `import-local` (validation, manifest, spawn,
 /// rollback-on-failure). The temp copy is always removed afterwards — the
-/// import itself copies into `data/models/<id>/`.
+/// import itself moves or copies into `data/models/<id>/`.
 ///
 /// POST /api/builtin-llm/upload-model (multipart, field "file")
 #[utoipa::path(
@@ -1111,9 +1132,11 @@ pub async fn import_local_handler(
 )]
 pub async fn upload_model_handler(
     State(state): State<crate::server::types::ServerState>,
+    user: Option<Extension<crate::auth_users::SessionInfo>>,
     mut multipart: axum::extract::Multipart,
 ) -> HandlerResult<serde_json::Value> {
-    // Data dir for the temp upload (same tree the import copies into).
+    require_admin(user.as_deref())?;
+    // Data dir for the temp upload (same tree the import moves/copies into).
     let uploads_dir = std::path::Path::new(&state.data_dir)
         .join("models")
         .join("uploads");
@@ -1122,7 +1145,7 @@ pub async fn upload_model_handler(
 
     // Find the "file" field and stream it to disk. Streaming (not buffering)
     // matters: GGUFs run to ~5 GB and must not be held in memory.
-    let mut tmp_path: Option<PathBuf> = None;
+    let mut tmp_guard: Option<TempFileCleanupGuard> = None;
     while let Some(field) = multipart
         .next_field()
         .await
@@ -1142,6 +1165,10 @@ pub async fn upload_model_handler(
             .unwrap_or("upload.gguf")
             .to_string();
         let dest = uploads_dir.join(format!("{}-{}", uuid::Uuid::new_v4().simple(), safe_name));
+        // Attach the drop guard immediately so mid-stream errors or client
+        // disconnects unlink the partial file right away instead of leaking
+        // multi-GB temp files for 24h.
+        let guard = TempFileCleanupGuard(dest.clone());
         let mut file = tokio::io::BufWriter::new(
             tokio::fs::File::create(&dest)
                 .await
@@ -1162,15 +1189,16 @@ pub async fn upload_model_handler(
             .await
             .map_err(|e| ErrorResponse::internal(format!("flush upload: {e}")))?;
         drop(file);
-        tmp_path = Some(dest);
+        tmp_guard = Some(guard);
         break; // single-file upload
     }
-    let tmp =
-        tmp_path.ok_or_else(|| ErrorResponse::bad_request("multipart field 'file' required"))?;
+    let tmp_guard =
+        tmp_guard.ok_or_else(|| ErrorResponse::bad_request("multipart field 'file' required"))?;
 
-    // Import from the temp path; always clean it up (the import copies).
-    let result = import_gguf_from_path(&state, &tmp).await;
-    let _ = tokio::fs::remove_file(&tmp).await;
+    // Import from the temp path; drop guard cleans up `tmp_guard.0` if it was
+    // copied (or if import failed before rename).
+    let result = import_gguf_from_path(&state, &tmp_guard.0).await;
+    drop(tmp_guard);
     // Also sweep any leftovers from failed older uploads (best-effort).
     // Expire only STALE leftovers (>24h by mtime). Sweeping every file in
     // the directory unlinked the temp copy of any CONCURRENT upload, whose
@@ -1234,51 +1262,61 @@ async fn import_gguf_from_path(
         std::fs::rename(mdir.join(&id), &backup_dir)
             .map_err(|e| ErrorResponse::internal(format!("backup existing model: {e}")))?;
     }
-    if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| ErrorResponse::internal(format!("mkdir: {e}")))?;
-    }
-    if let Err(e) = std::fs::copy(src, &dest) {
-        // Restore the backed-up model so a failed copy never leaves a hole.
-        let _ = std::fs::remove_dir_all(mdir.join(&id));
-        if had_existing {
-            let _ = std::fs::rename(&backup_dir, mdir.join(&id));
+    // When importing from the staged uploads dir (`data/models/uploads/`),
+    // try an O(1) same-filesystem rename first and fall back to copy if needed.
+    // Offload both file placement and multi-GB SHA-256 hashing to spawn_blocking
+    // so async worker threads are never blocked.
+    let uploads_dir = mdir.join("uploads");
+    let is_staged_upload = src.starts_with(&uploads_dir)
+        || uploads_dir
+            .canonicalize()
+            .ok()
+            .zip(src.parent().and_then(|p| p.canonicalize().ok()))
+            .is_some_and(|(u, p)| p.starts_with(&u));
+    let src_owned = src.to_path_buf();
+    let dest_owned = dest.clone();
+    let sha_result = tokio::task::spawn_blocking(move || -> Result<String, String> {
+        if let Some(parent) = dest_owned.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir: {e}"))?;
         }
-        return Err(ErrorResponse::internal(format!(
-            "copy to {}: {e}",
-            dest.display()
-        )));
-    }
+        if is_staged_upload {
+            if std::fs::rename(&src_owned, &dest_owned).is_err() {
+                std::fs::copy(&src_owned, &dest_owned)
+                    .map_err(|e| format!("copy to {}: {e}", dest_owned.display()))?;
+            }
+        } else {
+            std::fs::copy(&src_owned, &dest_owned)
+                .map_err(|e| format!("copy to {}: {e}", dest_owned.display()))?;
+        }
+        sha256_of_file(&dest_owned).map_err(|e| format!("sha256: {e}"))
+    })
+    .await
+    .map_err(|e| ErrorResponse::internal(format!("import task panicked: {e}")))?;
 
-    let post_copy = (|| -> Result<ModelManifest, ErrorResponse> {
-        let sha =
-            sha256_of_file(&dest).map_err(|e| ErrorResponse::internal(format!("sha256: {e}")))?;
-        let quant = meta.quant.clone().unwrap_or_else(|| "imported".to_string());
-        Ok(ModelManifest {
-            id: id.clone(),
-            version: "1.0".to_string(),
-            file_name: file_name.clone(),
-            sha256: sha,
-            quant,
-            // The import pipeline is GGUF-only today; an RKNN/other-format
-            // import gets its own validated path when such models ship.
-            format: neomind_core::builtin_llm::manifest::MODEL_FORMAT_GGUF.to_string(),
-            // Imported GGUFs carry no projector (imports are rejected for
-            // clip-arch files); vision is a catalog-download feature.
-            mmproj: None,
-        })
-    })();
-    let manifest = match post_copy {
-        Ok(m) => m,
-        Err(e) => {
-            // Restore the backed-up model — a failure between copy and spawn
-            // must not strand the previous model in the backup dir.
+    let sha = match sha_result {
+        Ok(s) => s,
+        Err(msg) => {
+            // Restore the backed-up model so a failed copy/hash never leaves a hole.
             let _ = std::fs::remove_dir_all(mdir.join(&id));
             if had_existing {
                 let _ = std::fs::rename(&backup_dir, mdir.join(&id));
             }
-            return Err(e);
+            return Err(ErrorResponse::internal(msg));
         }
+    };
+    let quant = meta.quant.clone().unwrap_or_else(|| "imported".to_string());
+    let manifest = ModelManifest {
+        id: id.clone(),
+        version: "1.0".to_string(),
+        file_name: file_name.clone(),
+        sha256: sha,
+        quant,
+        // The import pipeline is GGUF-only today; an RKNN/other-format
+        // import gets its own validated path when such models ship.
+        format: neomind_core::builtin_llm::manifest::MODEL_FORMAT_GGUF.to_string(),
+        // Imported GGUFs carry no projector (imports are rejected for
+        // clip-arch files); vision is a catalog-download feature.
+        mmproj: None,
     };
     if let Err(e) = save_manifest(&mdir, &manifest) {
         let _ = std::fs::remove_dir_all(mdir.join(&id));
@@ -2729,8 +2767,10 @@ pub(crate) fn kill_process_on_port(_port: u16) {}
 )]
 pub async fn delete_model_handler(
     State(state): State<crate::server::types::ServerState>,
+    user: Option<Extension<crate::auth_users::SessionInfo>>,
     Query(params): Query<HashMap<String, String>>,
 ) -> HandlerResult<serde_json::Value> {
+    require_admin(user.as_deref())?;
     let cfg = BuiltinConfig::from_env();
     let mdir = models_dir(&state.data_dir);
 
@@ -2863,8 +2903,10 @@ pub async fn delete_model_handler(
 )]
 pub async fn restart_handler(
     State(state): State<crate::server::types::ServerState>,
+    user: Option<Extension<crate::auth_users::SessionInfo>>,
     Query(params): Query<HashMap<String, String>>,
 ) -> HandlerResult<serde_json::Value> {
+    require_admin(user.as_deref())?;
     let _engine_change = super::config::ENGINE_CHANGE_LOCK.lock().await;
     // Optional model switch (?model=<id>): multi-model coexistence — model
     // files stay on disk, switching is pointer + respawn, never a
@@ -3264,7 +3306,9 @@ pub async fn restart_handler(
 )]
 pub async fn stop_handler(
     State(state): State<crate::server::types::ServerState>,
+    user: Option<Extension<crate::auth_users::SessionInfo>>,
 ) -> HandlerResult<serde_json::Value> {
+    require_admin(user.as_deref())?;
     let _engine_change = super::config::ENGINE_CHANGE_LOCK.lock().await;
     let cfg = BuiltinConfig::from_env();
     if !cfg.enabled {
@@ -3860,6 +3904,16 @@ mod tests {
         }
     }
 
+    fn test_admin_session() -> crate::auth_users::SessionInfo {
+        crate::auth_users::SessionInfo {
+            user_id: "admin-1".to_string(),
+            username: "admin".to_string(),
+            role: crate::auth_users::UserRole::Admin,
+            created_at: 0,
+            expires_at: i64::MAX,
+        }
+    }
+
     #[tokio::test]
     async fn restart_validation_and_save_errors_do_not_change_persisted_settings() {
         let _serial = test_serial().lock().unwrap();
@@ -3876,19 +3930,64 @@ mod tests {
             ("ctx".into(), "32768".into()),
             ("kv".into(), "invalid".into()),
         ]);
-        assert!(restart_handler(State(state.clone()), Query(params))
-            .await
-            .is_err());
+        assert!(restart_handler(
+            State(state.clone()),
+            Some(Extension(test_admin_session())),
+            Query(params)
+        )
+        .await
+        .is_err());
         assert_eq!(super::super::config::EngineOverrides::load(&path), before);
         std::fs::remove_file(&path).unwrap();
         std::fs::create_dir(&path).unwrap();
         assert!(restart_handler(
             State(state),
+            Some(Extension(test_admin_session())),
             Query(HashMap::from([("ctx".into(), "32768".into())]))
         )
         .await
         .is_err());
         assert!(path.is_dir());
+    }
+
+    #[tokio::test]
+    async fn privileged_builtin_handlers_reject_non_admin() {
+        let state = ServerState::new_for_testing().await;
+        let viewer = crate::auth_users::SessionInfo {
+            user_id: "viewer-1".to_string(),
+            username: "viewer".to_string(),
+            role: crate::auth_users::UserRole::Viewer,
+            created_at: 0,
+            expires_at: i64::MAX,
+        };
+        let err = stop_handler(State(state.clone()), Some(Extension(viewer.clone())))
+            .await
+            .expect_err("viewer must be forbidden from stop");
+        assert_eq!(err.status, StatusCode::FORBIDDEN);
+        let err = restart_handler(
+            State(state.clone()),
+            Some(Extension(viewer.clone())),
+            Query(HashMap::new()),
+        )
+        .await
+        .expect_err("viewer must be forbidden from restart");
+        assert_eq!(err.status, StatusCode::FORBIDDEN);
+        let err = delete_model_handler(
+            State(state.clone()),
+            Some(Extension(viewer.clone())),
+            Query(HashMap::new()),
+        )
+        .await
+        .expect_err("viewer must be forbidden from delete");
+        assert_eq!(err.status, StatusCode::FORBIDDEN);
+        let err = import_local_handler(
+            State(state),
+            Some(Extension(viewer)),
+            Json(json!({"path": "/tmp/nonexistent.gguf"})),
+        )
+        .await
+        .expect_err("viewer must be forbidden from import-local");
+        assert_eq!(err.status, StatusCode::FORBIDDEN);
     }
 
     #[test]
@@ -4017,6 +4116,7 @@ mod tests {
         let app = Router::new()
             .route("/api/builtin-llm/stop", post(super::stop_handler))
             .route("/api/builtin-llm/restart", post(super::restart_handler))
+            .layer(axum::Extension(test_admin_session()))
             .with_state(state);
 
         let stop = app

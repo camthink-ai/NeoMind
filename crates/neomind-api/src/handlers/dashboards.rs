@@ -233,6 +233,8 @@ pub struct DashboardComponent {
     #[serde(
         skip_serializing_if = "Option::is_none",
         alias = "data_source",
+        alias = "dataSource",
+        alias = "datasource",
         rename = "data_source"
     )]
     pub data_source: Option<serde_json::Value>,
@@ -304,11 +306,10 @@ pub struct CreateDashboardComponent {
     /// Widget type: `value-card` | `line-chart` | `bar-chart` | `gauge` | `markdown-display`
     #[serde(alias = "type", rename = "type")]
     pub component_type: String,
-    /// Omitted in hand-written JSON (models, API-first users) -> a sane
-    /// default tile instead of a 400. The old hard requirement made the
-    /// CLI help's own example fail against the API.
-    #[serde(default = "default_component_position")]
-    pub position: ComponentPosition,
+    /// Omitted in hand-written JSON (models, API-first users) -> auto-placed on
+    /// the 12-column grid using widget-appropriate proportions without overlaps.
+    #[serde(default)]
+    pub position: Option<ComponentPosition>,
     #[serde(
         skip_serializing_if = "Option::is_none",
         alias = "title",
@@ -318,6 +319,8 @@ pub struct CreateDashboardComponent {
     #[serde(
         skip_serializing_if = "Option::is_none",
         alias = "data_source",
+        alias = "dataSource",
+        alias = "datasource",
         rename = "data_source"
     )]
     pub data_source: Option<serde_json::Value>,
@@ -454,28 +457,505 @@ fn convert_layout(layout: &StoredLayout) -> DashboardLayout {
     }
 }
 
+/// Semantic default & minimum grid sizes `(default_w, default_h, min_w, min_h)`
+/// on the 12-column dashboard grid so auto-placed widgets look balanced instead
+/// of giant overlapping 6×4 blocks.
+fn widget_grid_defaults(component_type: &str) -> (u32, u32, u32, u32) {
+    match component_type {
+        "value-card" | "metric-card" | "counter" | "led-indicator" | "progress-bar"
+        | "toggle-switch" => (3, 2, 2, 2),
+        "sparkline" => (4, 2, 3, 2),
+        "line-chart" | "area-chart" | "bar-chart" | "pie-chart" => (6, 4, 4, 3),
+        "image-display" | "video-display" | "image-history" => (6, 4, 4, 3),
+        "markdown-display" | "web-display" => (6, 3, 3, 2),
+        "map-display" | "custom-layer" => (12, 5, 6, 4),
+        _ => (6, 4, 3, 2),
+    }
+}
+
+/// Visual layout tier when auto-arranging a fresh dashboard without explicit
+/// coordinates: KPI indicators & controls sit cleanly across the top rows,
+/// charts/media sit in the middle, full-width spatial/custom widgets below.
+fn widget_layout_tier(component_type: &str) -> u8 {
+    match component_type {
+        "value-card" | "metric-card" | "counter" | "led-indicator" | "progress-bar"
+        | "sparkline" | "toggle-switch" => 0,
+        "line-chart" | "area-chart" | "bar-chart" | "pie-chart" | "image-display"
+        | "video-display" | "image-history" | "markdown-display" | "web-display" => 1,
+        _ => 2,
+    }
+}
+
+fn is_timeseries_widget(component_type: &str) -> bool {
+    matches!(
+        component_type,
+        "line-chart" | "area-chart" | "bar-chart" | "pie-chart" | "sparkline" | "image-history"
+    )
+}
+
+/// Normalize a single DataSource JSON object so common LLM key spellings
+/// (`deviceId`/`device_id`/`metric`/`metric_id`/`field`) always resolve cleanly
+/// to the canonical frontend `DataSource` contract (`sourceId`, `property`, `metricId`).
+fn normalize_single_data_source(obj: &mut serde_json::Map<String, serde_json::Value>, component_type: &str) {
+    // 1. Normalize sourceId aliases: deviceId / device_id / source_id
+    if !obj.contains_key("sourceId") {
+        let alias = obj
+            .get("deviceId")
+            .or_else(|| obj.get("device_id"))
+            .or_else(|| obj.get("source_id"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        if let Some(sid) = alias {
+            obj.insert("sourceId".to_string(), serde_json::Value::String(sid));
+        }
+    }
+
+    // 2. Normalize extension / agent / transform / system / device-info snake_case aliases
+    for (snake, camel) in [
+        ("extension_id", "extensionId"),
+        ("extension_metric", "extensionMetric"),
+        ("extension_command", "extensionCommand"),
+        ("agent_id", "agentId"),
+        ("transform_id", "transformId"),
+        ("system_metric", "systemMetric"),
+        ("info_property", "infoProperty"),
+        ("time_window", "timeWindow"),
+        ("time_range", "timeRange"),
+        ("command_params", "commandParams"),
+        ("value_mapping", "valueMapping"),
+    ] {
+        if !obj.contains_key(camel) {
+            if let Some(val) = obj.get(snake).cloned() {
+                obj.insert(camel.to_string(), val);
+            }
+        }
+    }
+
+    // 3. Infer `type` if omitted when a source identifier is present
+    if !obj.contains_key("type") {
+        let inferred = if obj.contains_key("extensionId") {
+            if obj.contains_key("extensionCommand") {
+                Some("extension-command")
+            } else {
+                Some("extension-metric")
+            }
+        } else if obj.contains_key("agentId") {
+            Some("agent")
+        } else if obj.contains_key("transformId") {
+            Some("transform")
+        } else if obj.contains_key("systemMetric") {
+            Some("system")
+        } else if obj.contains_key("command") {
+            Some("command")
+        } else if obj.contains_key("infoProperty") {
+            Some("device-info")
+        } else if obj.contains_key("sourceId") {
+            // Device metrics (value-card, image-display, charts, etc.) use
+            // `type: "telemetry"`. `type: "device"` is only for map markers.
+            Some(if component_type == "map-display" {
+                "device"
+            } else {
+                "telemetry"
+            })
+        } else {
+            None
+        };
+        if let Some(t) = inferred {
+            obj.insert("type".to_string(), serde_json::Value::String(t.to_string()));
+        }
+    }
+
+    // 4. Normalize metric/property aliases and auto-upgrade mistaken
+    //    `type: "device"` with a metric field on non-map widgets to
+    //    `type: "telemetry"` (matching UnifiedDataSourceConfig & ImageDisplay).
+    let metric_val = obj
+        .get("property")
+        .or_else(|| obj.get("metricId"))
+        .or_else(|| obj.get("metric"))
+        .or_else(|| obj.get("metric_id"))
+        .or_else(|| obj.get("metricName"))
+        .or_else(|| obj.get("metric_name"))
+        .or_else(|| obj.get("field"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+
+    if let Some(m) = metric_val {
+        if component_type != "map-display"
+            && obj.get("type").and_then(|v| v.as_str()) == Some("device")
+        {
+            obj.insert(
+                "type".to_string(),
+                serde_json::Value::String("telemetry".to_string()),
+            );
+        }
+        let ds_type = obj
+            .get("type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        match ds_type.as_str() {
+            "telemetry" | "metric" | "transform" | "device" => {
+                if !obj.contains_key("metricId") {
+                    obj.insert("metricId".to_string(), serde_json::Value::String(m.clone()));
+                }
+                if !obj.contains_key("property") {
+                    obj.insert("property".to_string(), serde_json::Value::String(m.clone()));
+                }
+                if !obj.contains_key("field") {
+                    obj.insert("field".to_string(), serde_json::Value::String(m));
+                }
+                if ds_type == "telemetry" {
+                    if !obj.contains_key("source") {
+                        obj.insert(
+                            "source".to_string(),
+                            serde_json::Value::String("device".to_string()),
+                        );
+                    }
+                    if !obj.contains_key("id") {
+                        if let Some(sid) = obj.get("sourceId").cloned() {
+                            obj.insert("id".to_string(), sid);
+                        }
+                    }
+                    if !obj.contains_key("mode") {
+                        let mode = if is_timeseries_widget(component_type) {
+                            "timeseries"
+                        } else {
+                            "latest"
+                        };
+                        obj.insert("mode".to_string(), serde_json::Value::String(mode.to_string()));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Normalize a `data_source` JSON value (single object or array of objects).
+fn normalize_data_source_value(val: &mut serde_json::Value, component_type: &str) {
+    match val {
+        serde_json::Value::Object(obj) => normalize_single_data_source(obj, component_type),
+        serde_json::Value::Array(arr) => {
+            for item in arr.iter_mut() {
+                if let serde_json::Value::Object(obj) = item {
+                    normalize_single_data_source(obj, component_type);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Normalize a raw component JSON object before deserializing into `StoredComponent`:
+/// - hoists camelCase `dataSource` / `config.dataSource` / `config.data_source` into `data_source`;
+/// - synthesizes `data_source` from shorthand top-level `device_id`/`deviceId` + `metric`/`property`;
+/// - normalizes field aliases inside `data_source`.
+fn normalize_component_json(val: &mut serde_json::Value) {
+    let Some(obj) = val.as_object_mut() else {
+        return;
+    };
+    let component_type = obj
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    // Hoist camelCase/lowercase dataSource keys at top level
+    if !obj.contains_key("data_source") {
+        if let Some(ds) = obj.remove("dataSource").or_else(|| obj.remove("datasource")) {
+            if !ds.is_null() {
+                obj.insert("data_source".to_string(), ds);
+            }
+        }
+    }
+    // Hoist nested config.dataSource / config.data_source when top-level data_source is missing
+    if !obj.contains_key("data_source") {
+        let nested = obj.get_mut("config").and_then(|c| c.as_object_mut()).and_then(|cfg| {
+            cfg.remove("dataSource")
+                .or_else(|| cfg.remove("data_source"))
+                .filter(|v| !v.is_null())
+        });
+        if let Some(ds) = nested {
+            obj.insert("data_source".to_string(), ds);
+        }
+    }
+    // Synthesize data_source from shorthand top-level device_id/deviceId + metric/property
+    if !obj.contains_key("data_source") {
+        let dev = obj
+            .get("device_id")
+            .or_else(|| obj.get("deviceId"))
+            .or_else(|| obj.get("sourceId"))
+            .or_else(|| obj.get("source_id"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        if let Some(source_id) = dev {
+            let metric = obj
+                .get("metric")
+                .or_else(|| obj.get("property"))
+                .or_else(|| obj.get("metricId"))
+                .or_else(|| obj.get("metric_id"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
+            let mut ds = serde_json::Map::new();
+            ds.insert("sourceId".to_string(), serde_json::Value::String(source_id));
+            if let Some(m) = metric {
+                ds.insert("property".to_string(), serde_json::Value::String(m));
+            }
+            obj.insert("data_source".to_string(), serde_json::Value::Object(ds));
+        }
+    }
+
+    if let Some(ds) = obj.get_mut("data_source") {
+        normalize_data_source_value(ds, &component_type);
+    }
+}
+
+/// 2D occupancy grid over 12 columns to pack widgets without overlaps.
+struct GridPacker {
+    cols: u32,
+    cells: Vec<[bool; 12]>,
+}
+
+impl GridPacker {
+    fn new(existing: &[StoredComponent], cols: u32) -> Self {
+        let mut packer = Self {
+            cols: cols.clamp(1, 12),
+            cells: Vec::new(),
+        };
+        for c in existing {
+            packer.mark(c.position.x, c.position.y, c.position.w, c.position.h);
+        }
+        packer
+    }
+
+    fn ensure_rows(&mut self, rows: usize) {
+        if self.cells.len() < rows {
+            self.cells.resize(rows, [false; 12]);
+        }
+    }
+
+    fn fits(&self, x: u32, y: u32, w: u32, h: u32) -> bool {
+        if w == 0 || h == 0 || x.saturating_add(w) > self.cols {
+            return false;
+        }
+        for row in y..y.saturating_add(h) {
+            if let Some(r) = self.cells.get(row as usize) {
+                for col in x..x.saturating_add(w) {
+                    if r[col as usize] {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
+    }
+
+    fn mark(&mut self, x: u32, y: u32, w: u32, h: u32) {
+        if w == 0 || h == 0 {
+            return;
+        }
+        let y_end = y.saturating_add(h) as usize;
+        self.ensure_rows(y_end);
+        let x_end = x.saturating_add(w).min(self.cols) as usize;
+        for row in (y as usize)..y_end {
+            for col in (x as usize)..x_end {
+                self.cells[row][col] = true;
+            }
+        }
+    }
+
+    fn next_free_y(&self) -> u32 {
+        self.cells.len() as u32
+    }
+
+    fn find_slot(&self, w: u32, h: u32, min_y: u32) -> (u32, u32) {
+        let w = w.clamp(1, self.cols);
+        let h = h.max(1);
+        let mut y = min_y;
+        loop {
+            for x in 0..=(self.cols - w) {
+                if self.fits(x, y, w, h) {
+                    return (x, y);
+                }
+            }
+            y += 1;
+        }
+    }
+}
+
+/// Auto-place components whose position was omitted, invalid, out-of-bounds, or
+/// colliding with existing/earlier widgets. When auto-arranging a fresh batch of
+/// components without explicit coordinates, balances row widths (e.g. 2 KPI cards
+/// -> 6+6, 3 KPI cards -> 4+4+4, 1 chart -> 12) and puts KPI indicators above
+/// charts for clean visual hierarchy.
+fn auto_layout_components(
+    existing: &[StoredComponent],
+    new_items: &mut [(StoredComponent, bool)], // (component, has_explicit_position)
+    cols: u32,
+) {
+    let cols = cols.clamp(1, 12);
+    let all_auto_on_empty = existing.is_empty() && new_items.iter().all(|(_, explicit)| !*explicit);
+
+    if all_auto_on_empty && !new_items.is_empty() {
+        // Stable sort by visual tier: KPIs/controls on top, charts/displays below, maps/full-width last.
+        new_items.sort_by_key(|(c, _)| widget_layout_tier(&c.component_type));
+
+        // Shelf-pack into balanced full-width rows by tier so rows never look lopsided.
+        let mut y = 0u32;
+        let mut i = 0usize;
+        while i < new_items.len() {
+            let tier = widget_layout_tier(&new_items[i].0.component_type);
+            let mut row_indices = Vec::new();
+            let mut row_w = 0u32;
+            let mut row_h = 1u32;
+
+            while i < new_items.len() && widget_layout_tier(&new_items[i].0.component_type) == tier
+            {
+                let (dw, dh, _, _) = widget_grid_defaults(&new_items[i].0.component_type);
+                let w = dw.min(cols);
+                if !row_indices.is_empty() && row_w + w > cols {
+                    break;
+                }
+                row_indices.push((i, w, dh));
+                row_w += w;
+                row_h = row_h.max(dh);
+                i += 1;
+            }
+
+            // Expand items evenly across the 12 columns when a row has leftover space:
+            // - 1 KPI card: keep clean width 6 (or 4) instead of stretching 12 cols wide
+            // - 2+ KPI cards or any chart/media/map row: fill all 12 cols evenly!
+            let count = row_indices.len() as u32;
+            let fill_full = tier > 0 || count >= 2;
+            let mut x = 0u32;
+            for (pos_in_row, (idx, orig_w, _dh)) in row_indices.iter().enumerate() {
+                let target_w = if fill_full && row_w < cols && count > 0 {
+                    let base = cols / count;
+                    let rem = cols % count;
+                    base + u32::from((pos_in_row as u32) < rem)
+                } else {
+                    *orig_w
+                };
+                let (_, _, min_w, min_h) = widget_grid_defaults(&new_items[*idx].0.component_type);
+                new_items[*idx].0.position = neomind_storage::dashboards::ComponentPosition {
+                    x,
+                    y,
+                    w: target_w.clamp(min_w.min(cols), cols),
+                    h: row_h.max(min_h),
+                    min_w: Some(min_w),
+                    min_h: Some(min_h),
+                    max_w: None,
+                    max_h: None,
+                };
+                x += target_w;
+            }
+            y += row_h;
+        }
+        return;
+    }
+
+    // Incremental / mixed mode: preserve valid non-overlapping explicit positions,
+    // and auto-pack omitted / out-of-bounds / colliding components cleanly below or in gaps.
+    let mut packer = GridPacker::new(existing, cols);
+    let append_start_y = packer.next_free_y();
+
+    for (comp, has_explicit) in new_items.iter_mut() {
+        let (dw, dh, min_w, min_h) = widget_grid_defaults(&comp.component_type);
+        if *has_explicit {
+            let w = comp.position.w.clamp(min_w.min(cols), cols);
+            let h = comp.position.h.max(min_h);
+            comp.position.w = w;
+            comp.position.h = h;
+            if comp.position.min_w.is_none() {
+                comp.position.min_w = Some(min_w);
+            }
+            if comp.position.min_h.is_none() {
+                comp.position.min_h = Some(min_h);
+            }
+            if comp.position.x.saturating_add(w) <= cols
+                && packer.fits(comp.position.x, comp.position.y, w, h)
+            {
+                packer.mark(comp.position.x, comp.position.y, w, h);
+                continue;
+            }
+            // Collides or overflows right edge -> relocate cleanly without overlap.
+            let (nx, ny) = packer.find_slot(w, h, comp.position.y);
+            comp.position.x = nx;
+            comp.position.y = ny;
+            packer.mark(nx, ny, w, h);
+        } else {
+            let w = dw.min(cols);
+            let h = dh;
+            let (nx, ny) = packer.find_slot(w, h, append_start_y);
+            comp.position = neomind_storage::dashboards::ComponentPosition {
+                x: nx,
+                y: ny,
+                w,
+                h,
+                min_w: Some(min_w),
+                min_h: Some(min_h),
+                max_w: None,
+                max_h: None,
+            };
+            packer.mark(nx, ny, w, h);
+        }
+    }
+}
+
 /// Convert API component to stored component.
 /// Preserves client-provided ID when available, otherwise caller must assign one.
-fn api_to_stored_component(component: &CreateDashboardComponent) -> StoredComponent {
-    StoredComponent {
-        id: component.id.clone().unwrap_or_default(),
-        component_type: component.component_type.clone(),
-        position: neomind_storage::dashboards::ComponentPosition {
-            x: component.position.x,
-            y: component.position.y,
-            w: component.position.w,
-            h: component.position.h,
-            min_w: component.position.min_w,
-            min_h: component.position.min_h,
-            max_w: component.position.max_w,
-            max_h: component.position.max_h,
-        },
-        title: component.title.clone(),
-        data_source: component.data_source.clone(),
-        display: component.display.clone(),
-        config: component.config.clone(),
-        actions: component.actions.clone(),
+/// Also hoists nested `config.dataSource` and normalizes common LLM field aliases.
+fn api_to_stored_component(component: &CreateDashboardComponent) -> (StoredComponent, bool) {
+    let has_explicit = component.position.is_some();
+    let pos = component
+        .position
+        .clone()
+        .unwrap_or_else(default_component_position);
+    let mut config = component.config.clone();
+    let mut data_source = component.data_source.clone();
+
+    if data_source.is_none() {
+        if let Some(cfg_obj) = config.as_mut().and_then(|c| c.as_object_mut()) {
+            data_source = cfg_obj
+                .remove("dataSource")
+                .or_else(|| cfg_obj.remove("data_source"))
+                .filter(|v| !v.is_null());
+        }
     }
+    if let Some(ref mut ds) = data_source {
+        normalize_data_source_value(ds, &component.component_type);
+    }
+
+    (
+        StoredComponent {
+            id: component.id.clone().unwrap_or_default(),
+            component_type: component.component_type.clone(),
+            position: neomind_storage::dashboards::ComponentPosition {
+                x: pos.x,
+                y: pos.y,
+                w: pos.w,
+                h: pos.h,
+                min_w: pos.min_w,
+                min_h: pos.min_h,
+                max_w: pos.max_w,
+                max_h: pos.max_h,
+            },
+            title: component.title.clone(),
+            data_source,
+            display: component.display.clone(),
+            config,
+            actions: component.actions.clone(),
+        },
+        has_explicit,
+    )
 }
 
 /// Convert stored component to API component
@@ -647,23 +1127,28 @@ pub async fn create_dashboard_handler(
         .map_err(|e| ErrorResponse::internal(format!("Failed to compute sort order: {}", e)))?
         + 1;
 
+    let stored_layout = api_to_stored_layout(&req.layout);
+    let mut staged: Vec<(StoredComponent, bool)> = req
+        .components
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            let (mut comp, has_explicit) = api_to_stored_component(c);
+            if comp.id.is_empty() {
+                comp.id = format!("component_{}", i);
+            }
+            (comp, has_explicit)
+        })
+        .collect();
+    auto_layout_components(&[], &mut staged, stored_layout.columns);
+    let components: Vec<StoredComponent> = staged.into_iter().map(|(c, _)| c).collect();
+
     let stored_dashboard = StoredDashboard {
         id: id.clone(),
         name: req.name.clone(),
         description: req.description,
-        layout: api_to_stored_layout(&req.layout),
-        components: req
-            .components
-            .iter()
-            .enumerate()
-            .map(|(i, c)| {
-                let mut comp = api_to_stored_component(c);
-                if comp.id.is_empty() {
-                    comp.id = format!("component_{}", i);
-                }
-                comp
-            })
-            .collect(),
+        layout: stored_layout,
+        components,
         created_at: now,
         updated_at: now,
         is_default: None,
@@ -709,7 +1194,9 @@ pub async fn update_dashboard_handler(
             .enumerate()
             .map(|(i, c)| {
                 reject_ephemeral_static_fields(c, i)?;
-                serde_json::from_value::<StoredComponent>(c.clone())
+                let mut value = c.clone();
+                normalize_component_json(&mut value);
+                serde_json::from_value::<StoredComponent>(value)
                     .map_err(|e| format!("component[{}]: {}", i, e))
             })
             .collect();
@@ -793,7 +1280,7 @@ pub async fn add_components_handler(
     let dash_id = resolved.id.clone();
 
     // Parse and validate new components (fail closed before mutating).
-    let new_components: Vec<StoredComponent> = req
+    let new_components_staged: Vec<(StoredComponent, bool)> = req
         .components
         .iter()
         .enumerate()
@@ -814,11 +1301,27 @@ pub async fn add_components_handler(
                 ));
             }
             reject_ephemeral_static_fields(c, i)?;
-            // Hand-written JSON (models, API-first users) routinely omits
-            // position — the CLI help's own example does. Inject a default
-            // tile instead of 400ing; explicit positions pass through intact.
             let mut value = c.clone();
+            normalize_component_json(&mut value);
+            let mut has_explicit_position = false;
             if let Some(obj) = value.as_object_mut() {
+                // Auto-generate an id if omitted so small models don't fail on missing `id`.
+                let missing_id = obj
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.trim().is_empty())
+                    .unwrap_or(true);
+                if missing_id {
+                    let prefix = obj
+                        .get("type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("widget");
+                    let short: String = uuid::Uuid::new_v4().to_string().chars().take(6).collect();
+                    obj.insert("id".to_string(), serde_json::json!(format!("{prefix}-{short}")));
+                }
+                if let Some(pos) = obj.get("position").and_then(|p| p.as_object()) {
+                    has_explicit_position = pos.contains_key("x") && pos.contains_key("y");
+                }
                 if !obj.contains_key("position") {
                     obj.insert(
                         "position".to_string(),
@@ -826,16 +1329,16 @@ pub async fn add_components_handler(
                     );
                 }
             }
-            serde_json::from_value::<StoredComponent>(value).map_err(|e| {
-                format!("component[{}]: {}", i, e)
-            })
+            let comp = serde_json::from_value::<StoredComponent>(value)
+                .map_err(|e| format!("component[{}]: {}", i, e))?;
+            Ok((comp, has_explicit_position))
         })
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| {
             ErrorResponse::bad_request(format!("Invalid component data: {}", e)).with_hint(
                 format!(
-                    "Each component needs: id (string), type ({}), title (string), \
-                     position (optional — defaults to a standard tile).\n\
+                    "Each component needs: id (optional), type ({}), title (string), \
+                     position (optional — auto-placed cleanly on the 12-col grid).\n\
                      Bind live values with data_source — do NOT use ephemeral `data`/`label` keys.\n\
                      Example: {{\"id\":\"temp\",\"type\":\"value-card\",\"title\":\"Temp\",\
                      \"data_source\":{{\"type\":\"device\",\"sourceId\":\"<device-id>\",\"property\":\"<metric>\"}}}}",
@@ -849,9 +1352,9 @@ pub async fn add_components_handler(
     // while the agent claimed success. Known = builtin ∪ community ∪
     // extension-bundled.
     let known = collect_known_widget_types(&state);
-    if let Some(bad) = new_components
+    if let Some((bad, _)) = new_components_staged
         .iter()
-        .find(|c| !known.contains(&c.component_type))
+        .find(|(c, _)| !known.contains(&c.component_type))
     {
         return Err(ErrorResponse::bad_request(format!(
             "Unknown component type '{}' — run `neomind widget list` for valid types. \
@@ -869,7 +1372,10 @@ pub async fn add_components_handler(
     // Also reject duplicates WITHIN the same batch.
     {
         let mut seen = std::collections::HashSet::new();
-        if let Some(dup) = new_components.iter().find(|c| !seen.insert(&c.id)) {
+        if let Some((dup, _)) = new_components_staged
+            .iter()
+            .find(|(c, _)| !seen.insert(&c.id))
+        {
             return Err(ErrorResponse::bad_request(format!(
                 "Duplicate component id '{}' within the same --components batch",
                 dup.id
@@ -882,7 +1388,7 @@ pub async fn add_components_handler(
     let dashboard = state
         .dashboard_store
         .mutate_dashboard(&dash_id, |dashboard| {
-            if let Some(dup) = new_components.iter().find(|c| {
+            if let Some((dup, _)) = new_components_staged.iter().find(|(c, _)| {
                 dashboard
                     .components
                     .iter()
@@ -894,7 +1400,11 @@ pub async fn add_components_handler(
                     dup.id, dash_id, dash_id
                 )));
             }
-            dashboard.components.extend(new_components.clone());
+            let mut staged = new_components_staged.clone();
+            auto_layout_components(&dashboard.components, &mut staged, dashboard.layout.columns);
+            dashboard
+                .components
+                .extend(staged.into_iter().map(|(c, _)| c));
             dashboard.updated_at = chrono::Utc::now().timestamp();
             Ok(dashboard.clone())
         })
@@ -1058,6 +1568,18 @@ pub async fn update_component_handler(
                     if sanitized.remove(key).is_some() {
                         ignored_keys.push(key.to_string());
                     }
+                }
+                // Normalize camelCase `dataSource` and inner field aliases on component patches.
+                if !sanitized.contains_key("data_source") {
+                    if let Some(ds) = sanitized
+                        .remove("dataSource")
+                        .or_else(|| sanitized.remove("datasource"))
+                    {
+                        sanitized.insert("data_source".to_string(), ds);
+                    }
+                }
+                if let Some(ds) = sanitized.get_mut("data_source") {
+                    normalize_data_source_value(ds, &component.component_type);
                 }
                 deep_merge_json(&mut value, &serde_json::Value::Object(sanitized));
             }
@@ -1555,19 +2077,10 @@ pub async fn share_proxy_handler(
     //    extension data — far beyond what the shared dashboard needs. The
     //    semantics of a share link are "read the data this dashboard needs",
     //    not "read the entire platform".
-    // 3a. Reject traversal outright: a wildcard path like
-    // `devices/../../auth/keys` passes a first-segment allowlist check, and
-    // the loopback URL builder normalizes the dot-segments away — turning
-    // the allowlist into a full authenticated-API bypass via the internal-
-    // proxy secret. No legitimate share-proxy path contains them.
-    if path_str.split('/').any(|seg| seg == ".." || seg == ".") {
-        return ErrorResponse::new(
-            "FORBIDDEN",
-            "This path is not accessible via share proxy",
-            StatusCode::FORBIDDEN,
-        )
-        .into_response();
-    }
+    // 3a. Reject unsafe paths (traversal, backslashes, query/fragment/percent
+    //     injection, control chars, leading/empty slash confusion) and any path
+    //     outside the strict segment-bounded allowlist or on denied sensitive
+    //     extension subpaths (`config`, `logs`).
     if !is_share_proxy_path_allowed(path_str) {
         return ErrorResponse::new(
             "FORBIDDEN",
@@ -1618,11 +2131,11 @@ pub async fn share_proxy_handler(
             ["agents", id, "executions"] => Some(*id),
             ["agents", id, "executions", "details"]
             | ["agents", id, "executions", _]
-            | ["agents", id, "latest-execution"] => {
+            | ["agents", id, "latest-execution"]
+            | ["agents", id, "invoke"] => {
                 redact_shared_agent_execution = true;
                 Some(*id)
             }
-            ["agents", id, "invoke"] => Some(*id),
             _ => None,
         };
         let Some(target_agent_id) = allowed_agent_subpath else {
@@ -1654,20 +2167,25 @@ pub async fn share_proxy_handler(
         }
     }
 
-    // 5. Build query string
-    let qs = if query.is_empty() {
-        String::new()
-    } else {
-        format!("?{}", query)
-    };
-    // Bind port is configurable (NEOMIND_PORT / config) — a hardcoded 9375
-    // broke every shared-dashboard data proxy on non-default-port installs.
-    let target_url = format!(
-        "http://127.0.0.1:{}/api/{}{}",
+    // 5. Build and verify the parsed loopback URL before attaching internal auth.
+    //    Verifies that URL parsing/normalization did NOT alter the path
+    //    (e.g. via backslashes, dot-segments, percent-encoding, or query/fragment
+    //    smuggling) and that the target stays pinned to 127.0.0.1:<port>/api/<path_str>.
+    let target_url = match build_verified_share_proxy_url(
         crate::server::http_bind_port(),
         path_str,
-        qs
-    );
+        &query,
+    ) {
+        Ok(url) => url,
+        Err(()) => {
+            return ErrorResponse::new(
+                "FORBIDDEN",
+                "This path is not accessible via share proxy",
+                StatusCode::FORBIDDEN,
+            )
+            .into_response();
+        }
+    };
 
     // 6. Forward via reqwest (internal loopback, skips auth middleware).
     // One shared client — shared boards poll through here continuously and a
@@ -1675,10 +2193,8 @@ pub async fn share_proxy_handler(
     static PROXY_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
     let client = PROXY_CLIENT.get_or_init(reqwest::Client::new);
     let mut req_builder = match method {
-        Method::GET => client.get(&target_url),
-        Method::POST => client.post(&target_url),
-        Method::PUT => client.put(&target_url),
-        Method::DELETE => client.delete(&target_url),
+        Method::GET => client.get(target_url),
+        Method::POST => client.post(target_url),
         _ => {
             return ErrorResponse::new(
                 "METHOD_NOT_ALLOWED",
@@ -1727,6 +2243,11 @@ pub async fn share_proxy_handler(
                         }
                         if redact_shared_agent_execution {
                             strip_sensitive_execution_fields(data_obj);
+                            if let Some(exec_obj) =
+                                data_obj.get_mut("execution").and_then(|e| e.as_object_mut())
+                            {
+                                strip_sensitive_execution_fields(exec_obj);
+                            }
                             if let Some(details_map) =
                                 data_obj.get_mut("details").and_then(|d| d.as_object_mut())
                             {
@@ -1789,6 +2310,7 @@ fn collect_bound_agent_ids(val: &serde_json::Value, out: &mut std::collections::
             }
             let is_ai_source = map
                 .get("type")
+                .or_else(|| map.get("source"))
                 .or_else(|| map.get("sourceType"))
                 .or_else(|| map.get("source_type"))
                 .and_then(|v| v.as_str())
@@ -1832,7 +2354,59 @@ fn strip_sensitive_execution_fields(obj: &mut serde_json::Map<String, serde_json
     }
 }
 
+/// Strict structural validation for share-proxy subpaths before allowlist or URL
+/// construction. Rejects empty paths, leading/double slashes, backslashes,
+/// query/fragment/percent-encoding characters, NUL/control bytes, and `.` / `..`
+/// dot segments that could normalize to a different `/api/...` route.
+fn is_safe_share_proxy_path(path: &str) -> bool {
+    if path.is_empty() || path.starts_with('/') || path.contains("//") {
+        return false;
+    }
+    if path
+        .chars()
+        .any(|c| matches!(c, '\\' | '?' | '#' | '%' | '\0') || c.is_control())
+    {
+        return false;
+    }
+    !path.split('/').any(|seg| seg == "." || seg == "..")
+}
+
+/// Build the loopback URL for the share proxy and verify that URL parsing /
+/// normalization preserved the exact `/api/<path_str>` path on `127.0.0.1:<port>`
+/// with no traversal, query/fragment smuggling, or host override.
+fn build_verified_share_proxy_url(
+    port: u16,
+    path_str: &str,
+    query: &str,
+) -> Result<reqwest::Url, ()> {
+    if !is_safe_share_proxy_path(path_str) {
+        return Err(());
+    }
+    let raw = format!("http://127.0.0.1:{}/api/{}", port, path_str);
+    let mut parsed = reqwest::Url::parse(&raw).map_err(|_| ())?;
+    if parsed.scheme() != "http"
+        || parsed.host_str() != Some("127.0.0.1")
+        || parsed.port() != Some(port)
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
+        return Err(());
+    }
+    let suffix = parsed.path().strip_prefix("/api/").ok_or(())?;
+    if suffix != path_str || suffix.split('/').any(|seg| seg == "." || seg == "..") {
+        return Err(());
+    }
+    if !query.is_empty() {
+        parsed.set_query(Some(query));
+    }
+    Ok(parsed)
+}
+
 fn is_share_proxy_path_allowed(path: &str) -> bool {
+    if !is_safe_share_proxy_path(path) {
+        return false;
+    }
+
     const ALLOWED_PREFIXES: &[&str] = &[
         "telemetry",
         "telemetry-stats",
@@ -1845,12 +2419,26 @@ fn is_share_proxy_path_allowed(path: &str) -> bool {
         "messages", // alerts shown on dashboard (list + detail); channel mutation blocked by method
         "frontend-components", // community widget manifests + bundles (GET only; install/uninstall blocked by method check)
     ];
-    // First path segment (no query string).
-    let first_segment = path.split('/').next().unwrap_or("");
-    // Bare `messages` and `devices` (no trailing slash) also need to match.
-    ALLOWED_PREFIXES
+
+    // Exact segment boundary match: prevents `devices-admin` or `extensions_evil`
+    // from passing via a loose `starts_with` check.
+    let prefix_allowed = ALLOWED_PREFIXES
         .iter()
-        .any(|p| path.starts_with(*p) || first_segment == *p)
+        .any(|p| path == *p || path.starts_with(&format!("{p}/")));
+    if !prefix_allowed {
+        return false;
+    }
+
+    // Explicitly deny sensitive extension subpaths (secrets in config, internal logs).
+    let segs: Vec<&str> = path.split('/').collect();
+    if segs.first() == Some(&"extensions")
+        && segs.len() >= 3
+        && matches!(segs[2], "config" | "logs")
+    {
+        return false;
+    }
+
+    true
 }
 
 /// Generate a unique output_prefix by appending the first 8 chars of a fresh UUID.
@@ -2113,7 +2701,7 @@ pub async fn duplicate_dashboard_handler(
 
 #[cfg(test)]
 mod share_proxy_tests {
-    use super::is_share_proxy_path_allowed;
+    use super::{build_verified_share_proxy_url, is_share_proxy_path_allowed};
 
     #[test]
     fn allows_bare_list_endpoints() {
@@ -2143,6 +2731,7 @@ mod share_proxy_tests {
             "devices/abc/current",
             "device-types/foo",
             "extensions/weather/command",
+            "extensions/weather/metrics/temp/data",
             "agents/xyz/executions",
             "telemetry/foo/values",
         ] {
@@ -2163,11 +2752,84 @@ mod share_proxy_tests {
             assert!(!is_share_proxy_path_allowed(p), "`{p}` should be blocked");
         }
     }
+
+    #[test]
+    fn rejects_traversal_and_url_injection() {
+        for p in [
+            r"devices\..\data-push",
+            r"devices\..\auth\keys",
+            r"extensions\..\users",
+            "devices/../users",
+            "devices/./current",
+            "devices?override=1",
+            "devices#fragment",
+            "devices/%2e%2e/users",
+            "devices/foo%2f..%2fusers",
+            "devices/foo\0bar",
+            "devices/foo\nbar",
+            "devices/foo\rbar",
+            "/devices",
+            "devices//current",
+            "",
+        ] {
+            assert!(
+                !is_share_proxy_path_allowed(p),
+                "unsafe path `{p:?}` must be rejected"
+            );
+            assert!(
+                build_verified_share_proxy_url(9375, p, "").is_err(),
+                "verified URL builder must reject `{p:?}`"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_sensitive_extension_subpaths() {
+        for p in [
+            "extensions/foo/config",
+            "extensions/foo/config/secrets",
+            "extensions/foo/logs",
+            "extensions/foo/logs/tail",
+        ] {
+            assert!(
+                !is_share_proxy_path_allowed(p),
+                "sensitive extension subpath `{p}` must be blocked"
+            );
+        }
+    }
+
+    #[test]
+    fn enforces_segment_boundary_matching() {
+        for p in [
+            "devices-admin",
+            "devices_secret/list",
+            "extensions2/foo",
+            "agents-internal/1",
+            "messages-admin",
+            "telemetry_raw/all",
+            "data-sources-private",
+        ] {
+            assert!(
+                !is_share_proxy_path_allowed(p),
+                "prefix-collision path `{p}` must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn verified_url_builder_preserves_exact_loopback_path() {
+        let u = build_verified_share_proxy_url(9375, "devices/abc/current", "limit=10").unwrap();
+        assert_eq!(u.as_str(), "http://127.0.0.1:9375/api/devices/abc/current?limit=10");
+        assert_eq!(u.path(), "/api/devices/abc/current");
+    }
 }
 
 /// Check if a path matches a pattern where `:id` matches any single segment.
 /// e.g., `extensions/abc123/command` matches `extensions/:id/command`
 fn path_matches_pattern(path: &str, pattern: &str) -> bool {
+    if !is_safe_share_proxy_path(path) {
+        return false;
+    }
     let path_segs: Vec<&str> = path.split('/').collect();
     let pat_segs: Vec<&str> = pattern.split('/').collect();
     if path_segs.len() != pat_segs.len() {
@@ -2176,7 +2838,7 @@ fn path_matches_pattern(path: &str, pattern: &str) -> bool {
     path_segs
         .iter()
         .zip(pat_segs.iter())
-        .all(|(p, pat)| pat.starts_with(':') || *p == *pat)
+        .all(|(p, pat)| (!p.is_empty() && pat.starts_with(':')) || *p == *pat)
 }
 
 /// Method gate for the share proxy — both share modes. Uses exact endpoint
@@ -2184,48 +2846,53 @@ fn path_matches_pattern(path: &str, pattern: &str) -> bool {
 /// share a prefix with read-like endpoints.
 ///
 /// "Interactive" means the viewer may actuate what the dashboard shows
-/// (send a device control command) — it does NOT open configuration writes.
+/// (send a device control command / extension command / invoke bound agent) —
+/// it does NOT open configuration writes.
 ///
 /// Share mode permission matrix:
 /// ┌──────────────────────────────────────────┬────────┬─────────┬──────────────┐
 /// │ Path pattern                             │ Method │ Allowed │ Mode         │
 /// ├──────────────────────────────────────────┼────────┼─────────┼──────────────┤
 /// │ * (unless path-blocked)                  │ GET    │ YES     │ both         │
-/// │ extensions/:id/command                   │ POST   │ YES     │ both         │
 /// │ devices/current-batch                    │ POST   │ YES     │ both         │
 /// │ agents/:id/executions/details            │ POST   │ YES     │ both         │
 /// │ devices/:id/command/:command             │ POST   │ YES     │ interactive  │
 /// │ agents/:id/invoke (AI-analyst ask)       │ POST   │ YES     │ interactive  │
+/// │ extensions/:id/command                   │ POST   │ YES     │ interactive  │
+/// │ extensions/:id/invoke                    │ POST   │ YES     │ interactive  │
 /// │ * (all other)                            │ POST   │ NO      │ both         │
 /// │ *                                        │ PUT    │ NO      │ both         │
 /// │ *                                        │ DELETE │ NO      │ both         │
 /// └──────────────────────────────────────────┴────────┴─────────┴──────────────┘
 fn is_allowed_share_method(path: &str, method: &Method, allow_interactive: bool) -> bool {
+    if !is_safe_share_proxy_path(path) {
+        return false;
+    }
     if method == Method::GET {
         return true;
     }
     if method != Method::POST {
         return false;
     }
-    // Read-like POSTs both modes allow…
+    // Strictly read-only batch query POSTs allowed in both modes…
     let read_like = [
-        "extensions/:id/command", // Extension commands (incl. read-only queries)
-        "devices/current-batch",  // Batch device current values
+        "devices/current-batch",         // Batch device current values
         "agents/:id/executions/details", // Batch get execution details
     ];
     if read_like.iter().any(|p| path_matches_pattern(path, p)) {
         return true;
     }
-    // …plus interactive-mode writes: device control buttons, and running an
-    // agent via the AI-analyst widget's ask box (invoke) — same authorization
-    // tier as actuating devices; pre-hardening interactive shares allowed
-    // these and the analyst on shared boards regressed when the gate landed.
+    // …plus interactive-mode actuations: device control buttons, extension
+    // commands/invocations, and running a bound agent via the AI-analyst ask
+    // box. Read-only extension widgets load data via GET /metrics or
+    // GET /data-sources, so arbitrary command execution is disabled on
+    // read-only share links.
     if !allow_interactive {
         return false;
     }
     path_matches_pattern(path, "devices/:id/command/:command")
         || path_matches_pattern(path, "agents/:id/invoke")
-        // CommandButton widgets wired to extension commands — same tier.
+        || path_matches_pattern(path, "extensions/:id/command")
         || path_matches_pattern(path, "extensions/:id/invoke")
 }
 
@@ -2242,16 +2909,12 @@ mod tests {
     };
 
     /// Interactive links must NOT be "full admin write inside the allowlist
-    /// prefixes" — the method gate whitelists POSTs for both modes, with
-    /// interactive adding exactly one endpoint (device control).
+    /// prefixes" — the method gate whitelists read-only batch POSTs for both
+    /// modes, with interactive adding only explicit actuation endpoints.
     #[test]
     fn share_method_gate_interactive_is_not_blanket_write() {
         // Read-like POSTs: both modes.
-        for path in [
-            "devices/current-batch",
-            "extensions/weather/command",
-            "agents/a1/executions/details",
-        ] {
+        for path in ["devices/current-batch", "agents/a1/executions/details"] {
             assert!(
                 is_allowed_share_method(path, &Method::POST, false),
                 "read-like POST `{path}` must pass in read-only mode"
@@ -2259,6 +2922,18 @@ mod tests {
             assert!(
                 is_allowed_share_method(path, &Method::POST, true),
                 "read-like POST `{path}` must pass in interactive mode"
+            );
+        }
+
+        // Extension command execution: interactive only (blocked on read-only share links).
+        for path in ["extensions/weather/command", "extensions/weather/invoke"] {
+            assert!(
+                !is_allowed_share_method(path, &Method::POST, false),
+                "POST `{path}` must be blocked in read-only mode"
+            );
+            assert!(
+                is_allowed_share_method(path, &Method::POST, true),
+                "POST `{path}` must pass in interactive mode"
             );
         }
 
@@ -2830,5 +3505,137 @@ mod dto_contract_tests {
                 .collect::<std::collections::BTreeSet<_>>()
         );
         assert!(json["dashboards"].is_array());
+    }
+
+    #[test]
+    fn normalize_component_json_hoists_camel_datasource_and_aliases() {
+        let mut comp = serde_json::json!({
+            "id": "c1",
+            "type": "line-chart",
+            "title": "Temp Trend",
+            "dataSource": {
+                "device_id": "sensor-01",
+                "metric": "temperature"
+            }
+        });
+        normalize_component_json(&mut comp);
+        let ds = comp.get("data_source").expect("data_source hoisted");
+        assert_eq!(ds["type"], "telemetry");
+        assert_eq!(ds["sourceId"], "sensor-01");
+        assert_eq!(ds["metricId"], "temperature");
+        assert_eq!(ds["property"], "temperature");
+
+        // Shorthand top-level deviceId + metric also constructs telemetry data_source
+        let mut shorthand = serde_json::json!({
+            "id": "c2",
+            "type": "value-card",
+            "deviceId": "sensor-02",
+            "metric": "humidity"
+        });
+        normalize_component_json(&mut shorthand);
+        let ds2 = shorthand.get("data_source").expect("shorthand data_source");
+        assert_eq!(ds2["type"], "telemetry");
+        assert_eq!(ds2["source"], "device");
+        assert_eq!(ds2["sourceId"], "sensor-02");
+        assert_eq!(ds2["id"], "sensor-02");
+        assert_eq!(ds2["property"], "humidity");
+        assert_eq!(ds2["metricId"], "humidity");
+        assert_eq!(ds2["field"], "humidity");
+        assert_eq!(ds2["mode"], "latest");
+
+        // Mistaken type="device" with metric on image-display upgrades to telemetry
+        let mut img_comp = serde_json::json!({
+            "id": "c3",
+            "type": "image-display",
+            "data_source": {
+                "type": "device",
+                "sourceId": "9999",
+                "property": "values.image"
+            }
+        });
+        normalize_component_json(&mut img_comp);
+        let ds3 = img_comp.get("data_source").expect("image data_source");
+        assert_eq!(ds3["type"], "telemetry");
+        assert_eq!(ds3["source"], "device");
+        assert_eq!(ds3["metricId"], "values.image");
+        assert_eq!(ds3["field"], "values.image");
+    }
+
+    #[test]
+    fn auto_layout_balances_fresh_dashboard_rows_and_prevents_overlaps() {
+        let mk = |id: &str, ct: &str| -> (StoredComponent, bool) {
+            (
+                StoredComponent {
+                    id: id.into(),
+                    component_type: ct.into(),
+                    position: neomind_storage::dashboards::ComponentPosition {
+                        x: 0,
+                        y: 0,
+                        w: 6,
+                        h: 4,
+                        min_w: None,
+                        min_h: None,
+                        max_w: None,
+                        max_h: None,
+                    },
+                    title: Some(id.into()),
+                    data_source: None,
+                    display: None,
+                    config: None,
+                    actions: None,
+                },
+                false,
+            )
+        };
+        // Mix charts before KPIs — auto-layout should put 3 KPIs balanced (4+4+4) on row 0,
+        // then 1 full-width chart (w=12) on row 2.
+        let mut batch = vec![
+            mk("chart1", "line-chart"),
+            mk("kpi1", "value-card"),
+            mk("kpi2", "value-card"),
+            mk("kpi3", "led-indicator"),
+        ];
+        auto_layout_components(&[], &mut batch, 12);
+        // First 3 items are KPIs at y=0, widths 4+4+4 = 12
+        assert_eq!(batch[0].0.position.y, 0);
+        assert_eq!(batch[0].0.position.x, 0);
+        assert_eq!(batch[0].0.position.w, 4);
+        assert_eq!(batch[1].0.position.x, 4);
+        assert_eq!(batch[1].0.position.w, 4);
+        assert_eq!(batch[2].0.position.x, 8);
+        assert_eq!(batch[2].0.position.w, 4);
+        // Chart sits cleanly below at y=2, full width 12
+        assert_eq!(batch[3].0.id, "chart1");
+        assert_eq!(batch[3].0.position.y, 2);
+        assert_eq!(batch[3].0.position.x, 0);
+        assert_eq!(batch[3].0.position.w, 12);
+        assert_eq!(batch[3].0.position.h, 4);
+
+        // Appending an overlapping explicit component relocates it without collision
+        let existing: Vec<StoredComponent> = batch.into_iter().map(|(c, _)| c).collect();
+        let mut colliding = vec![(
+            StoredComponent {
+                id: "extra".into(),
+                component_type: "value-card".into(),
+                position: neomind_storage::dashboards::ComponentPosition {
+                    x: 0,
+                    y: 0,
+                    w: 4,
+                    h: 2,
+                    min_w: None,
+                    min_h: None,
+                    max_w: None,
+                    max_h: None,
+                },
+                title: None,
+                data_source: None,
+                display: None,
+                config: None,
+                actions: None,
+            },
+            true,
+        )];
+        auto_layout_components(&existing, &mut colliding, 12);
+        assert_eq!(colliding[0].0.position.y, 6);
     }
 }

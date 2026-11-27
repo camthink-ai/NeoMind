@@ -78,7 +78,12 @@ pub struct DashboardComponent {
     pub position: ComponentPosition,
     #[serde(skip_serializing_if = "Option::is_none", alias = "title")]
     pub title: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", alias = "data_source")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        alias = "data_source",
+        alias = "dataSource",
+        alias = "datasource"
+    )]
     pub data_source: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none", alias = "display")]
     pub display: Option<serde_json::Value>,

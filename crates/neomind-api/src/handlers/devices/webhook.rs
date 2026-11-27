@@ -498,11 +498,13 @@ fn parse_multipart_parts(body: &[u8], boundary: &str) -> Result<Vec<MultipartPar
         let next_delim = find_subslice(body, delim_b, content_start).ok_or_else(|| {
             ErrorResponse::bad_request("Malformed multipart: missing part terminator")
         })?;
-        // Walk back trailing CRLF/LF that's part of framing, not content
+        // Walk back trailing CRLF/LF that's part of framing, not content.
+        // Guard against empty parts where `content_start == next_delim` so
+        // subtracting 2/1 can never underflow past `content_start` and panic.
         let mut content_end = next_delim;
-        if content_end >= 2 && &body[content_end - 2..content_end] == b"\r\n" {
+        if content_end >= content_start + 2 && &body[content_end - 2..content_end] == b"\r\n" {
             content_end -= 2;
-        } else if content_end >= 1 && &body[content_end - 1..content_end] == b"\n" {
+        } else if content_end >= content_start + 1 && &body[content_end - 1..content_end] == b"\n" {
             content_end -= 1;
         }
         let content = &body[content_start..content_end];
@@ -687,9 +689,12 @@ fn parse_multipart_body(
             // the `__last_seen_age_secs` system-metric convention.
             if image_count == 1 {
                 for alias in ["__webhook_image", "image_data", "frame", "snapshot"] {
+                    if alias == key {
+                        continue;
+                    }
                     data_obj
                         .entry(alias.to_string())
-                        .or_insert(serde_json::Value::String(data_url.clone()));
+                        .or_insert_with(|| serde_json::Value::String(data_url.clone()));
                 }
             }
 
@@ -714,6 +719,7 @@ fn parse_multipart_body(
         // Other JSON parts: try to merge as object, otherwise store by name.
         if is_json {
             if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&part.data) {
+                enforce_max_string_size(&v, MAX_VALUE_STRING_SIZE)?;
                 if let Some(obj) = v.as_object() {
                     for (k, val) in obj {
                         data_obj.entry(k.clone()).or_insert(val.clone());
@@ -726,10 +732,12 @@ fn parse_multipart_body(
             }
         }
 
-        // Text / octet-stream: store as UTF-8 string under part name.
+        // Text / octet-stream: enforce string size cap, then store as UTF-8 string under part name.
         let text = String::from_utf8_lossy(&part.data).into_owned();
+        let text_val = serde_json::Value::String(text);
+        enforce_max_string_size(&text_val, MAX_VALUE_STRING_SIZE)?;
         let key = part.name.clone().unwrap_or_else(|| "text".to_string());
-        data_obj.insert(key, serde_json::Value::String(text));
+        data_obj.insert(key, text_val);
     }
 
     if let Some(id) = device_id_override {
@@ -746,6 +754,7 @@ fn parse_json_payload(
     device_id_override: Option<&str>,
 ) -> Result<WebhookPayload, ErrorResponse> {
     let v = parse_json_body(body)?;
+    enforce_max_string_size(&v, MAX_VALUE_STRING_SIZE)?;
     let mut p: WebhookPayload = if let Some(obj) = v.as_object() {
         if obj.contains_key("data") {
             serde_json::from_value(v).map_err(|e| {
@@ -775,6 +784,17 @@ fn parse_json_payload(
         p.device_id = Some(id.to_string());
     }
     Ok(p)
+}
+
+fn map_adapter_error(device_id: &str, e: neomind_devices::adapter::AdapterError) -> ErrorResponse {
+    tracing::warn!(device_id = %device_id, error = %e, "Webhook processing failed");
+    match e {
+        neomind_devices::adapter::AdapterError::Connection(msg) => ErrorResponse::unauthorized(msg),
+        neomind_devices::adapter::AdapterError::Configuration(msg) => {
+            ErrorResponse::bad_request(msg)
+        }
+        _ => ErrorResponse::internal("Webhook processing failed"),
+    }
 }
 
 /// Handle webhook POST from device.
@@ -808,6 +828,24 @@ pub async fn webhook_handler(
 ) -> HandlerResult<serde_json::Value> {
     let (ct, raw_ct, len) = content_type(&headers);
 
+    // Check adapter IP allow/block + API key + per-device token BEFORE parsing
+    // or base64-encoding an 8 MB body so unauthenticated callers cannot amplify
+    // memory or CPU.
+    let adapter = get_webhook_adapter(&state).await?;
+    let token = extract_token(&headers, &params);
+    let api_key = extract_api_key(&headers);
+    let remote_ip = connect_info.map(|ci| ci.0.ip());
+
+    adapter
+        .validate_auth(
+            &device_id,
+            token.as_deref(),
+            api_key.as_deref(),
+            remote_ip.as_ref(),
+        )
+        .await
+        .map_err(|e| map_adapter_error(&device_id, e))?;
+
     // Reject genuinely unsupported Content-Types up front (so we don't waste
     // work base64-encoding a 10MB multipart upload that we can't handle anyway).
     if let Some(ref c) = ct {
@@ -831,11 +869,6 @@ pub async fn webhook_handler(
 
     let payload = parse_body(body, ct.clone(), raw_ct.clone(), len, Some(&device_id))?;
 
-    let adapter = get_webhook_adapter(&state).await?;
-    let token = extract_token(&headers, &params);
-    let api_key = extract_api_key(&headers);
-    let remote_ip = connect_info.map(|ci| ci.0.ip());
-
     let metrics_count = adapter
         .process_webhook(
             device_id.clone(),
@@ -845,18 +878,7 @@ pub async fn webhook_handler(
             remote_ip.as_ref(),
         )
         .await
-        .map_err(|e| {
-            tracing::warn!(device_id = %device_id, error = %e, "Webhook processing failed");
-            match e {
-                neomind_devices::adapter::AdapterError::Connection(msg) => {
-                    ErrorResponse::unauthorized(msg)
-                }
-                neomind_devices::adapter::AdapterError::Configuration(msg) => {
-                    ErrorResponse::bad_request(msg)
-                }
-                _ => ErrorResponse::internal("Webhook processing failed"),
-            }
-        })?;
+        .map_err(|e| map_adapter_error(&device_id, e))?;
 
     info!(
         device_id = %device_id,
@@ -902,6 +924,16 @@ pub async fn webhook_generic_handler(
 ) -> HandlerResult<serde_json::Value> {
     let (ct, raw_ct, len) = content_type(&headers);
 
+    // Check adapter IP allow/block + adapter-level API key BEFORE parsing body.
+    let adapter = get_webhook_adapter(&state).await?;
+    let token = extract_token(&headers, &params);
+    let api_key = extract_api_key(&headers);
+    let remote_ip = connect_info.map(|ci| ci.0.ip());
+
+    adapter
+        .validate_request("", api_key.as_deref(), remote_ip.as_ref())
+        .map_err(|e| map_adapter_error("<generic>", e))?;
+
     if let Some(ref c) = ct {
         let is_supported = c == "application/json"
             || IMAGE_MIME_TYPES.contains(&c.as_str())
@@ -933,11 +965,6 @@ pub async fn webhook_generic_handler(
         .take()
         .ok_or_else(|| ErrorResponse::bad_request("device_id is required in request body"))?;
 
-    let adapter = get_webhook_adapter(&state).await?;
-    let token = extract_token(&headers, &params);
-    let api_key = extract_api_key(&headers);
-    let remote_ip = connect_info.map(|ci| ci.0.ip());
-
     payload.device_id = Some(device_id.clone());
 
     let metrics_count = adapter
@@ -949,18 +976,7 @@ pub async fn webhook_generic_handler(
             remote_ip.as_ref(),
         )
         .await
-        .map_err(|e| {
-            tracing::warn!(device_id = %device_id, error = %e, "Webhook processing failed");
-            match e {
-                neomind_devices::adapter::AdapterError::Connection(msg) => {
-                    ErrorResponse::unauthorized(msg)
-                }
-                neomind_devices::adapter::AdapterError::Configuration(msg) => {
-                    ErrorResponse::bad_request(msg)
-                }
-                _ => ErrorResponse::internal("Webhook processing failed"),
-            }
-        })?;
+        .map_err(|e| map_adapter_error(&device_id, e))?;
 
     info!(
         device_id = %device_id,
@@ -1347,5 +1363,48 @@ mod tests {
         let body = b"--B\r\nContent-Disposition: form-data; name=\"x\"\r\n\r\nhi";
         let result = parse_multipart_body(body, "B", None);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn parses_multipart_empty_part_without_panicking() {
+        // Empty part directly followed by closing delimiter (no trailing CRLF
+        // before `--B--`) previously underflowed `content_end` below
+        // `content_start` and panicked on `&body[content_start..content_end]`.
+        let crlf_body = b"--B\r\nContent-Disposition: form-data; name=\"empty\"\r\n\r\n--B--\r\n";
+        let parts = parse_multipart_parts(crlf_body, "B").expect("empty CRLF part must not panic");
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0].name.as_deref(), Some("empty"));
+        assert!(parts[0].data.is_empty());
+
+        let lf_body = b"--B\nContent-Disposition: form-data; name=\"empty_lf\"\n\n--B--\n";
+        let parts_lf = parse_multipart_parts(lf_body, "B").expect("empty LF part must not panic");
+        assert_eq!(parts_lf.len(), 1);
+        assert_eq!(parts_lf[0].name.as_deref(), Some("empty_lf"));
+        assert!(parts_lf[0].data.is_empty());
+    }
+
+    #[test]
+    fn rejects_oversized_multipart_json_and_text_parts() {
+        let huge = "a".repeat(MAX_VALUE_STRING_SIZE + 16);
+
+        // Oversized text part
+        let mut text_body = Vec::new();
+        text_body.extend_from_slice(b"--B\r\nContent-Disposition: form-data; name=\"note\"\r\nContent-Type: text/plain\r\n\r\n");
+        text_body.extend_from_slice(huge.as_bytes());
+        text_body.extend_from_slice(b"\r\n--B--\r\n");
+        assert!(
+            parse_multipart_body(&text_body, "B", None).is_err(),
+            "oversized multipart text part must be rejected"
+        );
+
+        // Oversized JSON metadata part
+        let mut json_body = Vec::new();
+        json_body.extend_from_slice(b"--B\r\nContent-Disposition: form-data; name=\"metadata\"\r\nContent-Type: application/json\r\n\r\n");
+        json_body.extend_from_slice(format!(r#"{{"data":{{"big":"{}"}}}}"#, huge).as_bytes());
+        json_body.extend_from_slice(b"\r\n--B--\r\n");
+        assert!(
+            parse_multipart_body(&json_body, "B", None).is_err(),
+            "oversized multipart JSON part must be rejected"
+        );
     }
 }

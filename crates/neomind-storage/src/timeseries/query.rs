@@ -677,58 +677,67 @@ impl TimeSeriesStore {
         start: i64,
         end: i64,
     ) -> Result<usize, Error> {
-        const DELETE_BATCH_SIZE: usize = 1000;
-        let mut total_count = 0usize;
+        let db = self.db.clone();
+        let src = source_id.to_string();
+        let met = metric.to_string();
+        let total_count = tokio::task::spawn_blocking(move || -> Result<usize, Error> {
+            const DELETE_BATCH_SIZE: usize = 1000;
+            let mut total_count = 0usize;
 
-        loop {
-            // Each iteration: fresh txn, scan up to DELETE_BATCH_SIZE keys,
-            // remove them, commit. Re-scanning from `start` each loop is
-            // correct because already-deleted keys no longer appear in the
-            // range iterator (redb collapses empty B-tree nodes on commit).
-            let write_txn = self.db.begin_write()?;
-            let mut batch_count = 0usize;
+            loop {
+                // Each iteration: fresh txn, scan up to DELETE_BATCH_SIZE keys,
+                // remove them, commit. Re-scanning from `start` each loop is
+                // correct because already-deleted keys no longer appear in the
+                // range iterator (redb collapses empty B-tree nodes on commit).
+                let write_txn = db.begin_write()?;
+                let mut batch_count = 0usize;
 
-            {
-                let mut table = write_txn.open_table(TIMESERIES_TABLE)?;
-                let start_key = (source_id, metric, start);
-                let end_key = (source_id, metric, end);
+                {
+                    let mut table = write_txn.open_table(TIMESERIES_TABLE)?;
+                    let start_key = (src.as_str(), met.as_str(), start);
+                    let end_key = (src.as_str(), met.as_str(), end);
 
-                let mut keys_batch: Vec<(String, String, i64)> =
-                    Vec::with_capacity(DELETE_BATCH_SIZE);
-                for result in table.range(start_key..=end_key)? {
-                    let (key_ref, _val_ref) = result?;
-                    let did: &str = key_ref.value().0;
-                    let met: &str = key_ref.value().1;
-                    let ts: i64 = key_ref.value().2;
-                    keys_batch.push((did.to_string(), met.to_string(), ts));
-                    if keys_batch.len() >= DELETE_BATCH_SIZE {
+                    let mut keys_batch: Vec<(String, String, i64)> =
+                        Vec::with_capacity(DELETE_BATCH_SIZE);
+                    for result in table.range(start_key..=end_key)? {
+                        let (key_ref, _val_ref) = result?;
+                        let did: &str = key_ref.value().0;
+                        let met_k: &str = key_ref.value().1;
+                        let ts: i64 = key_ref.value().2;
+                        keys_batch.push((did.to_string(), met_k.to_string(), ts));
+                        if keys_batch.len() >= DELETE_BATCH_SIZE {
+                            break;
+                        }
+                    }
+
+                    if keys_batch.is_empty() {
+                        // Range exhausted — nothing left to delete in this txn.
+                        // Drop the table handle & txn before breaking, to avoid
+                        // leaking the write lock.
+                        drop(table);
+                        drop(write_txn);
                         break;
+                    }
+
+                    for key in &keys_batch {
+                        table.remove((key.0.as_str(), key.1.as_str(), key.2))?;
+                        batch_count += 1;
                     }
                 }
 
-                if keys_batch.is_empty() {
-                    // Range exhausted — nothing left to delete in this txn.
-                    // Drop the table handle & commit the empty txn before
-                    // breaking, to avoid leaking the write lock.
-                    drop(table);
-                    drop(write_txn);
+                write_txn.commit()?;
+                total_count += batch_count;
+
+                // If this batch was under capacity, the range is exhausted.
+                if batch_count < DELETE_BATCH_SIZE {
                     break;
                 }
-
-                for key in &keys_batch {
-                    table.remove((key.0.as_str(), key.1.as_str(), key.2))?;
-                    batch_count += 1;
-                }
             }
 
-            write_txn.commit()?;
-            total_count += batch_count;
-
-            // If this batch was under capacity, the range is exhausted.
-            if batch_count < DELETE_BATCH_SIZE {
-                break;
-            }
-        }
+            Ok(total_count)
+        })
+        .await
+        .map_err(|e| Error::Storage(format!("delete_range join error: {}", e)))??;
 
         // Invalidate caches for this metric
         let cache_key = (source_id.to_string(), metric.to_string());
@@ -758,7 +767,7 @@ impl TimeSeriesStore {
                 Err(e) => return Err(Error::Storage(format!("Failed to open table: {}", e))),
             };
             let mut pairs = Vec::new();
-            for result in table.range(("", "", i64::MIN)..=("\u{FF}", "\u{FF}", i64::MAX))? {
+            for result in table.iter()? {
                 let (key, _) = result?;
                 let (source_id, metric, _) = key.value();
                 pairs.push((source_id.to_string(), metric.to_string()));
@@ -806,13 +815,13 @@ impl TimeSeriesStore {
             Err(e) => return Err(Error::Storage(format!("Failed to open table: {}", e))),
         };
 
-        let start_key = (source_id, "", i64::MIN);
-        let end_key = (source_id, "\u{FF}", i64::MAX);
-
         let mut metrics = std::collections::HashSet::new();
-        for result in table.range(start_key..=end_key)? {
+        for result in table.range((source_id, "", i64::MIN)..)? {
             let (key, _value) = result?;
-            let (_, metric, _) = key.value();
+            let (sid, metric, _) = key.value();
+            if sid != source_id {
+                break;
+            }
             metrics.insert(metric.to_string());
         }
 

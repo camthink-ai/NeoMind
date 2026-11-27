@@ -1,28 +1,24 @@
 //! API Key management handlers.
 
 use axum::{
-    extract::{Path, State},
-    http::{HeaderMap, StatusCode},
+    extract::{Extension, Path, State},
+    http::StatusCode,
     response::{IntoResponse, Json},
 };
 use serde::{Deserialize, Serialize};
 
 use crate::auth::{ApiKeyInfo, AuthError};
+use crate::auth_users::{SessionInfo, UserRole};
 use crate::server::ServerState;
 
-/// Helper to extract validated API key from headers.
-fn extract_api_key(headers: &HeaderMap) -> Result<String, AuthError> {
-    headers
-        .get("x-api-key")
-        .and_then(|v| v.to_str().ok())
-        .or_else(|| {
-            headers
-                .get("authorization")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.strip_prefix("Bearer "))
-        })
-        .map(|s| s.to_string())
-        .ok_or_else(|| AuthError::unauthorized("Missing API key"))
+/// Require an authenticated Admin session (JWT Admin or wildcard `*` API key).
+fn require_admin_session(session: &SessionInfo) -> Result<(), AuthError> {
+    if session.role != UserRole::Admin {
+        return Err(AuthError::forbidden(
+            "Administrator privileges are required to manage API keys",
+        ));
+    }
+    Ok(())
 }
 
 /// Request to create a new API key.
@@ -94,7 +90,7 @@ impl IntoResponse for ApiResponse {
     }
 }
 
-/// List all API keys (requires authentication).
+/// List all API keys (requires Admin role).
 #[utoipa::path(
     get,
     path = "/api/auth/keys",
@@ -102,17 +98,14 @@ impl IntoResponse for ApiResponse {
     responses(
         (status = 200, description = "List of the caller's API keys (masked previews)"),
         (status = 401, description = "Not authenticated (unified envelope)"),
+        (status = 403, description = "Admin privileges required"),
     )
 )]
 pub async fn list_keys_handler(
     State(state): State<ServerState>,
-    headers: HeaderMap,
+    Extension(session): Extension<SessionInfo>,
 ) -> Result<Json<KeyListResponse>, AuthError> {
-    // Validate API key
-    let api_key = extract_api_key(&headers)?;
-    if !state.auth.api_key_state.validate_key(&api_key) {
-        return Err(AuthError::unauthorized("Invalid API key"));
-    }
+    require_admin_session(&session)?;
 
     let keys = state.auth.api_key_state.list_keys().await;
     let items: Vec<KeyListItem> = keys.into_iter().map(Into::into).collect();
@@ -120,7 +113,7 @@ pub async fn list_keys_handler(
     Ok(Json(KeyListResponse { keys: items }))
 }
 
-/// Create a new API key (requires authentication).
+/// Create a new API key (requires Admin role).
 ///
 /// NOTE: the `permissions` field is informational only and never enforced —
 /// every API key grants full administrator access. Create keys only for
@@ -132,18 +125,15 @@ pub async fn list_keys_handler(
     responses(
         (status = 200, description = "Key created (full value shown once)"),
         (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Admin privileges required"),
     )
 )]
 pub async fn create_key_handler(
     State(state): State<ServerState>,
-    headers: HeaderMap,
+    Extension(session): Extension<SessionInfo>,
     Json(req): Json<CreateKeyRequest>,
 ) -> Result<Json<CreateKeyResponse>, AuthError> {
-    // Validate API key
-    let api_key = extract_api_key(&headers)?;
-    if !state.auth.api_key_state.validate_key(&api_key) {
-        return Err(AuthError::unauthorized("Invalid API key"));
-    }
+    require_admin_session(&session)?;
 
     let permissions = if req.permissions.is_empty() {
         vec!["*".to_string()]
@@ -160,7 +150,7 @@ pub async fn create_key_handler(
     Ok(Json(CreateKeyResponse { api_key: key, info }))
 }
 
-/// Delete an API key by ID (requires authentication).
+/// Delete an API key by ID (requires Admin role).
 #[utoipa::path(
     delete,
     path = "/api/auth/keys/{id}",
@@ -170,28 +160,27 @@ pub async fn create_key_handler(
     ),
     responses(
         (status = 200, description = "Key revoked; it can no longer authenticate requests"),
+        (status = 403, description = "Admin privileges required"),
         (status = 404, description = "Not found"),
     )
 )]
 pub async fn delete_key_handler(
     State(state): State<ServerState>,
-    headers: HeaderMap,
+    Extension(session): Extension<SessionInfo>,
     Path(id): Path<String>,
 ) -> Result<ApiResponse, AuthError> {
-    // Validate API key
-    let api_key = extract_api_key(&headers)?;
-    if !state.auth.api_key_state.validate_key(&api_key) {
-        return Err(AuthError::unauthorized("Invalid API key"));
-    }
-    // Find the key by ID and delete it
+    require_admin_session(&session)?;
+
+    // `list_keys()` returns `(key_hash, ApiKeyInfo)` pairs; delete by hash directly
+    // instead of calling `delete_key()` which would double-hash and silently fail.
     let keys = state.auth.api_key_state.list_keys().await;
-    let key_to_delete = keys
+    let key_hash_to_delete = keys
         .iter()
         .find(|(_, info)| info.id == id)
-        .map(|(k, _)| k.clone());
+        .map(|(hash, _)| hash.clone());
 
-    if let Some(key) = key_to_delete {
-        if state.auth.api_key_state.delete_key(&key).await {
+    if let Some(key_hash) = key_hash_to_delete {
+        if state.auth.api_key_state.delete_key_by_hash(&key_hash).await {
             Ok(ApiResponse {
                 message: format!("API key {} deleted", id),
                 success: true,
@@ -266,5 +255,81 @@ mod tests {
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("Success"));
+    }
+
+    fn session_with_role(role: UserRole) -> SessionInfo {
+        SessionInfo {
+            user_id: "uid-1".to_string(),
+            username: "tester".to_string(),
+            role,
+            created_at: 0,
+            expires_at: i64::MAX,
+        }
+    }
+
+    #[tokio::test]
+    async fn delete_key_handler_revokes_key_without_double_hashing() {
+        let state = ServerState::new_for_testing().await;
+        let admin = session_with_role(UserRole::Admin);
+
+        let created = create_key_handler(
+            State(state.clone()),
+            Extension(admin.clone()),
+            Json(CreateKeyRequest {
+                name: "revokable".to_string(),
+                permissions: vec!["*".to_string()],
+            }),
+        )
+        .await
+        .expect("admin should create key")
+        .0;
+
+        assert!(state.auth.api_key_state.validate_key(&created.api_key));
+
+        let deleted = delete_key_handler(
+            State(state.clone()),
+            Extension(admin),
+            Path(created.info.id.clone()),
+        )
+        .await
+        .expect("admin should delete key");
+        assert!(deleted.success, "delete_key_handler must report success");
+        assert!(
+            !state.auth.api_key_state.validate_key(&created.api_key),
+            "revoked key must no longer validate"
+        );
+    }
+
+    #[tokio::test]
+    async fn non_admin_sessions_cannot_manage_api_keys() {
+        let state = ServerState::new_for_testing().await;
+        for role in [UserRole::User, UserRole::Viewer] {
+            let session = session_with_role(role);
+            let list_err = list_keys_handler(State(state.clone()), Extension(session.clone()))
+                .await
+                .unwrap_err();
+            assert_eq!(list_err.status, StatusCode::FORBIDDEN);
+
+            let create_err = create_key_handler(
+                State(state.clone()),
+                Extension(session.clone()),
+                Json(CreateKeyRequest {
+                    name: "escalate".to_string(),
+                    permissions: vec!["*".to_string()],
+                }),
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(create_err.status, StatusCode::FORBIDDEN);
+
+            let delete_err = delete_key_handler(
+                State(state.clone()),
+                Extension(session),
+                Path("any-id".to_string()),
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(delete_err.status, StatusCode::FORBIDDEN);
+        }
     }
 }

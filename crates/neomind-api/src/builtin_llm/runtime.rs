@@ -388,9 +388,23 @@ pub fn runtime_download_active() -> bool {
     RUNTIME_DL_ACTIVE.load(Ordering::SeqCst)
 }
 
+/// Maximum runtime archive size (download and extracted total): 2 GiB.
+const MAX_RUNTIME_ARCHIVE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const RUNTIME_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+const RUNTIME_CHUNK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+struct TempFileGuard(PathBuf);
+
+impl Drop for TempFileGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 /// `wipe` clears the cache dir first — true for the primary archive, false
 /// for the cudart bundle (it must land in the freshly populated dir).
-/// Streams with per-chunk progress (SHA updated incrementally).
+/// Streams directly to a temp file on disk with per-chunk progress and timeout
+/// (SHA-256 updated incrementally).
 pub(crate) async fn download_runtime(
     url: &str,
     cache_dir: &Path,
@@ -401,9 +415,13 @@ pub(crate) async fn download_runtime(
 ) -> Result<PathBuf, String> {
     use futures::StreamExt;
     use sha2::{Digest, Sha256};
+    use tokio::io::AsyncWriteExt;
 
     let mut on_progress = on_progress;
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .connect_timeout(RUNTIME_CONNECT_TIMEOUT)
+        .build()
+        .map_err(|e| format!("build runtime download client: {e}"))?;
     let resp = client
         .get(url)
         .send()
@@ -416,17 +434,61 @@ pub(crate) async fn download_runtime(
         ));
     }
     let total = resp.content_length();
-    let mut stream = resp.bytes_stream();
-    let mut hasher = Sha256::new();
-    let mut bytes: Vec<u8> = Vec::with_capacity(32 * 1024 * 1024);
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| format!("read llama.cpp runtime: {e}"))?;
-        hasher.update(&chunk);
-        bytes.extend_from_slice(&chunk);
-        if let Some(cb) = on_progress.as_mut() {
-            cb(bytes.len() as u64, total);
+    if let Some(len) = total {
+        if len > MAX_RUNTIME_ARCHIVE_BYTES {
+            return Err(format!(
+                "download llama.cpp runtime: archive size {len} exceeds {} byte limit",
+                MAX_RUNTIME_ARCHIVE_BYTES
+            ));
         }
     }
+
+    let tmp_dir = cache_dir
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(cache_dir);
+    std::fs::create_dir_all(tmp_dir).map_err(|e| format!("create runtime temp dir: {e}"))?;
+    let tmp_path = tmp_dir.join(format!(
+        ".llama-runtime-{}.tmp",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let _tmp_guard = TempFileGuard(tmp_path.clone());
+    let mut tmp_file = tokio::io::BufWriter::new(
+        tokio::fs::File::create(&tmp_path)
+            .await
+            .map_err(|e| format!("create runtime temp file: {e}"))?,
+    );
+
+    let mut stream = resp.bytes_stream();
+    let mut hasher = Sha256::new();
+    let mut downloaded: u64 = 0;
+    loop {
+        let next = tokio::time::timeout(RUNTIME_CHUNK_TIMEOUT, stream.next())
+            .await
+            .map_err(|_| "read llama.cpp runtime: timed out waiting for chunk (60s)".to_string())?;
+        let Some(chunk) = next else { break };
+        let chunk = chunk.map_err(|e| format!("read llama.cpp runtime: {e}"))?;
+        downloaded = downloaded.saturating_add(chunk.len() as u64);
+        if downloaded > MAX_RUNTIME_ARCHIVE_BYTES {
+            return Err(format!(
+                "download llama.cpp runtime: download exceeded {} byte limit",
+                MAX_RUNTIME_ARCHIVE_BYTES
+            ));
+        }
+        hasher.update(&chunk);
+        tmp_file
+            .write_all(&chunk)
+            .await
+            .map_err(|e| format!("write runtime temp file: {e}"))?;
+        if let Some(cb) = on_progress.as_mut() {
+            cb(downloaded, total);
+        }
+    }
+    tmp_file
+        .flush()
+        .await
+        .map_err(|e| format!("flush runtime temp file: {e}"))?;
+    drop(tmp_file);
 
     if let Some(want) = expected_sha {
         let out = hasher.finalize();
@@ -446,7 +508,12 @@ pub(crate) async fn download_runtime(
         let _ = std::fs::remove_dir_all(cache_dir);
     }
     std::fs::create_dir_all(cache_dir).map_err(|e| format!("create cache dir: {e}"))?;
-    extract_archive(&bytes, cache_dir, is_zip).map_err(|e| e.to_string())?;
+    let archive_path = tmp_path.clone();
+    let out_dir = cache_dir.to_path_buf();
+    tokio::task::spawn_blocking(move || extract_archive_file(&archive_path, &out_dir, is_zip))
+        .await
+        .map_err(|e| format!("extract runtime task panicked: {e}"))?
+        .map_err(|e| e.to_string())?;
     let bin = find_runtime_binary(cache_dir)
         .ok_or_else(|| "llama-server not found after extract".to_string())?;
     #[cfg(unix)]
@@ -469,6 +536,7 @@ pub(crate) async fn exec_check(bin: &Path) -> Result<(), String> {
         .arg("--version")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
         .output();
     match timeout(Duration::from_secs(10), out).await {
         Ok(Ok(status)) if status.status.success() => Ok(()),
@@ -504,36 +572,227 @@ pub(crate) fn find_runtime_binary(dir: &Path) -> Option<PathBuf> {
     None
 }
 
-/// Extract every entry of the release archive into `out_dir` (paths
-/// preserved, so wrapper binaries find their sibling libs).
+/// Copy from `reader` into `writer` while enforcing a cumulative byte budget.
+fn copy_bounded<R: std::io::Read, W: std::io::Write>(
+    reader: &mut R,
+    writer: &mut W,
+    total_extracted: &mut u64,
+    limit: u64,
+) -> anyhow::Result<()> {
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = reader.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        *total_extracted = total_extracted.saturating_add(n as u64);
+        if *total_extracted > limit {
+            anyhow::bail!("archive extraction exceeded {} byte limit", limit);
+        }
+        writer.write_all(&buf[..n])?;
+    }
+    Ok(())
+}
+
+/// Clean a relative archive path and reject absolute paths or `..` traversal.
+fn clean_relative_archive_path(path: &Path) -> anyhow::Result<PathBuf> {
+    let mut clean = PathBuf::new();
+    for comp in path.components() {
+        match comp {
+            std::path::Component::Normal(p) => clean.push(p),
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir
+            | std::path::Component::RootDir
+            | std::path::Component::Prefix(_) => {
+                anyhow::bail!("unsafe archive entry path: {}", path.display());
+            }
+        }
+    }
+    Ok(clean)
+}
+
+/// Verify a tar symlink/hardlink target does not escape `canonical_out`.
+fn validate_tar_link_target(
+    canonical_out: &Path,
+    dest_parent: &Path,
+    target: &Path,
+) -> anyhow::Result<()> {
+    if target.is_absolute() {
+        anyhow::bail!("unsafe absolute link target in tar archive: {}", target.display());
+    }
+    let mut resolved = dest_parent.to_path_buf();
+    for comp in target.components() {
+        match comp {
+            std::path::Component::CurDir => {}
+            std::path::Component::Normal(p) => resolved.push(p),
+            std::path::Component::ParentDir => {
+                if !resolved.pop() || !resolved.starts_with(canonical_out) {
+                    anyhow::bail!(
+                        "unsafe link target escapes output directory: {}",
+                        target.display()
+                    );
+                }
+            }
+            std::path::Component::RootDir | std::path::Component::Prefix(_) => {
+                anyhow::bail!("unsafe link target in tar archive: {}", target.display());
+            }
+        }
+    }
+    if !resolved.starts_with(canonical_out) {
+        anyhow::bail!(
+            "unsafe link target escapes output directory: {}",
+            target.display()
+        );
+    }
+    Ok(())
+}
+
+fn extract_archive_file(archive_path: &Path, out_dir: &Path, is_zip: bool) -> anyhow::Result<()> {
+    let file = std::fs::File::open(archive_path)?;
+    extract_archive_reader(file, out_dir, is_zip)
+}
+
+#[cfg(test)]
 fn extract_archive(bytes: &[u8], out_dir: &Path, is_zip: bool) -> anyhow::Result<()> {
+    extract_archive_reader(std::io::Cursor::new(bytes), out_dir, is_zip)
+}
+
+/// Extract every entry of the release archive into `out_dir` (paths
+/// preserved, so wrapper binaries find their sibling libs) with zip-slip,
+/// symlink, and total extracted byte-cap protections.
+fn extract_archive_reader<R: std::io::Read + std::io::Seek>(
+    reader: R,
+    out_dir: &Path,
+    is_zip: bool,
+) -> anyhow::Result<()> {
+    std::fs::create_dir_all(out_dir)?;
+    let canonical_out = out_dir.canonicalize()?;
+    let mut total_extracted: u64 = 0;
+
     if is_zip {
-        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes))?;
+        let mut zip = zip::ZipArchive::new(reader)?;
         for i in 0..zip.len() {
             let mut entry = zip.by_index(i)?;
-            // zip 9: name() validates UTF-8; an invalid name has no sane
-            // extraction target — skip the entry.
-            let Ok(name) = entry.name() else {
-                continue;
+            let Some(enclosed) = entry.enclosed_name() else {
+                anyhow::bail!("unsafe zip entry path");
             };
-            let rel = name.trim_start_matches('/');
-            let dest = out_dir.join(rel);
+            let is_symlink = entry.is_symlink()
+                || entry
+                    .unix_mode()
+                    .is_some_and(|mode| (mode & 0o170000) == 0o120000);
+            if is_symlink {
+                anyhow::bail!("unsafe symlink entry in zip archive: {}", enclosed.display());
+            }
+            let clean = clean_relative_archive_path(&enclosed)?;
+            if clean.as_os_str().is_empty() {
+                continue;
+            }
+            let dest = canonical_out.join(&clean);
+            if !dest.starts_with(&canonical_out) {
+                anyhow::bail!("unsafe zip entry path: {}", enclosed.display());
+            }
             if entry.is_dir() {
                 std::fs::create_dir_all(&dest)?;
+                if !dest.canonicalize()?.starts_with(&canonical_out) {
+                    anyhow::bail!("zip directory escapes output directory: {}", clean.display());
+                }
                 continue;
             }
             if let Some(parent) = dest.parent() {
                 std::fs::create_dir_all(parent)?;
+                if !parent.canonicalize()?.starts_with(&canonical_out) {
+                    anyhow::bail!(
+                        "zip parent directory escapes output directory: {}",
+                        clean.display()
+                    );
+                }
             }
             let mut out = std::fs::File::create(&dest)?;
-            std::io::copy(&mut entry, &mut out)?;
+            copy_bounded(
+                &mut entry,
+                &mut out,
+                &mut total_extracted,
+                MAX_RUNTIME_ARCHIVE_BYTES,
+            )?;
+            #[cfg(unix)]
+            if let Some(mode) = entry.unix_mode() {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(
+                    &dest,
+                    std::fs::Permissions::from_mode(mode & 0o777),
+                );
+            }
         }
         Ok(())
     } else {
         use flate2::read::GzDecoder;
-        let gz = GzDecoder::new(bytes);
+        let gz = GzDecoder::new(reader);
         let mut ar = tar::Archive::new(gz);
-        ar.unpack(out_dir)?;
+        for entry_res in ar.entries()? {
+            let mut entry = entry_res?;
+            let raw_path = entry.path()?.into_owned();
+            let clean = clean_relative_archive_path(&raw_path)?;
+            if clean.as_os_str().is_empty() {
+                continue;
+            }
+            let dest = canonical_out.join(&clean);
+            if !dest.starts_with(&canonical_out) {
+                anyhow::bail!("unsafe tar entry path: {}", raw_path.display());
+            }
+            let entry_type = entry.header().entry_type();
+            if entry_type.is_dir() {
+                std::fs::create_dir_all(&dest)?;
+                if !dest.canonicalize()?.starts_with(&canonical_out) {
+                    anyhow::bail!("tar directory escapes output directory: {}", clean.display());
+                }
+            } else if entry_type.is_file() {
+                if let Some(parent) = dest.parent() {
+                    std::fs::create_dir_all(parent)?;
+                    if !parent.canonicalize()?.starts_with(&canonical_out) {
+                        anyhow::bail!(
+                            "tar parent directory escapes output directory: {}",
+                            clean.display()
+                        );
+                    }
+                }
+                let mut out = std::fs::File::create(&dest)?;
+                copy_bounded(
+                    &mut entry,
+                    &mut out,
+                    &mut total_extracted,
+                    MAX_RUNTIME_ARCHIVE_BYTES,
+                )?;
+                #[cfg(unix)]
+                if let Ok(mode) = entry.header().mode() {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = std::fs::set_permissions(
+                        &dest,
+                        std::fs::Permissions::from_mode(mode & 0o777),
+                    );
+                }
+            } else if entry_type.is_symlink() {
+                let target = entry
+                    .link_name()?
+                    .ok_or_else(|| anyhow::anyhow!("tar symlink missing target"))?
+                    .into_owned();
+                let parent = dest
+                    .parent()
+                    .ok_or_else(|| anyhow::anyhow!("tar symlink missing parent"))?;
+                std::fs::create_dir_all(parent)?;
+                let canon_parent = parent.canonicalize()?;
+                if !canon_parent.starts_with(&canonical_out) {
+                    anyhow::bail!("tar symlink parent escapes output directory");
+                }
+                validate_tar_link_target(&canonical_out, &canon_parent, &target)?;
+                #[cfg(unix)]
+                {
+                    let _ = std::fs::remove_file(&dest);
+                    std::os::unix::fs::symlink(&target, &dest)?;
+                }
+            } else if entry_type.is_hard_link() {
+                anyhow::bail!("unsafe hardlink entry in tar archive: {}", clean.display());
+            }
+        }
         Ok(())
     }
 }
@@ -619,5 +878,50 @@ mod tests {
         assert_eq!(bin, out.join(format!("bin/{}", llama_server_bin_name())));
         assert_eq!(std::fs::read_to_string(&bin).unwrap(), "probe-exe");
         let _ = std::fs::remove_dir_all(&out);
+    }
+
+    #[test]
+    fn rejects_zip_slip_entry() {
+        use std::io::Write;
+        let mut zip_buf = std::io::Cursor::new(Vec::new());
+        {
+            let mut zw: zip::ZipWriter<&mut std::io::Cursor<Vec<u8>>> =
+                zip::ZipWriter::new(&mut zip_buf);
+            zw.start_file("../../evil.txt", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zw.write_all(b"pwned").unwrap();
+            zw.finish().unwrap();
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("nested").join("extract");
+        std::fs::create_dir_all(&out).unwrap();
+        let err = extract_archive(zip_buf.get_ref(), &out, true)
+            .expect_err("zip-slip path must be rejected");
+        assert!(
+            err.to_string().contains("unsafe zip entry path"),
+            "unexpected error: {err}"
+        );
+        assert!(!dir.path().join("evil.txt").exists());
+    }
+
+    #[test]
+    fn rejects_zip_symlink_entry() {
+        let mut zip_buf = std::io::Cursor::new(Vec::new());
+        {
+            let mut zw: zip::ZipWriter<&mut std::io::Cursor<Vec<u8>>> =
+                zip::ZipWriter::new(&mut zip_buf);
+            let opts = zip::write::SimpleFileOptions::default();
+            zw.add_symlink("bin/link", "/etc/passwd", opts).unwrap();
+            zw.finish().unwrap();
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("extract");
+        std::fs::create_dir_all(&out).unwrap();
+        let err = extract_archive(zip_buf.get_ref(), &out, true)
+            .expect_err("zip symlink must be rejected");
+        assert!(
+            err.to_string().contains("symlink"),
+            "unexpected error: {err}"
+        );
     }
 }

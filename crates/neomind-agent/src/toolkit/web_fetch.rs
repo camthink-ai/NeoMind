@@ -61,33 +61,99 @@ const MAX_RESPONSE_BODY: usize = 1024 * 1024;
 
 impl WebFetchTool {
     pub fn new() -> Self {
-        // Custom redirect policy: validate each redirect target against SSRF rules
-        let redirect_policy = reqwest::redirect::Policy::custom(|attempt| {
-            let url = attempt.url().clone();
-            let redirect_count = attempt.previous().len();
-            if let Err(e) = Self::validate_url(&url) {
-                tracing::warn!(url = %url, error = %e, "Redirect blocked by SSRF check");
-                return attempt.error(std::io::Error::new(
-                    std::io::ErrorKind::PermissionDenied,
-                    format!("Redirect to '{}' blocked: {}", url, e),
-                ));
-            }
-            if redirect_count >= 5 {
-                return attempt.error(std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "Too many redirects",
-                ));
-            }
-            attempt.follow()
-        });
-
+        // Redirects are disabled on the client and handled manually per hop in
+        // `execute()` so every hop goes through DNS resolution + IP pinning.
         let client = reqwest::Client::builder()
             .timeout(timeouts::web_fetch())
-            .redirect(redirect_policy)
+            .redirect(reqwest::redirect::Policy::none())
             .no_proxy()
             .build()
             .expect("Failed to build reqwest client");
         Self { client }
+    }
+
+    /// Perform a GET with DNS-resolving SSRF protection and IP pinning across
+    /// up to 5 redirect hops so DNS rebinding or 302-to-metadata cannot bypass
+    /// SSRF rules.
+    async fn fetch_with_ssrf_guard(&self, initial_url: reqwest::Url) -> Result<reqwest::Response> {
+        const MAX_REDIRECTS: usize = 5;
+        let mut current_url = initial_url;
+
+        for hop in 0..=MAX_REDIRECTS {
+            Self::validate_url(&current_url)?;
+
+            let addrs = neomind_core::net::resolve_and_validate_public_url(current_url.as_str())
+                .await
+                .map_err(|e| {
+                    if e.contains("not allowed") || e.contains("Only http://") {
+                        tracing::warn!(url = %current_url, error = %e, "SSRF: blocked resolved target");
+                        ToolError::PermissionDenied(e)
+                    } else {
+                        ToolError::Execution(format!(
+                            "Request failed: {}. NOTE: if this host was your guess for a NeoMind platform API, that is the wrong interface. Right tool per task: CLI-backed platform domains (dashboards, widgets, devices, rules, agents) → `shell` tool with `neomind ...` (e.g. `neomind dashboard add-components <ID> --components '<json>'`); file work → file_read/file_write/file_edit; image work → vision/image_edit; memory facts → memory. web_fetch is for EXTERNAL URLs only — the platform has no public HTTP API at external domains.",
+                            e
+                        ))
+                    }
+                })?;
+
+            let host = current_url.host_str().unwrap_or_default();
+            let host_unbracketed = host.trim_start_matches('[').trim_end_matches(']');
+
+            // Pin the validated public IP(s) on a per-hop client when connecting
+            // by hostname so DNS rebinding between lookup and connect is impossible.
+            let response = if host_unbracketed.parse::<std::net::IpAddr>().is_ok() {
+                self.client
+                    .get(current_url.as_str())
+                    .header("User-Agent", "NeoMind-Agent/1.0")
+                    .send()
+                    .await
+            } else {
+                let hop_client = reqwest::Client::builder()
+                    .timeout(timeouts::web_fetch())
+                    .redirect(reqwest::redirect::Policy::none())
+                    .no_proxy()
+                    .resolve_to_addrs(host, &addrs)
+                    .build()
+                    .map_err(|e| ToolError::Execution(format!("Failed to build HTTP client: {e}")))?;
+                hop_client
+                    .get(current_url.as_str())
+                    .header("User-Agent", "NeoMind-Agent/1.0")
+                    .send()
+                    .await
+            }
+            .map_err(|e| {
+                if e.is_timeout() {
+                    ToolError::Timeout
+                } else {
+                    ToolError::Execution(format!(
+                        "Request failed: {}. NOTE: if this host was your guess for a NeoMind platform API, that is the wrong interface. Right tool per task: CLI-backed platform domains (dashboards, widgets, devices, rules, agents) → `shell` tool with `neomind ...` (e.g. `neomind dashboard add-components <ID> --components '<json>'`); file work → file_read/file_write/file_edit; image work → vision/image_edit; memory facts → memory. web_fetch is for EXTERNAL URLs only — the platform has no public HTTP API at external domains.",
+                        e
+                    ))
+                }
+            })?;
+
+            if response.status().is_redirection() {
+                if hop >= MAX_REDIRECTS {
+                    return Err(ToolError::Execution("Too many redirects".into()));
+                }
+                let Some(location) = response
+                    .headers()
+                    .get(reqwest::header::LOCATION)
+                    .and_then(|v| v.to_str().ok())
+                else {
+                    return Ok(response);
+                };
+                let next_url = current_url
+                    .join(location)
+                    .map_err(|e| ToolError::InvalidArguments(format!("Invalid redirect URL: {e}")))?;
+                current_url = next_url;
+                continue;
+            }
+
+            return Ok(response);
+        }
+
+        Err(ToolError::Execution("Too many redirects".into()))
     }
 
     /// Validate a reqwest::Url against SSRF rules.
@@ -374,27 +440,7 @@ impl Tool for WebFetchTool {
 
         tracing::info!(url = %url, format = %format, "Fetching URL");
 
-        let response = self
-            .client
-            .get(parsed_url.as_str())
-            .header("User-Agent", "NeoMind-Agent/1.0")
-            .send()
-            .await
-            .map_err(|e| {
-                if e.is_timeout() {
-                    ToolError::Timeout
-                } else {
-                    // Connection-class failures carry a redirect note: the
-                    // live incident had a small model hammering an INVENTED
-                    // endpoint (api.neomind.com) because each echoed-URL
-                    // error read as "real address, transient problem".
-                    // Name the alternative at the point of failure.
-                    ToolError::Execution(format!(
-                        "Request failed: {}. NOTE: if this host was your guess for a NeoMind platform API, that is the wrong interface. Right tool per task: CLI-backed platform domains (dashboards, widgets, devices, rules, agents) → `shell` tool with `neomind ...` (e.g. `neomind dashboard add-components <ID> --components '<json>'`); file work → file_read/file_write/file_edit; image work → vision/image_edit; memory facts → memory. web_fetch is for EXTERNAL URLs only — the platform has no public HTTP API at external domains.",
-                        e
-                    ))
-                }
-            })?;
+        let response = self.fetch_with_ssrf_guard(parsed_url).await?;
 
         let status = response.status();
         if !status.is_success() {

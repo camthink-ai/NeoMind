@@ -99,17 +99,65 @@ pub struct LlamaServerProcess {
 /// Live llama-server handles spawned by this process (for graceful stop).
 static LLAMA_SERVERS: std::sync::Mutex<Vec<LlamaServerProcess>> = std::sync::Mutex::new(Vec::new());
 
+/// Prune already-exited child entries from the global registry so dead handles
+/// never accumulate or keep `Arc<Mutex<Child>>` alive indefinitely.
+fn prune_dead_locked(servers: &mut Vec<LlamaServerProcess>) {
+    servers.retain_mut(|s| s.is_alive());
+}
+
+#[cfg(unix)]
+fn kill_pid_force(pid: u32) {
+    let _ = std::process::Command::new("kill")
+        .arg("-9")
+        .arg(pid.to_string())
+        .status();
+}
+
+#[cfg(not(unix))]
+fn kill_pid_force(_pid: u32) {}
+
+fn kill_server_handle(s: LlamaServerProcess) {
+    if let Ok(mut child) = s.child.try_lock() {
+        let _ = child.start_kill();
+    } else if let Some(pid) = s.pid {
+        // Fallback when another task currently holds the Child mutex (e.g.
+        // wait_healthy): kill by stored pid so no server is left orphaned.
+        kill_pid_force(pid);
+    }
+}
+
 /// Stop every llama-server this process spawned. Called on graceful
 /// shutdown; `kill_on_drop` covers the abnormal paths (crash, SIGKILL).
 /// Idempotent.
 pub fn stop_all_llama_servers() {
-    let mut guard = LLAMA_SERVERS.lock().unwrap_or_else(|e| e.into_inner());
-    let servers: Vec<LlamaServerProcess> = std::mem::take(&mut *guard);
+    let servers: Vec<LlamaServerProcess> = {
+        let mut guard = LLAMA_SERVERS.lock().unwrap_or_else(|e| e.into_inner());
+        std::mem::take(&mut *guard)
+    };
     for s in servers {
-        if let Ok(mut child) = s.child.try_lock() {
-            // best-effort: kill_on_drop remains the backstop if locked
-            let _ = child.start_kill();
+        kill_server_handle(s);
+    }
+}
+
+/// Stop every llama-server this process spawned on `port`, leaving servers on
+/// other ports (e.g. the vision companion vs. main server) untouched.
+pub fn stop_llama_server_on_port(port: u16) {
+    let matching: Vec<LlamaServerProcess> = {
+        let mut guard = LLAMA_SERVERS.lock().unwrap_or_else(|e| e.into_inner());
+        let mut to_stop = Vec::new();
+        let mut kept = Vec::new();
+        for s in std::mem::take(&mut *guard) {
+            if s.port == port {
+                to_stop.push(s);
+            } else {
+                kept.push(s);
+            }
         }
+        *guard = kept;
+        to_stop
+    };
+    for s in matching {
+        kill_server_handle(s);
     }
 }
 
@@ -121,7 +169,15 @@ pub fn stop_all_llama_servers() {
 /// live-but-unresponsive server gets a kill-then-respawn escalation instead.
 pub fn any_llama_server_alive() -> bool {
     let mut guard = LLAMA_SERVERS.lock().unwrap_or_else(|e| e.into_inner());
-    guard.iter_mut().any(|s| s.is_alive())
+    prune_dead_locked(&mut guard);
+    !guard.is_empty()
+}
+
+/// Whether a spawned llama-server process for `port` is still alive.
+pub fn is_llama_server_alive_on_port(port: u16) -> bool {
+    let mut guard = LLAMA_SERVERS.lock().unwrap_or_else(|e| e.into_inner());
+    prune_dead_locked(&mut guard);
+    guard.iter().any(|s| s.port == port)
 }
 
 /// Pids of live llama-servers this process spawned that listen on `port`.
@@ -131,9 +187,10 @@ pub fn any_llama_server_alive() -> bool {
 /// about-to-free.
 pub fn live_llama_pids_on_port(port: u16) -> Vec<u32> {
     let mut guard = LLAMA_SERVERS.lock().unwrap_or_else(|e| e.into_inner());
+    prune_dead_locked(&mut guard);
     guard
-        .iter_mut()
-        .filter_map(|s| (s.port == port && s.is_alive()).then_some(s.pid).flatten())
+        .iter()
+        .filter_map(|s| (s.port == port).then_some(s.pid).flatten())
         .collect()
 }
 
@@ -145,7 +202,8 @@ pub fn live_llama_pids_on_port(port: u16) -> Vec<u32> {
 /// grew the ctx budget on every respawn of a companion-box, the same class
 /// of mistake the VRAM planner avoids via `live_llama_pids_on_port`.)
 pub fn live_llama_rss_bytes_on_port(port: u16) -> u64 {
-    let guard = LLAMA_SERVERS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut guard = LLAMA_SERVERS.lock().unwrap_or_else(|e| e.into_inner());
+    prune_dead_locked(&mut guard);
     guard
         .iter()
         .filter(|s| s.port == port)
@@ -384,11 +442,12 @@ impl LlamaServerProcess {
         };
         // Register globally so a graceful shutdown can stop it explicitly
         // (faster and cleaner than waiting for process-exit reap) — see
-        // `stop_all_llama_servers`.
-        LLAMA_SERVERS
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push(proc.clone_handle());
+        // `stop_all_llama_servers`. Prune any dead handles first.
+        {
+            let mut guard = LLAMA_SERVERS.lock().unwrap_or_else(|e| e.into_inner());
+            prune_dead_locked(&mut guard);
+            guard.push(proc.clone_handle());
+        }
         Ok(proc)
     }
 
@@ -459,10 +518,15 @@ impl LlamaServerProcess {
     }
 
     pub async fn stop(self) -> anyhow::Result<()> {
-        if let Ok(mut child) = self.child.try_lock() {
-            let _ = child.kill().await;
-            let _ = child.wait().await;
+        // Remove our entry from the global registry first so dropping `self`
+        // never leaks an Arc<Mutex<Child>> (which would defeat kill_on_drop).
+        {
+            let mut guard = LLAMA_SERVERS.lock().unwrap_or_else(|e| e.into_inner());
+            guard.retain(|entry| !std::sync::Arc::ptr_eq(&entry.child, &self.child));
         }
+        let mut child = self.child.lock().await;
+        let _ = child.kill().await;
+        let _ = child.wait().await;
         Ok(())
     }
 }
@@ -689,5 +753,46 @@ mod tests {
         // 直接测公开的 wait_healthy_loop(port, timeout):wait_healthy 只依赖 port。
         assert!(wait_healthy_loop(addr.port(), Duration::from_secs(3)).await);
         h.abort();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn port_scoped_liveness_stop_and_pruning_work_independently() {
+        // Spawn two lightweight sleep children registered on distinct synthetic ports.
+        let spawn_dummy = |port: u16| -> LlamaServerProcess {
+            let mut cmd = tokio::process::Command::new("/bin/sleep");
+            cmd.arg("30").kill_on_drop(true);
+            let child = cmd.spawn().expect("spawn sleep");
+            let pid = child.id();
+            let proc = LlamaServerProcess {
+                port,
+                child: std::sync::Arc::new(tokio::sync::Mutex::new(child)),
+                pid,
+            };
+            LLAMA_SERVERS
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(proc.clone_handle());
+            proc
+        };
+
+        let p1 = 59121;
+        let p2 = 59122;
+        let _h1 = spawn_dummy(p1);
+        let h2 = spawn_dummy(p2);
+
+        assert!(is_llama_server_alive_on_port(p1));
+        assert!(is_llama_server_alive_on_port(p2));
+
+        // Stopping port p1 must leave port p2 alive.
+        stop_llama_server_on_port(p1);
+        // Reap p1 handle before checking alive on p1 (kill is async at OS level).
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!is_llama_server_alive_on_port(p1));
+        assert!(is_llama_server_alive_on_port(p2));
+
+        // Explicit async stop removes h2 from LLAMA_SERVERS and kills it.
+        h2.stop().await.unwrap();
+        assert!(!is_llama_server_alive_on_port(p2));
     }
 }

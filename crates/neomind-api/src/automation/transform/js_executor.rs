@@ -16,6 +16,20 @@ use neomind_core::extension::registry::ExtensionRegistry;
 
 pub struct JsTransformExecutor;
 
+/// Bounded concurrency semaphore for synchronous Boa JS execution on blocking threads.
+fn boa_semaphore() -> &'static Arc<tokio::sync::Semaphore> {
+    static BOA_SEMAPHORE: std::sync::OnceLock<Arc<tokio::sync::Semaphore>> =
+        std::sync::OnceLock::new();
+    BOA_SEMAPHORE.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(8)))
+}
+
+/// Hard loop-iteration ceiling per Boa transform invocation.
+const BOA_LOOP_ITERATION_LIMIT: u64 = 200_000;
+/// Hard recursion depth ceiling per Boa transform invocation.
+const BOA_RECURSION_LIMIT: usize = 128;
+/// Per-call timeout for pre-executed `extensions.invoke(...)` calls.
+const EXTENSION_INVOKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Escape a string for safe embedding as a JavaScript property-access key.
 ///
 /// Single-key auto-unwrap used to interpolate the key raw into
@@ -263,6 +277,91 @@ impl JsTransformExecutor {
         extension_registry: Option<&Arc<ExtensionRegistry>>,
         mode: crate::automation::transform::TransformExecutionMode,
     ) -> Result<JsTransformOutput> {
+        // Offload synchronous Boa JS evaluation onto Tokio's blocking pool
+        // gated by `BOA_SEMAPHORE` when running on a multi-threaded Tokio
+        // runtime, so CPU-bound/hostile JS cannot starve async worker threads.
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread {
+                let code = code.to_string();
+                let input = input.clone();
+                let output_prefix = output_prefix.to_string();
+                let device_id = device_id.to_string();
+                let ext = extension_registry.cloned();
+                return tokio::task::block_in_place(|| {
+                    handle.block_on(Self::execute_async(
+                        code,
+                        input,
+                        output_prefix,
+                        device_id,
+                        timestamp,
+                        ext,
+                        mode,
+                    ))
+                });
+            }
+        }
+
+        Self::execute_sync(
+            code,
+            input,
+            output_prefix,
+            device_id,
+            timestamp,
+            extension_registry,
+            mode,
+            false,
+        )
+    }
+
+    /// Async entry point that acquires a bounded `BOA_SEMAPHORE` permit and
+    /// runs Boa JS evaluation inside `tokio::task::spawn_blocking`.
+    pub async fn execute_async(
+        code: String,
+        input: Value,
+        output_prefix: String,
+        device_id: String,
+        timestamp: i64,
+        extension_registry: Option<Arc<ExtensionRegistry>>,
+        mode: crate::automation::transform::TransformExecutionMode,
+    ) -> Result<JsTransformOutput> {
+        let _permit = boa_semaphore()
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| AutomationError::TransformError {
+                operation: "JsTransform".to_string(),
+                message: "JS executor semaphore closed".to_string(),
+            })?;
+
+        tokio::task::spawn_blocking(move || {
+            Self::execute_sync(
+                &code,
+                &input,
+                &output_prefix,
+                &device_id,
+                timestamp,
+                extension_registry.as_ref(),
+                mode,
+                true,
+            )
+        })
+        .await
+        .map_err(|e| AutomationError::TransformError {
+            operation: "JsTransform".to_string(),
+            message: format!("JavaScript execution task failed: {}", e),
+        })?
+    }
+
+    fn execute_sync(
+        code: &str,
+        input: &Value,
+        output_prefix: &str,
+        device_id: &str,
+        timestamp: i64,
+        extension_registry: Option<&Arc<ExtensionRegistry>>,
+        mode: crate::automation::transform::TransformExecutionMode,
+        on_blocking_thread: bool,
+    ) -> Result<JsTransformOutput> {
         use boa_engine::{
             context::Context, js_string, object::FunctionObjectBuilder, JsNativeError, JsValue,
             Source,
@@ -270,14 +369,15 @@ impl JsTransformExecutor {
 
         // Create Boa context
         let mut context = Context::default();
-        // [watchdog] User JS runs inline on the executor thread; an infinite
-        // loop (while(true)) used to hang it forever — Boa has no wall-clock
-        // interrupt, but the loop-iteration limit aborts hostile/nonterminating
-        // scripts with a runtime-limit error. 10M iterations is far above any
-        // legitimate transform and costs only seconds of CPU at worst.
+        // [watchdog] Bound both loop iterations and recursion depth so
+        // hostile/nonterminating scripts abort promptly without starving
+        // the blocking pool or blowing the thread stack.
         context
             .runtime_limits_mut()
-            .set_loop_iteration_limit(10_000_000);
+            .set_loop_iteration_limit(BOA_LOOP_ITERATION_LIMIT);
+        context
+            .runtime_limits_mut()
+            .set_recursion_limit(BOA_RECURSION_LIMIT);
 
         // Inject input data as JSON
         let input_json =
@@ -500,39 +600,65 @@ impl JsTransformExecutor {
                 if !pending_calls.is_empty() {
                     let registry = registry.clone();
 
-                    // Use block_in_place to safely block on async code from within a tokio worker thread
-                    let results = tokio::task::block_in_place(|| {
-                        handle.block_on(async move {
-                            let mut results_map = std::collections::HashMap::new();
+                    let run_calls = async move {
+                        let mut results_map = std::collections::HashMap::new();
 
-                            for (ext_id, cmd_str, params_val) in pending_calls {
-                                tracing::info!(
-                                    "Pre-executing extension call for Transform: {}::{} with params keys: {:?}",
-                                    ext_id, cmd_str,
-                                    params_val.as_object().map(|o| o.keys().collect::<Vec<_>>()).unwrap_or_default()
-                                );
+                        for (ext_id, cmd_str, params_val) in pending_calls {
+                            tracing::info!(
+                                "Pre-executing extension call for Transform: {}::{} with params keys: {:?}",
+                                ext_id, cmd_str,
+                                params_val.as_object().map(|o| o.keys().collect::<Vec<_>>()).unwrap_or_default()
+                            );
 
-                                match registry.execute_command(&ext_id, &cmd_str, &params_val).await {
-                                    Ok(result) => {
-                                        tracing::debug!("Extension call result: {:?}", result);
-                                        results_map.insert(
-                                            format!("{}::{}", ext_id, cmd_str),
-                                            result
-                                        );
-                                    }
-                                    Err(e) => {
-                                        tracing::warn!("Extension call failed: {}::{} - {:?}", ext_id, cmd_str, e);
-                                        results_map.insert(
-                                            format!("{}::{}", ext_id, cmd_str),
-                                            serde_json::json!({ "error": e.to_string() })
-                                        );
-                                    }
+                            match tokio::time::timeout(
+                                EXTENSION_INVOKE_TIMEOUT,
+                                registry.execute_command(&ext_id, &cmd_str, &params_val),
+                            )
+                            .await
+                            {
+                                Ok(Ok(result)) => {
+                                    tracing::debug!("Extension call result: {:?}", result);
+                                    results_map.insert(
+                                        format!("{}::{}", ext_id, cmd_str),
+                                        result,
+                                    );
+                                }
+                                Ok(Err(e)) => {
+                                    tracing::warn!("Extension call failed: {}::{} - {:?}", ext_id, cmd_str, e);
+                                    results_map.insert(
+                                        format!("{}::{}", ext_id, cmd_str),
+                                        serde_json::json!({ "error": e.to_string() }),
+                                    );
+                                }
+                                Err(_) => {
+                                    tracing::warn!(
+                                        "Extension call timed out after {:?}: {}::{}",
+                                        EXTENSION_INVOKE_TIMEOUT,
+                                        ext_id,
+                                        cmd_str
+                                    );
+                                    results_map.insert(
+                                        format!("{}::{}", ext_id, cmd_str),
+                                        serde_json::json!({ "error": "Extension call timed out" }),
+                                    );
                                 }
                             }
+                        }
 
-                            results_map
-                        })
-                    });
+                        results_map
+                    };
+
+                    // Inside `spawn_blocking`, we are already on a blocking thread so
+                    // `handle.block_on` is safe directly (calling `block_in_place`
+                    // from a blocking thread would panic).
+                    let results = if on_blocking_thread {
+                        handle.block_on(run_calls)
+                    } else if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread
+                    {
+                        tokio::task::block_in_place(|| handle.block_on(run_calls))
+                    } else {
+                        std::collections::HashMap::new()
+                    };
 
                     extension_results = results;
                 }
@@ -667,7 +793,8 @@ impl JsTransformExecutor {
         };
 
         // Convert result to Value
-        let result_value = self.js_value_to_json(result, &mut context)?;
+        let executor = JsTransformExecutor::new();
+        let result_value = executor.js_value_to_json(result, &mut context)?;
 
         tracing::info!(
             device_id = %device_id,
@@ -677,7 +804,7 @@ impl JsTransformExecutor {
         );
 
         // Convert result to metrics
-        let metrics = self.json_to_metrics(&result_value, output_prefix, device_id, timestamp)?;
+        let metrics = executor.json_to_metrics(&result_value, output_prefix, device_id, timestamp)?;
         tracing::info!(
             device_id = %device_id,
             metric_count = metrics.len(),

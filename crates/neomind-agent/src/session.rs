@@ -882,6 +882,7 @@ impl SessionManager {
                     end_reason: msg.end_reason.as_ref().map(|r| r.as_str().to_string()),
                     content_nodes: msg.content_nodes.clone(),
                     content_version: msg.content_version,
+                    attachments: msg.attachments.clone(),
                     timestamp: msg.timestamp,
                 }
             })
@@ -977,6 +978,7 @@ impl SessionManager {
                         .and_then(|s| serde_json::from_value(serde_json::Value::String(s)).ok()),
                     content_nodes: sm.content_nodes,
                     content_version: sm.content_version,
+                    attachments: sm.attachments,
                     timestamp: sm.timestamp,
                 }
             })
@@ -1445,14 +1447,21 @@ impl SessionManager {
     }
 
     /// Cancel an active streaming session by session ID.
-    /// Returns true if a stream was active and interrupted.
+    /// Returns true if a stream was active and newly interrupted.
+    ///
+    /// Keeps the `cancel_senders` entry registered until the in-flight stream
+    /// actually unwinds (and `CancelSenderGuard` removes it), preserving the
+    /// per-session mutual-exclusion lock so a second turn cannot race with
+    /// the cancelling turn's teardown or history writes.
     pub async fn cancel_session(&self, session_id: &str) -> bool {
-        let mut senders = self.cancel_senders.write().await;
-        if let Some((_, sender)) = senders.remove(session_id) {
-            // Send the interrupt signal
+        let senders = self.cancel_senders.read().await;
+        if let Some((_, sender)) = senders.get(session_id) {
+            let already_cancelled = *sender.borrow();
             let _ = sender.send(true);
-            tracing::info!(session_id = %session_id, "Sent interrupt signal to streaming session");
-            true
+            if !already_cancelled {
+                tracing::info!(session_id = %session_id, "Sent interrupt signal to streaming session");
+            }
+            !already_cancelled
         } else {
             tracing::debug!(session_id = %session_id, "No active stream to cancel");
             false
@@ -2472,6 +2481,14 @@ Assistant: {ar}\n"
         let session_id_owned = session_id.to_string();
         let cancel_senders = self.cancel_senders.clone();
 
+        // Guard immediately after registration so any early `?` error below
+        // (or stream drop) automatically removes `cancel_token`.
+        let mut guard = CancelSenderGuard::new(
+            cancel_senders.clone(),
+            session_id_owned.clone(),
+            cancel_token,
+        );
+
         let stream = agent
             .process_stream_events_with_safeguards(
                 message,
@@ -2501,20 +2518,15 @@ Assistant: {ar}\n"
                 "turn-start save failed; rolled back accept"
             );
             Self::remove_cancel_sender_if_token(&cancel_senders, session_id, cancel_token).await;
+            guard.mark_cleaned_up();
             return Err(e);
         }
         agent.clear_pending_accept_rollback().await;
 
-        // Wrap the stream with a scopeguard so the cancel sender is removed
-        // even if the consumer drops the stream early (client disconnect,
-        // downstream error). The guard lives inside the async block, so it
-        // drops naturally on both natural-end and early-drop paths.
+        // Move the scopeguard into the returned stream so the cancel sender is
+        // removed on both natural-end and early-drop paths.
         let cleanup_stream = Box::pin(async_stream::stream! {
-            let mut guard = CancelSenderGuard::new(
-                cancel_senders.clone(),
-                session_id_owned.clone(),
-                cancel_token,
-            );
+            let mut guard = guard;
             let mut stream = stream;
             while let Some(event) = stream.next().await {
                 yield event;
@@ -2768,6 +2780,14 @@ Assistant: {ar}\n"
         let session_id_owned = session_id.to_string();
         let cancel_senders = self.cancel_senders.clone();
 
+        // Guard immediately after registration so any early `?` error below
+        // (or stream drop) automatically removes `cancel_token`.
+        let mut guard = CancelSenderGuard::new(
+            cancel_senders.clone(),
+            session_id_owned.clone(),
+            cancel_token,
+        );
+
         let stream = agent
             .process_multimodal_stream_events_with_safeguards(
                 message,
@@ -2790,18 +2810,15 @@ Assistant: {ar}\n"
                 "multimodal turn-start save failed; rolled back accept"
             );
             Self::remove_cancel_sender_if_token(&cancel_senders, session_id, cancel_token).await;
+            guard.mark_cleaned_up();
             return Err(e);
         }
         agent.clear_pending_accept_rollback().await;
 
-        // Wrap with scopeguard so cancel sender is removed on both natural
-        // stream end and early drop (matches the text streaming path above).
+        // Move scopeguard into the returned stream so cancel sender is removed
+        // on both natural stream end and early drop (matches text streaming path).
         let cleanup_stream = Box::pin(async_stream::stream! {
-            let mut guard = CancelSenderGuard::new(
-                cancel_senders.clone(),
-                session_id_owned.clone(),
-                cancel_token,
-            );
+            let mut guard = guard;
             let mut stream = stream;
             while let Some(event) = stream.next().await {
                 yield event;
@@ -2830,6 +2847,25 @@ Assistant: {ar}\n"
     ) -> Result<Vec<neomind_storage::SessionMessage>> {
         let messages = self.get_history(session_id).await?;
         Ok(Self::agent_messages_to_session_messages(&messages))
+    }
+
+    /// Persist server-extracted structured reply attachments onto the last
+    /// assistant message of the session (both in-memory agent history and
+    /// durable SessionStore), guarded against concurrent clear_history.
+    pub async fn attach_attachments_to_last_assistant(
+        &self,
+        session_id: &str,
+        attachments: Vec<serde_json::Value>,
+    ) -> Result<bool> {
+        if attachments.is_empty() || self.is_clearing(session_id) {
+            return Ok(false);
+        }
+        let agent = self.get_session(session_id).await?;
+        let updated = agent.set_last_assistant_attachments(attachments).await;
+        if updated {
+            self.persist_history(session_id).await?;
+        }
+        Ok(updated)
     }
 
     pub async fn get_history(&self, session_id: &str) -> Result<Vec<AgentMessage>> {
@@ -3240,13 +3276,28 @@ Assistant: {ar}\n"
         invalid_count
     }
 
-    /// Clean up inactive sessions (older than specified seconds).
+    /// Evict inactive sessions (older than specified seconds) from the in-memory cache.
+    ///
+    /// Preserves persistent session history in `SessionStore` (disk retention is
+    /// controlled separately by `session_retention_hours`); evicted sessions are
+    /// restored on-demand by `get_session()`. Sessions with an active in-flight
+    /// stream are skipped.
     pub async fn cleanup_inactive(&self, max_age_seconds: i64) -> usize {
         let now = chrono::Utc::now().timestamp();
+        let active_streams: std::collections::HashSet<String> = self
+            .cancel_senders
+            .read()
+            .await
+            .keys()
+            .cloned()
+            .collect();
         let mut sessions = self.sessions.write().await;
         let mut to_remove = Vec::new();
 
         for (id, agent) in sessions.iter() {
+            if active_streams.contains(id) {
+                continue;
+            }
             let state = agent.state().await;
             if now - state.last_activity > max_age_seconds {
                 to_remove.push(id.clone());
@@ -3256,7 +3307,6 @@ Assistant: {ar}\n"
         for id in &to_remove {
             sessions.remove(id);
             self.session_messages.write().await.remove(id);
-            let _ = self.delete_session_id(id);
         }
 
         to_remove.len()
@@ -3834,20 +3884,36 @@ mod tests {
     async fn test_cancel_sender_cleanup_on_stream_end() {
         let manager = create_temp_manager();
 
-        // Simulate: register sender, then remove it (as stream cleanup would do)
+        // Simulate: register sender, then cancel it
         let (tx, _rx) = tokio::sync::watch::channel(false);
-        manager.register_cancel_sender("stream-session", tx).await;
+        let token1 = manager
+            .register_cancel_sender("stream-session", tx)
+            .await
+            .expect("register");
 
-        // Verify registered
+        // Verify registered and cancellable
         let cancelled = manager.cancel_session("stream-session").await;
         assert!(cancelled, "Should be able to cancel registered session");
 
-        // Re-register and remove manually (simulating stream end)
+        // While the cancelled stream has not yet finished unwinding (guard not dropped),
+        // a concurrent second turn MUST NOT be allowed to register.
+        let (tx_race, _rx_race) = tokio::sync::watch::channel(false);
+        assert!(
+            manager
+                .register_cancel_sender("stream-session", tx_race)
+                .await
+                .is_none(),
+            "Concurrent registration must be blocked until cancelled stream unwinds"
+        );
+
+        // Once the cancelled stream finishes and removes its token, a new turn can register.
+        manager.remove_cancel_sender("stream-session", token1).await;
+
         let (tx2, _rx2) = tokio::sync::watch::channel(false);
         let token2 = manager
             .register_cancel_sender("stream-session", tx2)
             .await
-            .expect("re-register");
+            .expect("re-register after stream end");
         manager.remove_cancel_sender("stream-session", token2).await;
 
         // Now cancel should return false

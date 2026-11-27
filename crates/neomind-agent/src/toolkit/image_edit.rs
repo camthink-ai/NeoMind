@@ -115,6 +115,36 @@ pub enum Operation {
         width: u32,
         height: u32,
     },
+    #[serde(rename = "rotate")]
+    Rotate {
+        angle: i32,
+    },
+    #[serde(rename = "flip")]
+    Flip {
+        direction: FlipDirection,
+    },
+    #[serde(rename = "resize")]
+    Resize {
+        #[serde(default)]
+        width: Option<u32>,
+        #[serde(default)]
+        height: Option<u32>,
+        #[serde(default)]
+        fit: Option<ResizeFit>,
+        #[serde(default)]
+        background: Option<Color>,
+    },
+    #[serde(rename = "adjust")]
+    Adjust {
+        #[serde(default)]
+        brightness: Option<i32>,
+        #[serde(default)]
+        contrast: Option<i32>,
+        #[serde(default)]
+        saturation: Option<i32>,
+    },
+    #[serde(rename = "grayscale")]
+    Grayscale {},
     #[serde(rename = "draw_rect")]
     DrawRect {
         x: i32,
@@ -199,11 +229,13 @@ pub enum Operation {
         // Position is optional: the watermark case ("draw the current time")
         // routinely arrives without coordinates, and a hard failure on a
         // missing `x` aborts the whole pipeline. Missing x/y default to
-        // centering — see `default_text_position`.
+        // `position` (if provided) or centering — see `resolve_text_position`.
         #[serde(default)]
         x: Option<i32>,
         #[serde(default)]
         y: Option<i32>,
+        #[serde(default)]
+        position: Option<TextPosition>,
         text: String,
         #[serde(default = "default_rect_color")]
         color: Color,
@@ -226,6 +258,34 @@ pub enum Operation {
     },
     // other variants added in later tasks — fields inlined per variant,
     // NO #[serde(flatten)] (incompatible with internally-tagged enums).
+}
+
+/// Flip direction for `flip` operation.
+#[derive(Debug, Clone, Copy, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FlipDirection {
+    Horizontal,
+    Vertical,
+}
+
+/// Resize fit mode when both `width` and `height` are supplied.
+#[derive(Debug, Clone, Copy, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ResizeFit {
+    Contain,
+    Cover,
+    Stretch,
+}
+
+/// Named anchor position for `draw_text` watermarks.
+#[derive(Debug, Clone, Copy, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TextPosition {
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+    Center,
 }
 
 /// Point for polygon drawing.
@@ -254,8 +314,12 @@ pub enum OutputFormat {
     Webp,
 }
 
-fn default_format() -> OutputFormat {
-    OutputFormat::Png
+fn infer_output_format(input_mime: &str) -> OutputFormat {
+    match input_mime.to_ascii_lowercase().as_str() {
+        "image/jpeg" | "image/jpg" => OutputFormat::Jpeg,
+        "image/webp" => OutputFormat::Webp,
+        _ => OutputFormat::Png,
+    }
 }
 
 /// Top-level parameters for the `image_edit` tool.
@@ -263,8 +327,10 @@ fn default_format() -> OutputFormat {
 pub struct ImageEditParams {
     pub image: String,
     pub operations: Vec<Operation>,
-    #[serde(default = "default_format")]
-    pub output_format: OutputFormat,
+    #[serde(default)]
+    pub output_format: Option<OutputFormat>,
+    #[serde(default)]
+    pub quality: Option<u8>,
     #[serde(default)]
     pub output_filename: Option<String>,
     #[serde(default)]
@@ -342,6 +408,10 @@ pub enum OpError {
     },
     #[error("zero-area crop")]
     ZeroAreaCrop,
+    #[error("invalid rotate angle {0}: must be a multiple of 90 (e.g. 90, 180, 270, -90)")]
+    InvalidRotateAngle(i32),
+    #[error("invalid resize dimensions: {0}")]
+    InvalidResizeDims(String),
     #[error("circle radius must be >= 1")]
     CircleRadiusZero,
     #[error("no font available")]
@@ -380,10 +450,55 @@ impl Tool for ImageEditTool {
     }
 
     fn description(&self) -> &str {
-        "Edit image via ordered operations. Source: $cached:user_image[_N], URL, path, or /api/images/…. Type fields: crop/draw_rect/blur_rect: x,y,width,height; draw_circle: cx,cy,radius; draw_line/draw_arrow: x1,y1,x2,y2; draw_polygon: points; draw_text: text. #RRGGBB[AA]."
+        "Edit image via ordered ops. Source: $cached:user_image[_N], URL, path, or /api/images/…. crop/draw_rect/blur_rect: x,y,width,height; rotate: angle(90|180|270); flip: direction(horizontal|vertical); resize: width/height,fit(contain|cover|stretch); adjust: brightness/contrast/saturation; grayscale; draw_circle: cx,cy,radius; draw_line/draw_arrow: x1,y1,x2,y2; draw_polygon: points; draw_text: text,position?. #RRGGBB[AA]."
     }
 
     fn parameters(&self) -> Value {
+        let mut op_props = serde_json::Map::new();
+        let core_props = serde_json::json!({
+            "type": {
+                "type": "string",
+                "enum": [
+                    "crop", "rotate", "flip", "resize", "adjust", "grayscale",
+                    "draw_rect", "draw_circle", "draw_line", "draw_arrow",
+                    "draw_polygon", "draw_text", "blur_rect"
+                ]
+            },
+            "x": { "type": "integer" },
+            "y": { "type": "integer" },
+            "width": { "type": "integer" },
+            "height": { "type": "integer" },
+            "angle": { "type": "integer" },
+            "direction": { "type": "string" },
+            "fit": { "type": "string" },
+            "brightness": { "type": "integer" },
+            "contrast": { "type": "integer" },
+            "saturation": { "type": "integer" }
+        });
+        let draw_props = serde_json::json!({
+            "cx": { "type": "integer" },
+            "cy": { "type": "integer" },
+            "radius": { "type": "integer" },
+            "x1": { "type": "integer" },
+            "y1": { "type": "integer" },
+            "x2": { "type": "integer" },
+            "y2": { "type": "integer" },
+            "points": { "type": "array", "items": { "type": "object" } },
+            "text": { "type": "string" },
+            "position": { "type": "string" },
+            "color": { "type": "string" },
+            "fill": { "type": "string" },
+            "background": { "type": "string" },
+            "stroke_width": { "type": "integer" },
+            "font_size": { "type": "integer" },
+            "mode": { "type": "string" }
+        });
+        if let Value::Object(m) = core_props {
+            op_props.extend(m);
+        }
+        if let Value::Object(m) = draw_props {
+            op_props.extend(m);
+        }
         serde_json::json!({
             "type": "object",
             "required": ["image", "operations"],
@@ -395,47 +510,12 @@ impl Tool for ImageEditTool {
                     "items": {
                         "type": "object",
                         "required": ["type"],
-                        "properties": {
-                            "type": {
-                                "type": "string",
-                                "enum": ["crop", "draw_rect", "draw_circle", "draw_line", "draw_arrow", "draw_polygon", "draw_text", "blur_rect"]
-                            },
-                            "x": { "type": "integer" },
-                            "y": { "type": "integer" },
-                            "width": { "type": "integer" },
-                            "height": { "type": "integer" },
-                            "cx": { "type": "integer" },
-                            "cy": { "type": "integer" },
-                            "radius": { "type": "integer" },
-                            "x1": { "type": "integer" },
-                            "y1": { "type": "integer" },
-                            "x2": { "type": "integer" },
-                            "y2": { "type": "integer" },
-                            "points": {
-                                "type": "array",
-                                "items": {
-                                    "type": "object",
-                                    "properties": { "x": { "type": "integer" }, "y": { "type": "integer" } },
-                                    "required": ["x", "y"]
-                                }
-                            },
-                            "text": { "type": "string" },
-                            "color": { "type": "string" },
-                            "fill": { "type": "string" },
-                            "background": { "type": "string" },
-                            "stroke_width": { "type": "integer" },
-                            "head_length": { "type": "integer" },
-                            "font_size": { "type": "integer" },
-                            "padding": { "type": "integer" },
-                            "closed": { "type": "boolean" },
-                            "mode": { "type": "string", "enum": ["pixelate", "gaussian"] },
-                            "intensity": { "type": "integer" }
-                        }
+                        "properties": Value::Object(op_props)
                     }
                 },
-                "output_format": { "type": "string", "enum": ["png", "jpeg", "webp"] },
-                "output_filename": { "type": "string" },
-                "include_base64": { "type": "boolean" }
+                "output_format": { "type": "string" },
+                "quality": { "type": "integer" },
+                "output_filename": { "type": "string" }
             }
         })
     }
@@ -462,7 +542,7 @@ impl Tool for ImageEditTool {
         }
 
         // 1. Load input bytes (data URL / HTTP URL / file path / raw base64).
-        let (bytes, _mime) =
+        let (bytes, input_mime) =
             crate::image_utils::resolve_image(&params.image, &self.http_client, MAX_IMAGE_SIZE)
                 .await
                 .map_err(ToolError::from)?;
@@ -496,16 +576,17 @@ impl Tool for ImageEditTool {
             let pixels_changed =
                 before.and_then(|(buf, ch)| count_changed_pixels(&buf, img.as_bytes(), ch));
             if let Some(0) = pixels_changed {
-                // Not an error — blur on a uniform region legitimately changes
-                // nothing — but for draw ops it almost always means the edit
-                // landed outside the canvas or was fully occluded.
-                warnings.push(format!(
-                    "operations[{}] ({}): changed 0 pixels — verify coordinates land inside the {}x{} canvas",
-                    idx,
-                    operation_type_name(op),
-                    img.width(),
-                    img.height()
-                ));
+                if is_positional_draw_op(op) {
+                    // For draw ops, 0 changed pixels almost always means the edit
+                    // landed outside the canvas or was fully occluded.
+                    warnings.push(format!(
+                        "operations[{}] ({}): changed 0 pixels — verify coordinates land inside the {}x{} canvas",
+                        idx,
+                        operation_type_name(op),
+                        img.width(),
+                        img.height()
+                    ));
+                }
             }
             operations_detail.push(serde_json::json!({
                 "index": idx,
@@ -514,8 +595,11 @@ impl Tool for ImageEditTool {
             }));
         }
 
-        // 4. Encode result.
-        let (out_bytes, mime, ext) = encode(&img, params.output_format)?;
+        // 4. Encode result (preserve input format when caller omitted output_format).
+        let target_format = params
+            .output_format
+            .unwrap_or_else(|| infer_output_format(&input_mime));
+        let (out_bytes, mime, ext) = encode_with_quality(&img, target_format, params.quality)?;
 
         // 5. Write to data/images/<filename>.
         let path = self.write_output(&out_bytes, ext, params.output_filename.as_deref())?;
@@ -629,10 +713,12 @@ fn sanitize_filename(name: &str, expected_ext: &str) -> Result<String> {
 }
 
 /// Required fields per operation type, beyond the `type` tag itself.
-/// `draw_text` position (x/y) is intentionally absent — it defaults to centered.
+/// `draw_text` position (x/y/position) is intentionally absent — defaults to centered.
 fn required_fields_for(op_type: &str) -> &'static [&'static str] {
     match op_type {
         "crop" | "draw_rect" | "blur_rect" => &["x", "y", "width", "height"],
+        "rotate" => &["angle"],
+        "flip" => &["direction"],
         "draw_circle" => &["cx", "cy", "radius"],
         "draw_line" | "draw_arrow" => &["x1", "y1", "x2", "y2"],
         "draw_polygon" => &["points"],
@@ -644,12 +730,17 @@ fn required_fields_for(op_type: &str) -> &'static [&'static str] {
 /// Compact per-type required-fields table, embedded in actionable errors (and
 /// mirrored in the tool schema description) so the LLM can self-correct on the
 /// next round instead of staring at a bare serde "missing field `x`".
-const OPERATIONS_CHEAT_SHEET: &str = "crop/draw_rect/blur_rect: x,y,width,height | draw_circle: cx,cy,radius | draw_line/draw_arrow: x1,y1,x2,y2 | draw_polygon: points:[{x,y},...] | draw_text: text (x,y optional, defaults to centered)";
+const OPERATIONS_CHEAT_SHEET: &str = "crop/draw_rect/blur_rect: x,y,width,height | rotate: angle(90|180|270) | flip: direction(horizontal|vertical) | resize: width and/or height (fit?: contain|cover|stretch) | adjust: brightness/contrast/saturation (-100..100) | grayscale | draw_circle: cx,cy,radius | draw_line/draw_arrow: x1,y1,x2,y2 | draw_polygon: points:[{x,y},...] | draw_text: text (x,y or position optional, defaults to centered)";
 
 /// Operation type tag for `operations_detail` reporting.
 fn operation_type_name(op: &Operation) -> &'static str {
     match op {
         Operation::Crop { .. } => "crop",
+        Operation::Rotate { .. } => "rotate",
+        Operation::Flip { .. } => "flip",
+        Operation::Resize { .. } => "resize",
+        Operation::Adjust { .. } => "adjust",
+        Operation::Grayscale {} => "grayscale",
         Operation::DrawRect { .. } => "draw_rect",
         Operation::DrawCircle { .. } => "draw_circle",
         Operation::DrawLine { .. } => "draw_line",
@@ -658,6 +749,21 @@ fn operation_type_name(op: &Operation) -> &'static str {
         Operation::DrawText { .. } => "draw_text",
         Operation::BlurRect { .. } => "blur_rect",
     }
+}
+
+/// Coordinate-based draw/blur operations where 0 changed pixels strongly
+/// indicates off-canvas coordinates or full occlusion.
+fn is_positional_draw_op(op: &Operation) -> bool {
+    matches!(
+        op,
+        Operation::DrawRect { .. }
+            | Operation::DrawCircle { .. }
+            | Operation::DrawLine { .. }
+            | Operation::DrawArrow { .. }
+            | Operation::DrawPolygon { .. }
+            | Operation::DrawText { .. }
+            | Operation::BlurRect { .. }
+    )
 }
 
 /// Skip per-op pixel diffing above this buffer size — a full-frame clone per
@@ -693,10 +799,16 @@ fn validate_operations(args: &Value) -> Result<()> {
         };
         let Some(op_type) = obj.get("type").and_then(|t| t.as_str()) else {
             return Err(ToolError::InvalidArguments(format!(
-                "operations[{}] has no `type` field. Valid types: crop, draw_rect, draw_circle, draw_line, draw_arrow, draw_polygon, draw_text, blur_rect. Required fields per type: {}",
+                "operations[{}] has no `type` field. Valid types: crop, rotate, flip, resize, adjust, grayscale, draw_rect, draw_circle, draw_line, draw_arrow, draw_polygon, draw_text, blur_rect. Required fields per type: {}",
                 i, OPERATIONS_CHEAT_SHEET
             )));
         };
+        if op_type == "resize" && !obj.contains_key("width") && !obj.contains_key("height") {
+            return Err(ToolError::InvalidArguments(format!(
+                "operations[{}] (type \"resize\") requires at least one of: width, height. Required fields per type: {}",
+                i, OPERATIONS_CHEAT_SHEET
+            )));
+        }
         let missing: Vec<&str> = required_fields_for(op_type)
             .iter()
             .filter(|f| !obj.contains_key(**f))
@@ -729,27 +841,51 @@ fn validate_operations(args: &Value) -> Result<()> {
     Ok(())
 }
 
-/// Resolve draw_text position. When the LLM omits x/y, center the text block
-/// (using the same width estimate as `apply_draw_text`) instead of failing.
-/// Returns `(x, y, defaulted)`.
-fn default_text_position(
+/// Measure rendered text bounding box `(width, height)` via `imageproc::drawing::text_size`.
+fn measure_text_box(font: &ab_glyph::FontArc, font_size: u32, text: &str) -> (u32, u32) {
+    let scale = ab_glyph::PxScale::from(font_size as f32);
+    let (w, h) = imageproc::drawing::text_size(scale, font, text);
+    (w.max(1), h.max(font_size))
+}
+
+/// Resolve draw_text top-left `(x, y)` using actual glyph dimensions.
+///
+/// Priority:
+/// 1. Explicit `x` and/or `y` coordinates;
+/// 2. Named `position` anchor (`top_left`, `top_right`, `bottom_left`, `bottom_right`, `center`);
+/// 3. Fallback to centered (sets `defaulted = true` so a non-fatal notice is surfaced).
+#[allow(clippy::too_many_arguments)]
+fn resolve_text_position(
     img: &image::DynamicImage,
     x: Option<i32>,
     y: Option<i32>,
-    text: &str,
-    font_size: u32,
+    position: Option<TextPosition>,
+    text_w: u32,
+    text_h: u32,
     padding: u32,
 ) -> (i32, i32, bool) {
-    let text_w = (text.len() as u32 * font_size * 3 / 5).max(1) + 2 * padding;
-    let text_h = font_size + 2 * padding;
-    let default_x = ((img.width() as i32 - text_w as i32) / 2).max(0);
-    let default_y = ((img.height() as i32 - text_h as i32) / 2).max(0);
-    match (x, y) {
-        (Some(x), Some(y)) => (x, y, false),
-        (None, Some(y)) => (default_x, y, true),
-        (Some(x), None) => (x, default_y, true),
-        (None, None) => (default_x, default_y, true),
-    }
+    let box_w = text_w + 2 * padding;
+    let box_h = text_h + 2 * padding;
+    let iw = img.width() as i32;
+    let ih = img.height() as i32;
+    let margin = ((img.width().min(img.height()) / 40).clamp(8, 32)) as i32;
+
+    let (anchor_x, anchor_y) = match position.unwrap_or(TextPosition::Center) {
+        TextPosition::TopLeft => (margin, margin),
+        TextPosition::TopRight => ((iw - box_w as i32 - margin).max(0), margin),
+        TextPosition::BottomLeft => (margin, (ih - box_h as i32 - margin).max(0)),
+        TextPosition::BottomRight => (
+            (iw - box_w as i32 - margin).max(0),
+            (ih - box_h as i32 - margin).max(0),
+        ),
+        TextPosition::Center => (
+            ((iw - box_w as i32) / 2).max(0),
+            ((ih - box_h as i32) / 2).max(0),
+        ),
+    };
+
+    let defaulted = x.is_none() && y.is_none() && position.is_none();
+    (x.unwrap_or(anchor_x), y.unwrap_or(anchor_y), defaulted)
 }
 
 /// Dispatch a single operation against `img`.
@@ -769,6 +905,29 @@ fn apply_operation(
             width,
             height,
         } => apply_crop(img, *x, *y, *width, *height),
+        Operation::Rotate { angle } => apply_rotate(img, *angle),
+        Operation::Flip { direction } => {
+            apply_flip(img, *direction);
+            Ok(())
+        }
+        Operation::Resize {
+            width,
+            height,
+            fit,
+            background,
+        } => apply_resize(img, *width, *height, *fit, background.as_ref().map(|c| c.0)),
+        Operation::Adjust {
+            brightness,
+            contrast,
+            saturation,
+        } => {
+            apply_adjust(img, *brightness, *contrast, *saturation);
+            Ok(())
+        }
+        Operation::Grayscale {} => {
+            apply_grayscale(img);
+            Ok(())
+        }
         Operation::DrawRect {
             x,
             y,
@@ -858,12 +1017,16 @@ fn apply_operation(
         Operation::DrawText {
             x,
             y,
+            position,
             text,
             color,
             font_size,
             background,
             padding,
         } => {
+            if text.is_empty() || text.chars().count() > 200 {
+                return Err(OpError::InvalidText);
+            }
             let Some((font, covered, total)) = select_font_for(text) else {
                 return Err(OpError::NoFont);
             };
@@ -879,8 +1042,9 @@ fn apply_operation(
                     total
                 ));
             }
+            let (text_w, text_h) = measure_text_box(&font.font, *font_size, text);
             let (rx, ry, defaulted) =
-                default_text_position(img, *x, *y, text, *font_size, *padding);
+                resolve_text_position(img, *x, *y, *position, text_w, text_h, *padding);
             if defaulted {
                 warnings.push(format!(
                     "operations[{}]: draw_text x/y omitted — defaulted to centered ({}, {})",
@@ -910,10 +1074,21 @@ fn apply_operation(
     }
 }
 
-/// Encode the image to the requested format. Returns `(bytes, mime, extension)`.
+/// Encode the image to the requested format using default quality.
+#[cfg(test)]
 fn encode(
     img: &image::DynamicImage,
     fmt: OutputFormat,
+) -> Result<(Vec<u8>, &'static str, &'static str)> {
+    encode_with_quality(img, fmt, None)
+}
+
+/// Encode the image to the requested format with optional JPEG quality (1..=100).
+/// Returns `(bytes, mime, extension)`.
+fn encode_with_quality(
+    img: &image::DynamicImage,
+    fmt: OutputFormat,
+    quality: Option<u8>,
 ) -> Result<(Vec<u8>, &'static str, &'static str)> {
     use image::ImageFormat;
     let mut buf = std::io::Cursor::new(Vec::new());
@@ -930,10 +1105,12 @@ fn encode(
             } else {
                 img.clone()
             };
-            to_encode
-                .write_to(&mut buf, ImageFormat::Jpeg)
+            let q = quality.unwrap_or(85).clamp(1, 100);
+            let rgb = to_encode.to_rgb8();
+            let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, q);
+            enc.encode_image(&rgb)
                 .map_err(|e| ToolError::Execution(format!("jpeg encode: {}", e)))?;
-            Ok((buf.into_inner(), "image/jpeg", "jpeg"))
+            Ok((buf.into_inner(), "image/jpeg", "jpg"))
         }
         OutputFormat::Webp => match img.write_to(&mut buf, ImageFormat::WebP) {
             Ok(()) => Ok((buf.into_inner(), "image/webp", "webp")),
@@ -992,6 +1169,154 @@ fn apply_crop(
     let cropped = img.crop_imm(x, y, w, h);
     *img = cropped;
     Ok(())
+}
+
+fn apply_rotate(img: &mut image::DynamicImage, angle: i32) -> std::result::Result<(), OpError> {
+    match angle.rem_euclid(360) {
+        0 => Ok(()),
+        90 => {
+            *img = img.rotate90();
+            Ok(())
+        }
+        180 => {
+            *img = img.rotate180();
+            Ok(())
+        }
+        270 => {
+            *img = img.rotate270();
+            Ok(())
+        }
+        _ => Err(OpError::InvalidRotateAngle(angle)),
+    }
+}
+
+fn apply_flip(img: &mut image::DynamicImage, direction: FlipDirection) {
+    match direction {
+        FlipDirection::Horizontal => *img = img.fliph(),
+        FlipDirection::Vertical => *img = img.flipv(),
+    }
+}
+
+fn apply_resize(
+    img: &mut image::DynamicImage,
+    width: Option<u32>,
+    height: Option<u32>,
+    fit: Option<ResizeFit>,
+    background: Option<image::Rgba<u8>>,
+) -> std::result::Result<(), OpError> {
+    use image::imageops::FilterType;
+    let (iw, ih) = (img.width(), img.height());
+    if iw == 0 || ih == 0 {
+        return Err(OpError::InvalidResizeDims("source image has zero size".into()));
+    }
+
+    let validate_dim = |label: &str, v: u32| -> std::result::Result<u32, OpError> {
+        if v == 0 || v > MAX_DIM {
+            Err(OpError::InvalidResizeDims(format!(
+                "{label} must be in 1..={MAX_DIM}, got {v}"
+            )))
+        } else {
+            Ok(v)
+        }
+    };
+
+    match (width, height) {
+        (None, None) => Err(OpError::InvalidResizeDims(
+            "provide at least width or height".into(),
+        )),
+        (Some(w), None) => {
+            let w = validate_dim("width", w)?;
+            let h = (((ih as u64) * (w as u64) + (iw as u64 / 2)) / (iw as u64)).max(1) as u32;
+            let h = validate_dim("computed height", h)?;
+            *img = img.resize_exact(w, h, FilterType::Lanczos3);
+            Ok(())
+        }
+        (None, Some(h)) => {
+            let h = validate_dim("height", h)?;
+            let w = (((iw as u64) * (h as u64) + (ih as u64 / 2)) / (ih as u64)).max(1) as u32;
+            let w = validate_dim("computed width", w)?;
+            *img = img.resize_exact(w, h, FilterType::Lanczos3);
+            Ok(())
+        }
+        (Some(w), Some(h)) => {
+            let w = validate_dim("width", w)?;
+            let h = validate_dim("height", h)?;
+            match fit {
+                None => {
+                    *img = img.resize(w, h, FilterType::Lanczos3);
+                }
+                Some(ResizeFit::Stretch) => {
+                    *img = img.resize_exact(w, h, FilterType::Lanczos3);
+                }
+                Some(ResizeFit::Cover) => {
+                    *img = img.resize_to_fill(w, h, FilterType::Lanczos3);
+                }
+                Some(ResizeFit::Contain) => {
+                    let scaled = img.resize(w, h, FilterType::Lanczos3);
+                    let bg_color = background.unwrap_or(image::Rgba([255, 255, 255, 255]));
+                    let mut canvas = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+                        w, h, bg_color,
+                    ));
+                    let dx = ((w.saturating_sub(scaled.width())) / 2) as i64;
+                    let dy = ((h.saturating_sub(scaled.height())) / 2) as i64;
+                    image::imageops::overlay(&mut canvas, &scaled, dx, dy);
+                    *img = canvas;
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
+fn apply_adjust(
+    img: &mut image::DynamicImage,
+    brightness: Option<i32>,
+    contrast: Option<i32>,
+    saturation: Option<i32>,
+) {
+    if let Some(b) = brightness {
+        let clamped = b.clamp(-100, 100);
+        if clamped != 0 {
+            let delta = ((clamped as f32) * 1.28).round() as i32;
+            *img = img.brighten(delta);
+        }
+    }
+    if let Some(c) = contrast {
+        let clamped = c.clamp(-100, 100);
+        if clamped != 0 {
+            *img = img.adjust_contrast(clamped as f32);
+        }
+    }
+    if let Some(s) = saturation {
+        let clamped = s.clamp(-100, 100);
+        if clamped != 0 {
+            let factor = 1.0 + (clamped as f32) / 100.0;
+            let mut rgba = img.to_rgba8();
+            for p in rgba.pixels_mut() {
+                let r = p.0[0] as f32;
+                let g = p.0[1] as f32;
+                let b = p.0[2] as f32;
+                let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                p.0[0] = (luma + (r - luma) * factor).round().clamp(0.0, 255.0) as u8;
+                p.0[1] = (luma + (g - luma) * factor).round().clamp(0.0, 255.0) as u8;
+                p.0[2] = (luma + (b - luma) * factor).round().clamp(0.0, 255.0) as u8;
+            }
+            *img = image::DynamicImage::ImageRgba8(rgba);
+        }
+    }
+}
+
+fn apply_grayscale(img: &mut image::DynamicImage) {
+    let mut rgba = img.to_rgba8();
+    for p in rgba.pixels_mut() {
+        let luma = (0.2126 * p.0[0] as f32 + 0.7152 * p.0[1] as f32 + 0.0722 * p.0[2] as f32)
+            .round()
+            .clamp(0.0, 255.0) as u8;
+        p.0[0] = luma;
+        p.0[1] = luma;
+        p.0[2] = luma;
+    }
+    *img = image::DynamicImage::ImageRgba8(rgba);
 }
 
 /// A parsed system font kept alive for the process lifetime. Only SELECTED
@@ -1345,8 +1670,141 @@ fn select_font_for(text: &str) -> Option<(FontSelection, usize, usize)> {
     Some((selection, covered, total))
 }
 
-/// Note: `stroke_width` is accepted for API uniformity with other draw operations
-/// but not honored — imageproc 0.27's rect outline is always 1px thick.
+/// Porter-Duff `source-over` alpha blend of `src` onto pixel `(x, y)` of `rgba`.
+/// Out-of-bounds coordinates are safely ignored.
+#[inline]
+fn blend_pixel(rgba: &mut image::RgbaImage, x: i32, y: i32, src: image::Rgba<u8>) {
+    if x < 0 || y < 0 {
+        return;
+    }
+    let (ux, uy) = (x as u32, y as u32);
+    if ux >= rgba.width() || uy >= rgba.height() {
+        return;
+    }
+    let sa = src.0[3];
+    if sa == 0 {
+        return;
+    }
+    let dst = rgba.get_pixel_mut(ux, uy);
+    if sa == 255 {
+        *dst = src;
+        return;
+    }
+    let sa_f = sa as f32 / 255.0;
+    let da_f = dst.0[3] as f32 / 255.0;
+    let inv_sa = 1.0 - sa_f;
+    let out_a = sa_f + da_f * inv_sa;
+    if out_a <= 0.0 {
+        *dst = image::Rgba([0, 0, 0, 0]);
+        return;
+    }
+    for ch in 0..3 {
+        let out_c = (src.0[ch] as f32 * sa_f + dst.0[ch] as f32 * da_f * inv_sa) / out_a;
+        dst.0[ch] = out_c.round().clamp(0.0, 255.0) as u8;
+    }
+    dst.0[3] = (out_a * 255.0).round().clamp(0.0, 255.0) as u8;
+}
+
+/// Fill `[x..x+w, y..y+h)` with alpha blending (clipped to image bounds).
+fn draw_filled_rect_blended(
+    rgba: &mut image::RgbaImage,
+    x: i32,
+    y: i32,
+    w: u32,
+    h: u32,
+    color: image::Rgba<u8>,
+) {
+    if w == 0 || h == 0 || color.0[3] == 0 {
+        return;
+    }
+    let iw = rgba.width() as i64;
+    let ih = rgba.height() as i64;
+    let x0 = (x as i64).max(0).min(iw);
+    let y0 = (y as i64).max(0).min(ih);
+    let x1 = (x as i64 + w as i64).max(0).min(iw);
+    let y1 = (y as i64 + h as i64).max(0).min(ih);
+    for py in y0..y1 {
+        for px in x0..x1 {
+            blend_pixel(rgba, px as i32, py as i32, color);
+        }
+    }
+}
+
+/// Draw a capsule-shaped thick line segment with exact `stroke_width` and
+/// single-pass alpha blending (no double-blending at overlapping pixels).
+fn draw_thick_segment(
+    rgba: &mut image::RgbaImage,
+    x1: f32,
+    y1: f32,
+    x2: f32,
+    y2: f32,
+    color: image::Rgba<u8>,
+    stroke_width: u32,
+) {
+    if color.0[3] == 0 {
+        return;
+    }
+    let iw = rgba.width() as i32;
+    let ih = rgba.height() as i32;
+    if iw == 0 || ih == 0 {
+        return;
+    }
+    let half = (stroke_width.max(1) as f32) * 0.5;
+    let r = if stroke_width <= 1 { 0.55_f32 } else { half };
+    let r_sq = r * r;
+
+    let dx = x2 - x1;
+    let dy = y2 - y1;
+    let len_sq = dx * dx + dy * dy;
+
+    let min_y = ((y1.min(y2) - r).floor() as i32).max(0);
+    let max_y = ((y1.max(y2) + r).ceil() as i32).min(ih - 1);
+    let seg_min_x = ((x1.min(x2) - r).floor() as i32).max(0);
+    let seg_max_x = ((x1.max(x2) + r).ceil() as i32).min(iw - 1);
+    if min_y > max_y || seg_min_x > seg_max_x {
+        return;
+    }
+
+    // For near-horizontal or short segments, scanline bounding box is tiny; for
+    // tall diagonal segments, tighten x-span per row around the line intersection.
+    let inv_dy = if dy.abs() > 1e-4 { Some(dx / dy) } else { None };
+    let x_pad = if let Some(slope) = inv_dy {
+        r * (1.0 + slope * slope).sqrt() + 1.0
+    } else {
+        0.0
+    };
+
+    for py in min_y..=max_y {
+        let py_f = py as f32;
+        let (row_x0, row_x1) = if let Some(slope) = inv_dy {
+            let x_at_y = x1 + (py_f - y1) * slope;
+            let lo = ((x_at_y - x_pad).floor() as i32).max(seg_min_x);
+            let hi = ((x_at_y + x_pad).ceil() as i32).min(seg_max_x);
+            (lo, hi)
+        } else {
+            (seg_min_x, seg_max_x)
+        };
+        for px in row_x0..=row_x1 {
+            let px_f = px as f32;
+            let dist_sq = if len_sq < 1e-6 {
+                let ox = px_f - x1;
+                let oy = py_f - y1;
+                ox * ox + oy * oy
+            } else {
+                let t = (((px_f - x1) * dx + (py_f - y1) * dy) / len_sq).clamp(0.0, 1.0);
+                let cx = x1 + t * dx;
+                let cy = y1 + t * dy;
+                let ox = px_f - cx;
+                let oy = py_f - cy;
+                ox * ox + oy * oy
+            };
+            if dist_sq <= r_sq {
+                blend_pixel(rgba, px, py, color);
+            }
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn apply_draw_rect(
     img: &mut image::DynamicImage,
@@ -1358,15 +1816,35 @@ fn apply_draw_rect(
     stroke_width: u32,
     fill: Option<image::Rgba<u8>>,
 ) {
-    use imageproc::drawing::{draw_filled_rect_mut, draw_hollow_rect_mut};
-    let rect = imageproc::rect::Rect::at(x, y).of_size(w, h);
-    if let Some(fill_color) = fill {
-        draw_filled_rect_mut(img, rect, fill_color);
+    if w == 0 || h == 0 {
+        return;
     }
-    // Note: imageproc 0.27 does not support stroke_width for rects; the parameter
-    // is accepted for API uniformity but the outline is always 1px thick.
-    let _ = stroke_width;
-    draw_hollow_rect_mut(img, rect, color);
+    let mut rgba = img.to_rgba8();
+    if let Some(fill_color) = fill {
+        draw_filled_rect_blended(&mut rgba, x, y, w, h, fill_color);
+    }
+    let t = stroke_width.max(1);
+    let top_h = t.min(h);
+    let bot_h = t.min(h.saturating_sub(top_h));
+    // Top and bottom horizontal edges
+    draw_filled_rect_blended(&mut rgba, x, y, w, top_h, color);
+    if bot_h > 0 {
+        let bot_y = (y as i64 + h as i64 - bot_h as i64).clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+        draw_filled_rect_blended(&mut rgba, x, bot_y, w, bot_h, color);
+    }
+    // Left and right vertical edges (between top and bottom bands — no corner double-blend)
+    let mid_h = h.saturating_sub(top_h + bot_h);
+    if mid_h > 0 {
+        let mid_y = (y as i64 + top_h as i64).clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+        let left_w = t.min(w);
+        let right_w = t.min(w.saturating_sub(left_w));
+        draw_filled_rect_blended(&mut rgba, x, mid_y, left_w, mid_h, color);
+        if right_w > 0 {
+            let right_x = (x as i64 + w as i64 - right_w as i64).clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+            draw_filled_rect_blended(&mut rgba, right_x, mid_y, right_w, mid_h, color);
+        }
+    }
+    *img = image::DynamicImage::ImageRgba8(rgba);
 }
 
 fn apply_draw_circle(
@@ -1381,17 +1859,42 @@ fn apply_draw_circle(
     if radius < 1 {
         return Err(OpError::CircleRadiusZero);
     }
-    use imageproc::drawing::{draw_filled_circle_mut, draw_hollow_circle_mut};
-    if let Some(fill) = fill {
-        draw_filled_circle_mut(img, (cx, cy), radius as i32, fill);
+    let mut rgba = img.to_rgba8();
+    let iw = rgba.width() as i32;
+    let ih = rgba.height() as i32;
+    let r = radius as f32;
+    let t = stroke_width.max(1) as f32;
+    let r_out = r + (t - 1.0) * 0.5 + 0.5;
+    let r_in = (r - t * 0.5).max(0.0);
+    let r_out_sq = r_out * r_out;
+    let r_in_sq = r_in * r_in;
+    let fill_sq = r * r;
+
+    let min_x = ((cx as f32 - r_out).floor() as i32).max(0);
+    let max_x = ((cx as f32 + r_out).ceil() as i32).min(iw - 1);
+    let min_y = ((cy as f32 - r_out).floor() as i32).max(0);
+    let max_y = ((cy as f32 + r_out).ceil() as i32).min(ih - 1);
+
+    for py in min_y..=max_y {
+        let dy = py as f32 - cy as f32;
+        let dy_sq = dy * dy;
+        for px in min_x..=max_x {
+            let dx = px as f32 - cx as f32;
+            let dist_sq = dx * dx + dy_sq;
+            if let Some(fill_color) = fill {
+                if dist_sq <= fill_sq {
+                    blend_pixel(&mut rgba, px, py, fill_color);
+                }
+            }
+            if dist_sq <= r_out_sq && dist_sq >= r_in_sq {
+                blend_pixel(&mut rgba, px, py, color);
+            }
+        }
     }
-    let _ = stroke_width.max(1) as i32; // Stroke width parameter not available in imageproc 0.27
-    draw_hollow_circle_mut(img, (cx, cy), radius as i32, color);
+    *img = image::DynamicImage::ImageRgba8(rgba);
     Ok(())
 }
 
-/// Note: `stroke_width` is accepted for API uniformity with other draw operations
-/// but not honored — imageproc 0.27's line drawing is single-pixel width.
 fn apply_draw_line(
     img: &mut image::DynamicImage,
     x1: i32,
@@ -1399,15 +1902,21 @@ fn apply_draw_line(
     x2: i32,
     y2: i32,
     color: image::Rgba<u8>,
-    _stroke_width: u32,
+    stroke_width: u32,
 ) {
-    use imageproc::drawing::draw_line_segment_mut;
-    // Note: imageproc's draw_line_segment_mut doesn't support stroke_width parameter
-    draw_line_segment_mut(img, (x1 as f32, y1 as f32), (x2 as f32, y2 as f32), color);
+    let mut rgba = img.to_rgba8();
+    draw_thick_segment(
+        &mut rgba,
+        x1 as f32,
+        y1 as f32,
+        x2 as f32,
+        y2 as f32,
+        color,
+        stroke_width,
+    );
+    *img = image::DynamicImage::ImageRgba8(rgba);
 }
 
-/// Note: `stroke_width` is accepted for API uniformity with other draw operations
-/// but not honored — imageproc 0.27's line drawing is single-pixel width.
 #[allow(clippy::too_many_arguments)]
 fn apply_draw_arrow(
     img: &mut image::DynamicImage,
@@ -1416,18 +1925,26 @@ fn apply_draw_arrow(
     x2: i32,
     y2: i32,
     color: image::Rgba<u8>,
-    _stroke_width: u32,
+    stroke_width: u32,
     head_length: u32,
 ) {
-    use imageproc::drawing::draw_line_segment_mut;
+    let mut rgba = img.to_rgba8();
 
     // Main line
-    draw_line_segment_mut(img, (x1 as f32, y1 as f32), (x2 as f32, y2 as f32), color);
+    draw_thick_segment(
+        &mut rgba,
+        x1 as f32,
+        y1 as f32,
+        x2 as f32,
+        y2 as f32,
+        color,
+        stroke_width,
+    );
 
     // Arrowhead: two lines at ~25 degrees from the main line
-    let dx = x2 - x1;
-    let dy = y2 - y1;
-    let angle = f32::atan2(dy as f32, dx as f32);
+    let dx = x2 as f32 - x1 as f32;
+    let dy = y2 as f32 - y1 as f32;
+    let angle = f32::atan2(dy, dx);
     let head_angle1 = angle + 25.0_f32.to_radians();
     let head_angle2 = angle - 25.0_f32.to_radians();
     let hl = head_length as f32;
@@ -1437,102 +1954,95 @@ fn apply_draw_arrow(
     let hx2 = x2 as f32 - hl * head_angle2.cos();
     let hy2 = y2 as f32 - hl * head_angle2.sin();
 
-    draw_line_segment_mut(img, (x2 as f32, y2 as f32), (hx1, hy1), color);
-    draw_line_segment_mut(img, (x2 as f32, y2 as f32), (hx2, hy2), color);
+    draw_thick_segment(&mut rgba, x2 as f32, y2 as f32, hx1, hy1, color, stroke_width);
+    draw_thick_segment(&mut rgba, x2 as f32, y2 as f32, hx2, hy2, color, stroke_width);
+    *img = image::DynamicImage::ImageRgba8(rgba);
 }
 
-/// Note: `stroke_width` is accepted for API uniformity with other draw operations
-/// but not honored — imageproc 0.27's polygon outline is single-pixel width.
 fn apply_draw_polygon(
     img: &mut image::DynamicImage,
     points: &[PolygonPoint],
     color: image::Rgba<u8>,
-    _stroke_width: u32,
+    stroke_width: u32,
     fill: Option<image::Rgba<u8>>,
     closed: bool,
 ) {
-    use imageproc::drawing::draw_line_segment_mut;
     if points.is_empty() {
         return;
     }
 
+    let mut rgba = img.to_rgba8();
     let ipoints: Vec<imageproc::point::Point<i32>> = points
         .iter()
         .map(|p| imageproc::point::Point { x: p.x, y: p.y })
         .collect();
 
     if closed {
-        // imageproc requires at least 3 points for a polygon
         if ipoints.len() < 3 {
             tracing::warn!(
                 "draw_polygon with closed=true requires >=3 points, got {}. Falling back to line.",
                 ipoints.len()
             );
-            // Draw consecutive lines (no auto-close for 2 points)
             for window in ipoints.windows(2) {
-                draw_line_segment_mut(
-                    img,
-                    (window[0].x as f32, window[0].y as f32),
-                    (window[1].x as f32, window[1].y as f32),
+                draw_thick_segment(
+                    &mut rgba,
+                    window[0].x as f32,
+                    window[0].y as f32,
+                    window[1].x as f32,
+                    window[1].y as f32,
                     color,
+                    stroke_width,
                 );
             }
+            *img = image::DynamicImage::ImageRgba8(rgba);
             return;
         }
-        // Fill first (so outline draws on top). imageproc 0.27's
-        // `draw_polygon_mut` fills AND outlines with the SAME color (no
-        // separate fill/outline), so we do a manual bounding-box scanline
-        // fill using a point-in-polygon test. O(area * points) — fine for
-        // annotation-scale polygons.
         if let Some(fill_color) = fill {
-            use image::{GenericImage, GenericImageView};
             let min_x = ipoints.iter().map(|p| p.x).min().unwrap();
             let max_x = ipoints.iter().map(|p| p.x).max().unwrap();
             let min_y = ipoints.iter().map(|p| p.y).min().unwrap();
             let max_y = ipoints.iter().map(|p| p.y).max().unwrap();
-            let (iw, ih) = img.dimensions();
+            let (iw, ih) = (rgba.width() as i32, rgba.height() as i32);
             let xs_lo = min_x.max(0);
-            let xs_hi = max_x.min(iw as i32 - 1);
+            let xs_hi = max_x.min(iw - 1);
             let ys_lo = min_y.max(0);
-            let ys_hi = max_y.min(ih as i32 - 1);
+            let ys_hi = max_y.min(ih - 1);
             for py in ys_lo..=ys_hi {
                 for px in xs_lo..=xs_hi {
                     if point_in_polygon(px, py, &ipoints) {
-                        // put_pixel overwrites — matches imageproc's filled circle behavior.
-                        if (px as u32) < iw && (py as u32) < ih {
-                            img.put_pixel(px as u32, py as u32, fill_color);
-                        }
+                        blend_pixel(&mut rgba, px, py, fill_color);
                     }
                 }
             }
         }
-        // Outline: draw all edges including the closing edge (last -> first).
-        // We draw edges manually rather than using `draw_polygon_mut` because
-        // the latter FILLS the polygon with the outline color, which would
-        // clobber the fill_color we just laid down (and is wrong for the
-        // `fill: None` case where the user wants outline only).
         let n = ipoints.len();
         for i in 0..n {
             let a = &ipoints[i];
             let b = &ipoints[(i + 1) % n];
-            draw_line_segment_mut(
-                img,
-                (a.x as f32, a.y as f32),
-                (b.x as f32, b.y as f32),
+            draw_thick_segment(
+                &mut rgba,
+                a.x as f32,
+                a.y as f32,
+                b.x as f32,
+                b.y as f32,
                 color,
+                stroke_width,
             );
         }
     } else {
-        // Open polygon: draw consecutive lines only (no auto-close)
         for window in ipoints.windows(2) {
-            draw_line_segment_mut(
-                img,
-                (window[0].x as f32, window[0].y as f32),
-                (window[1].x as f32, window[1].y as f32),
+            draw_thick_segment(
+                &mut rgba,
+                window[0].x as f32,
+                window[0].y as f32,
+                window[1].x as f32,
+                window[1].y as f32,
                 color,
+                stroke_width,
             );
         }
     }
+    *img = image::DynamicImage::ImageRgba8(rgba);
 }
 
 /// Standard ray-casting point-in-polygon test.
@@ -1569,27 +2079,25 @@ fn apply_draw_text(
     padding: u32,
     font: &ab_glyph::FontArc,
 ) -> std::result::Result<(), OpError> {
-    if text.is_empty() || text.len() > 200 {
+    if text.is_empty() || text.chars().count() > 200 {
         return Err(OpError::InvalidText);
     }
 
-    // Calculate text bounds using font metrics - simplified approach
-    // Just estimate width based on character count and font size
-    let text_w = (text.len() as u32 * font_size * 3 / 5).max(1); // Rough estimate
-    let text_h = font_size; // Approximate height
+    // Measure actual glyph bounds (fixes CJK width over-estimation from UTF-8 byte len).
+    let (text_w, text_h) = measure_text_box(font, font_size, text);
 
-    // Draw background if provided
+    // Draw alpha-blended background if provided
     if let Some(bg) = background {
-        apply_draw_rect(
-            img,
+        let mut rgba = img.to_rgba8();
+        draw_filled_rect_blended(
+            &mut rgba,
             x,
             y,
             text_w + 2 * padding,
             text_h + 2 * padding,
             bg,
-            1,
-            Some(bg),
         );
+        *img = image::DynamicImage::ImageRgba8(rgba);
     }
 
     // Draw text at (x + padding, y + padding)
@@ -2025,7 +2533,7 @@ mod tests {
         assert_eq!(count_changed_pixels(&[1], &[1], 0), None);
     }
 
-    /// The compact flat schema must enumerate all 8 operation types, document
+    /// The compact flat schema must enumerate all 13 operation types, document
     /// per-type required fields in the description, and stay small enough not
     /// to crowd out 8K-window models; runtime `validate_operations` enforces
     /// per-type required fields.
@@ -2035,10 +2543,15 @@ mod tests {
         let schema = t.parameters();
         let types = schema["properties"]["operations"]["items"]["properties"]["type"]["enum"]
             .as_array()
-            .expect("8-value enum in flat operations items schema");
-        assert_eq!(types.len(), 8, "all 8 operation types declared");
+            .expect("13-value enum in flat operations items schema");
+        assert_eq!(types.len(), 13, "all 13 operation types declared");
         for expected in [
             "crop",
+            "rotate",
+            "flip",
+            "resize",
+            "adjust",
+            "grayscale",
             "draw_rect",
             "draw_circle",
             "draw_line",
@@ -2054,11 +2567,22 @@ mod tests {
         }
         let desc = t.description();
         assert!(desc.contains("crop/draw_rect/blur_rect: x,y,width,height"));
+        assert!(desc.contains("rotate: angle"));
         assert!(desc.contains("draw_text: text"));
         // Runtime validation enforces per-type requirements while keeping draw_text x/y optional.
         assert!(validate_operations(&serde_json::json!({
             "image": "$cached:user_image",
             "operations": [{"type": "crop", "x": 0, "y": 0}]
+        }))
+        .is_err());
+        assert!(validate_operations(&serde_json::json!({
+            "image": "$cached:user_image",
+            "operations": [{"type": "resize"}]
+        }))
+        .is_err());
+        assert!(validate_operations(&serde_json::json!({
+            "image": "$cached:user_image",
+            "operations": [{"type": "rotate"}]
         }))
         .is_err());
         assert!(validate_operations(&serde_json::json!({
@@ -2071,6 +2595,41 @@ mod tests {
             "operations": [{"type": "draw_text", "text": "ok"}]
         }))
         .is_ok());
+    }
+
+    #[tokio::test]
+    async fn rotate_jpeg_preserves_format_and_swaps_dimensions() {
+        let test_root = scratch_dir("test-tmp-image-edit-rotate-jpg");
+        let tool = ImageEditTool::new(&test_root);
+
+        let mut raw = RgbaImage::from_pixel(120, 80, image::Rgba([20, 40, 60, 255]));
+        raw.put_pixel(0, 0, image::Rgba([255, 0, 0, 255]));
+        let mut buf = std::io::Cursor::new(Vec::new());
+        DynamicImage::ImageRgba8(raw)
+            .to_rgb8()
+            .write_to(&mut buf, image::ImageFormat::Jpeg)
+            .unwrap();
+        let b64 =
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, buf.into_inner());
+        let jpg_url = format!("data:image/jpeg;base64,{}", b64);
+
+        let out = tool
+            .execute(serde_json::json!({
+                "image": jpg_url,
+                "operations": [{"type": "rotate", "angle": 90}],
+                "quality": 80
+            }))
+            .await
+            .expect("rotate jpeg should succeed");
+        assert_eq!(out.data["width"].as_u64(), Some(80));
+        assert_eq!(out.data["height"].as_u64(), Some(120));
+        assert_eq!(out.data["image_type"].as_str(), Some("image/jpeg"));
+        assert!(
+            out.data["url"].as_str().unwrap_or("").ends_with(".jpg"),
+            "expected .jpg url, got {:?}",
+            out.data["url"]
+        );
+        let _ = std::fs::remove_dir_all(&test_root);
     }
 }
 
@@ -2422,6 +2981,153 @@ mod op_tests {
         );
         // CRITICAL regression guard: gaussian mode MUST NOT shrink the image.
         assert_eq!(img.dimensions(), (100, 100));
+    }
+
+    #[test]
+    fn rotate_90_180_270_and_negative() {
+        let mut img = solid(100, 50, [0, 0, 0, 255]);
+        img.put_pixel(0, 0, Rgba([255, 0, 0, 255]));
+        apply_rotate(&mut img, 90).unwrap();
+        assert_eq!(img.dimensions(), (50, 100));
+        // Top-left (0, 0) rotated 90° CW lands at top-right (49, 0)
+        assert_eq!(img.get_pixel(49, 0), Rgba([255, 0, 0, 255]));
+
+        // -90° rotates back to original (100, 50) with red at (0, 0)
+        apply_rotate(&mut img, -90).unwrap();
+        assert_eq!(img.dimensions(), (100, 50));
+        assert_eq!(img.get_pixel(0, 0), Rgba([255, 0, 0, 255]));
+
+        // Non-multiple of 90 rejected cleanly
+        assert!(matches!(
+            apply_rotate(&mut img, 45),
+            Err(OpError::InvalidRotateAngle(45))
+        ));
+    }
+
+    #[test]
+    fn flip_horizontal_and_vertical() {
+        let mut img = solid(40, 20, [0, 0, 0, 255]);
+        img.put_pixel(0, 0, Rgba([10, 20, 30, 255]));
+        apply_flip(&mut img, FlipDirection::Horizontal);
+        assert_eq!(img.get_pixel(39, 0), Rgba([10, 20, 30, 255]));
+        apply_flip(&mut img, FlipDirection::Vertical);
+        assert_eq!(img.get_pixel(39, 19), Rgba([10, 20, 30, 255]));
+    }
+
+    #[test]
+    fn resize_aspect_contain_cover_and_stretch() {
+        // Single dimension keeps aspect ratio (200x100 -> width 100 => 100x50)
+        let mut a = solid(200, 100, [100, 100, 100, 255]);
+        apply_resize(&mut a, Some(100), None, None, None).unwrap();
+        assert_eq!(a.dimensions(), (100, 50));
+
+        // Cover crops to exact target (200x100 -> 80x80)
+        let mut b = solid(200, 100, [50, 100, 150, 255]);
+        apply_resize(&mut b, Some(80), Some(80), Some(ResizeFit::Cover), None).unwrap();
+        assert_eq!(b.dimensions(), (80, 80));
+
+        // Contain pads to exact target with requested background color
+        let mut c = solid(200, 100, [10, 10, 10, 255]);
+        apply_resize(
+            &mut c,
+            Some(100),
+            Some(100),
+            Some(ResizeFit::Contain),
+            Some(Rgba([255, 255, 0, 255])),
+        )
+        .unwrap();
+        assert_eq!(c.dimensions(), (100, 100));
+        assert_eq!(c.get_pixel(0, 0), Rgba([255, 255, 0, 255]));
+        assert_eq!(c.get_pixel(50, 50), Rgba([10, 10, 10, 255]));
+
+        // Stretch hits exact dimensions
+        let mut d = solid(200, 100, [0, 0, 0, 255]);
+        apply_resize(&mut d, Some(60), Some(90), Some(ResizeFit::Stretch), None).unwrap();
+        assert_eq!(d.dimensions(), (60, 90));
+    }
+
+    #[test]
+    fn adjust_and_grayscale_modify_pixels() {
+        let mut img = solid(20, 20, [200, 50, 50, 255]);
+        apply_grayscale(&mut img);
+        let p = img.get_pixel(10, 10);
+        assert_eq!(p[0], p[1]);
+        assert_eq!(p[1], p[2]);
+        assert_eq!(p[3], 255);
+
+        let mut bright = solid(20, 20, [100, 100, 100, 255]);
+        apply_adjust(&mut bright, Some(30), Some(10), None);
+        assert!(bright.get_pixel(10, 10)[0] > 100);
+
+        let mut sat = solid(20, 20, [200, 50, 50, 255]);
+        apply_adjust(&mut sat, None, None, Some(-100));
+        let ps = sat.get_pixel(10, 10);
+        assert_eq!(ps[0], ps[1]);
+        assert_eq!(ps[1], ps[2]);
+    }
+
+    #[test]
+    fn stroke_width_and_alpha_blend_are_honored() {
+        // Thick 6px red border on black canvas: pixel at (13, 13) (3px inward) must be red!
+        let mut img = solid(100, 100, [0, 0, 0, 255]);
+        apply_draw_rect(&mut img, 10, 10, 60, 60, Rgba([255, 0, 0, 255]), 6, None);
+        assert_eq!(img.get_pixel(13, 13), Rgba([255, 0, 0, 255]));
+        // Interior beyond 6px stays black
+        assert_eq!(img.get_pixel(30, 30), Rgba([0, 0, 0, 255]));
+
+        // Semi-transparent blue fill over white background blends (~50% blue) instead of erasing white!
+        let mut blend_img = solid(100, 100, [255, 255, 255, 255]);
+        apply_draw_rect(
+            &mut blend_img,
+            10,
+            10,
+            40,
+            40,
+            Rgba([0, 0, 255, 255]),
+            1,
+            Some(Rgba([0, 0, 255, 128])),
+        );
+        let mid = blend_img.get_pixel(30, 30);
+        assert!(
+            mid[0] > 100 && mid[0] < 150 && mid[2] == 255 && mid[3] == 255,
+            "expected ~50% alpha-blended blue over white, got {:?}",
+            mid
+        );
+    }
+
+    #[test]
+    fn draw_text_accepts_more_than_67_cjk_chars() {
+        // 80 CJK characters = 240 UTF-8 bytes (> 200 bytes) but only 80 chars (<= 200 chars).
+        let text = "测".repeat(80);
+        assert!(text.len() > 200 && text.chars().count() == 80);
+        let Some((sel, _, _)) = select_font_for(&text) else {
+            return;
+        };
+        let mut img = solid(400, 80, [0, 0, 0, 255]);
+        apply_draw_text(
+            &mut img,
+            10,
+            10,
+            &text,
+            Rgba([255, 255, 255, 255]),
+            16,
+            None,
+            2,
+            &sel.font,
+        )
+        .expect("80 CJK chars must not hit byte-length limit");
+    }
+
+    #[test]
+    fn resolve_text_position_honors_named_anchors() {
+        let img = solid(400, 300, [0, 0, 0, 255]);
+        let (tlx, tly, d_tl) =
+            resolve_text_position(&img, None, None, Some(TextPosition::TopLeft), 80, 20, 4);
+        let (brx, bry, d_br) =
+            resolve_text_position(&img, None, None, Some(TextPosition::BottomRight), 80, 20, 4);
+        assert!(!d_tl && !d_br, "explicit position must not flag defaulted");
+        assert!(tlx < 30 && tly < 30);
+        assert!(brx > 280 && bry > 240);
     }
 }
 

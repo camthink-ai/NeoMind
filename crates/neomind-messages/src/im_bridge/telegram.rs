@@ -90,9 +90,11 @@ impl TelegramBridge {
             .client
             .post(self.get_me_url())
             .send()
-            .await?
+            .await
+            .map_err(|e| anyhow::anyhow!("{}", crate::manager::scrub_credentials(&e.to_string())))?
             .json()
-            .await?;
+            .await
+            .map_err(|e| anyhow::anyhow!("{}", crate::manager::scrub_credentials(&e.to_string())))?;
         Ok(v.get("result")
             .and_then(|r| r.get("username"))
             .and_then(|x| x.as_str())
@@ -111,7 +113,15 @@ impl TelegramBridge {
                 "chat_id": chat_id,
                 "text": chunk.iter().collect::<String>(),
             });
-            let resp = self.client.post(self.send_url()).json(&body).send().await?;
+            let resp = self
+                .client
+                .post(self.send_url())
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| {
+                    anyhow::anyhow!("{}", crate::manager::scrub_credentials(&e.to_string()))
+                })?;
             if !resp.status().is_success() {
                 let status = resp.status();
                 let body = resp.text().await.unwrap_or_default();
@@ -179,7 +189,8 @@ impl ImBridge for TelegramBridge {
                 tracing::info!(bot_username = %u, "telegram bridge identified");
             }
             Err(e) => {
-                tracing::warn!(error = %e, "telegram getMe failed; deep-link will be unavailable")
+                let scrubbed = crate::manager::scrub_credentials(&e.to_string());
+                tracing::warn!(error = %scrubbed, "telegram getMe failed; deep-link will be unavailable")
             }
         }
         let mut offset: i64 = 0;
@@ -241,7 +252,8 @@ impl ImBridge for TelegramBridge {
                     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                 }
                 Err(e) => {
-                    tracing::warn!(error = %e, "telegram poll error");
+                    let scrubbed = crate::manager::scrub_credentials(&e.to_string());
+                    tracing::warn!(error = %scrubbed, "telegram poll error");
                     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                 }
             }
@@ -266,7 +278,8 @@ impl ImBridge for TelegramBridge {
                 Ok(mid)
             }
             Err(e) => {
-                tracing::warn!(error = ?e, chat_id, "telegram reply send_text failed");
+                let scrubbed = crate::manager::scrub_credentials(&e.to_string());
+                tracing::warn!(error = %scrubbed, chat_id, "telegram reply send_text failed");
                 Err(e)
             }
         }

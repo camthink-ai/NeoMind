@@ -2007,6 +2007,7 @@ impl LlmInterface {
         attach_tools: bool,
         exclude_skill: bool,
         has_user_images: bool,
+        has_session_images: bool,
     ) -> Option<Vec<neomind_core::llm::backend::ToolDefinition>> {
         if !attach_tools {
             return None;
@@ -2024,10 +2025,11 @@ impl LlmInterface {
                 if exclude_skill && t.name == "skill" {
                     return false;
                 }
-                crate::agent::tool_profile::tool_exposed_in_profile(
+                crate::agent::tool_profile::tool_exposed_in_profile_with_session_images(
                     &t.name,
                     profile,
                     has_user_images,
+                    has_session_images,
                     vlm_available,
                 )
             })
@@ -3157,8 +3159,12 @@ impl LlmInterface {
         // Get tool definitions — filter out "vision" when the user message already
         // contains images, and dynamically expose `_new_operation` only on tools
         // that have a terminal write operation in TaskState.
+        let has_session_images = has_user_images
+            || messages.iter().any(|m| {
+                m.has_images() || m.content.as_text().contains("/api/images/")
+            });
         let tools_input = self
-            .build_request_tools_input(attach_tools, false, has_user_images)
+            .build_request_tools_input(attach_tools, false, has_user_images, has_session_images)
             .await;
 
         let raw_prompt_est =
@@ -3528,8 +3534,11 @@ impl LlmInterface {
 
         // Get tool definitions, dynamically exposing `_new_operation` only on
         // tools that have a terminal write operation in TaskState.
+        let has_session_images = messages.iter().any(|m| {
+            m.has_images() || m.content.as_text().contains("/api/images/")
+        });
         let tools_input = self
-            .build_request_tools_input(attach_tools, exclude_skill, false)
+            .build_request_tools_input(attach_tools, exclude_skill, false, has_session_images)
             .await;
 
         let raw_prompt_est =

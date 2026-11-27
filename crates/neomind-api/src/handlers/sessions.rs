@@ -61,6 +61,11 @@ async fn process_stream_to_channel(
     // the client's IntermediateEnd counting.
     let mut pending_round: u32 = 1;
 
+    // Server-side structured attachment collector for this turn (image fallback
+    // media, write/execute result cards, read-only entity chips).
+    let mut attachment_collector = super::chat_attachments::TurnAttachmentCollector::new();
+    let mut history_persisted_with_attachments = false;
+
     // Immediate pending-state save. Tool events and round boundaries must
     // persist AT ONCE, not on the Thinking/Content debounce: a tool can run
     // for minutes (shell, extension inference), and the last debounce-saved
@@ -152,6 +157,7 @@ async fn process_stream_to_channel(
                         arguments,
                         round,
                     } => {
+                        attachment_collector.record_tool_start(tool, arguments);
                         // Pending snapshot: register the call so a restored
                         // bubble shows the tool process (result arrives on End).
                         pending_state.push_tool_call(json!({
@@ -179,6 +185,7 @@ async fn process_stream_to_channel(
                         success,
                         round,
                     } => {
+                        attachment_collector.record_tool_end(tool, result, *success);
                         pending_state.complete_tool_call(
                             tool,
                             round.map(|r| r as u32),
@@ -439,6 +446,48 @@ async fn process_stream_to_channel(
                         if let Some(reason) = end_reason {
                             end_json["endReason"] = json!(reason.as_str());
                         }
+                        // Finalize verified reply attachments (media / cards / chips),
+                        // persist on the last assistant message, and attach to End frame.
+                        // Dedupe images only against final markdown `pending_state.content`:
+                        // intermediate `round_contents` render as plain text inside the
+                        // collapsible TurnTimeline, never as <img> elements.
+                        let collector = std::mem::take(&mut attachment_collector);
+                        if !collector.is_empty() {
+                            let finalized = super::chat_attachments::finalize_turn_attachments(
+                                &state,
+                                collector,
+                                &pending_state.content,
+                            )
+                            .await;
+                            if !finalized.is_empty() {
+                                let att_values: Vec<serde_json::Value> = finalized
+                                    .iter()
+                                    .filter_map(|a| serde_json::to_value(a).ok())
+                                    .collect();
+                                if !att_values.is_empty() {
+                                    match state
+                                        .agents
+                                        .session_manager
+                                        .attach_attachments_to_last_assistant(
+                                            &session_id,
+                                            att_values.clone(),
+                                        )
+                                        .await
+                                    {
+                                        Ok(true) => history_persisted_with_attachments = true,
+                                        Ok(false) => {}
+                                        Err(e) => {
+                                            tracing::warn!(
+                                                session_id = %session_id,
+                                                error = %e,
+                                                "Failed to persist reply attachments"
+                                            );
+                                        }
+                                    }
+                                    end_json["attachments"] = json!(att_values);
+                                }
+                            }
+                        }
                         end_json
                     }
                     AgentEvent::ContextUsage {
@@ -610,14 +659,17 @@ async fn process_stream_to_channel(
         }
     }
 
-    // Persist history after stream completes
-    if let Err(e) = state
-        .agents
-        .session_manager
-        .persist_history(&session_id)
-        .await
-    {
-        tracing::warn!(category = "session", error = %e, "Failed to persist history");
+    // Persist history after stream completes (skip duplicate write if
+    // attach_attachments_to_last_assistant already persisted on End).
+    if !history_persisted_with_attachments {
+        if let Err(e) = state
+            .agents
+            .session_manager
+            .persist_history(&session_id)
+            .await
+        {
+            tracing::warn!(category = "session", error = %e, "Failed to persist history");
+        }
     }
 }
 use crate::models::{
@@ -780,6 +832,7 @@ fn default_page_size() -> u32 {
 pub async fn list_sessions_handler(
     State(state): State<ServerState>,
     Query(query): Query<ListSessionsQuery>,
+    user: Option<Extension<crate::auth_users::SessionInfo>>,
 ) -> Result<Json<ApiResponse<Vec<serde_json::Value>>>, ErrorResponse> {
     let pagination = Pagination {
         page: query.page.max(1),
@@ -787,11 +840,20 @@ pub async fn list_sessions_handler(
     };
 
     // Use lightweight version to avoid loading message count/preview for every session
-    let all_sessions = state
+    let all_sessions: Vec<_> = state
         .agents
         .session_manager
         .list_sessions_with_info_light()
-        .await;
+        .await
+        .into_iter()
+        .filter(|s| {
+            session_visible_to_caller(
+                &state.agents.session_manager,
+                &s.session_id,
+                user.as_deref(),
+            )
+        })
+        .collect();
     let total_count = all_sessions.len() as u32;
 
     // Calculate pagination
@@ -825,6 +887,7 @@ pub async fn list_sessions_handler(
 pub async fn get_session_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
+    user: Option<Extension<crate::auth_users::SessionInfo>>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, ErrorResponse> {
     let agent = state
         .agents
@@ -832,6 +895,18 @@ pub async fn get_session_handler(
         .get_session(&id)
         .await
         .map_err(|_| ErrorResponse::not_found("Session"))?;
+
+    if session_read_forbidden(
+        &state.agents.session_manager,
+        &id,
+        &rest_principal(user.as_deref()),
+    ) {
+        return Err(ErrorResponse::new(
+            "SESSION_FORBIDDEN",
+            "Session owned by another principal",
+            axum::http::StatusCode::FORBIDDEN,
+        ));
+    }
 
     Ok(Json(ApiResponse::success(json!({
         "sessionId": id,
@@ -1050,7 +1125,19 @@ pub async fn delete_session_handler(
 pub async fn compact_session_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
+    user: Option<Extension<crate::auth_users::SessionInfo>>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, ErrorResponse> {
+    if session_read_forbidden(
+        &state.agents.session_manager,
+        &id,
+        &rest_principal(user.as_deref()),
+    ) {
+        return Err(ErrorResponse::new(
+            "SESSION_FORBIDDEN",
+            "Session owned by another principal",
+            axum::http::StatusCode::FORBIDDEN,
+        ));
+    }
     // Force mode: threshold and min-message gates bypassed. Do NOT pass
     // u32::MAX as a fake meter — that value poisoned auto-compact logs and
     // was treated as a real occupancy on T4 (2026-11-13).
@@ -1188,6 +1275,7 @@ pub async fn get_pending_stream_handler(
 )]
 pub async fn list_pending_sessions_handler(
     State(state): State<ServerState>,
+    user: Option<Extension<crate::auth_users::SessionInfo>>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, ErrorResponse> {
     let store = state.agents.session_manager.session_store();
     let ids = store
@@ -1195,6 +1283,13 @@ pub async fn list_pending_sessions_handler(
         .unwrap_or_default()
         .into_iter()
         .filter(|p| !p.is_stale())
+        .filter(|p| {
+            session_visible_to_caller(
+                &state.agents.session_manager,
+                &p.session_id,
+                user.as_deref(),
+            )
+        })
         .map(|p| p.session_id)
         .collect::<Vec<_>>();
     Ok(Json(ApiResponse::success(serde_json::json!({
@@ -1268,8 +1363,20 @@ pub struct UpdateSessionRequest {
 pub async fn update_session_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
+    user: Option<Extension<crate::auth_users::SessionInfo>>,
     Json(req): Json<UpdateSessionRequest>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, ErrorResponse> {
+    if session_read_forbidden(
+        &state.agents.session_manager,
+        &id,
+        &rest_principal(user.as_deref()),
+    ) {
+        return Err(ErrorResponse::new(
+            "SESSION_FORBIDDEN",
+            "Session owned by another principal",
+            axum::http::StatusCode::FORBIDDEN,
+        ));
+    }
     state
         .agents
         .session_manager
@@ -1311,8 +1418,20 @@ pub struct ToggleMemoryRequest {
 pub async fn toggle_memory_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
+    user: Option<Extension<crate::auth_users::SessionInfo>>,
     Json(req): Json<ToggleMemoryRequest>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, ErrorResponse> {
+    if session_read_forbidden(
+        &state.agents.session_manager,
+        &id,
+        &rest_principal(user.as_deref()),
+    ) {
+        return Err(ErrorResponse::new(
+            "SESSION_FORBIDDEN",
+            "Session owned by another principal",
+            axum::http::StatusCode::FORBIDDEN,
+        ));
+    }
     state
         .agents
         .session_manager
@@ -1341,7 +1460,16 @@ pub async fn toggle_memory_handler(
 )]
 pub async fn cleanup_sessions_handler(
     State(state): State<ServerState>,
+    user: Option<Extension<crate::auth_users::SessionInfo>>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, ErrorResponse> {
+    if !user
+        .as_deref()
+        .is_some_and(|u| u.role == crate::auth_users::UserRole::Admin)
+    {
+        return Err(ErrorResponse::forbidden(
+            "Admin access required to clean up sessions",
+        ));
+    }
     let cleaned_count = state
         .agents
         .session_manager
@@ -1371,8 +1499,28 @@ pub async fn cleanup_sessions_handler(
 pub async fn chat_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
+    user: Option<Extension<crate::auth_users::SessionInfo>>,
     Json(req): Json<ChatRequest>,
 ) -> Result<Json<ChatResponse>, ErrorResponse> {
+    if user
+        .as_deref()
+        .is_some_and(|u| u.role == crate::auth_users::UserRole::Viewer)
+    {
+        return Err(ErrorResponse::forbidden(
+            "Viewers cannot send chat messages",
+        ));
+    }
+    if session_read_forbidden(
+        &state.agents.session_manager,
+        &id,
+        &rest_principal(user.as_deref()),
+    ) {
+        return Err(ErrorResponse::new(
+            "SESSION_FORBIDDEN",
+            "Session owned by another principal",
+            axum::http::StatusCode::FORBIDDEN,
+        ));
+    }
     use futures::StreamExt;
     use tokio::time::{timeout, Duration};
 
@@ -1505,6 +1653,7 @@ pub async fn chat_handler(
     let mut tools_seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut error_msg: Option<String> = None;
 
+    let mut attachment_collector = super::chat_attachments::TurnAttachmentCollector::new();
     let timed_out = timeout(Duration::from_secs(timeout_secs), async {
         while let Some(event) = stream.next().await {
             match event {
@@ -1512,11 +1661,22 @@ pub async fn chat_handler(
                 AgentEvent::Thinking { content } => {
                     thinking.get_or_insert_with(String::new).push_str(&content);
                 }
-                AgentEvent::ToolCallStart { tool, .. } => {
+                AgentEvent::ToolCallStart {
+                    tool, arguments, ..
+                } => {
+                    attachment_collector.record_tool_start(&tool, &arguments);
                     // Dedup by tool name, preserve first-seen order.
                     if tools_seen.insert(tool.clone()) {
                         tools_used.push(tool);
                     }
+                }
+                AgentEvent::ToolCallEnd {
+                    tool,
+                    result,
+                    success,
+                    ..
+                } => {
+                    attachment_collector.record_tool_end(&tool, &result, success);
                 }
                 AgentEvent::Error { message } => {
                     // Do NOT swallow — surface to the caller (see WS-B#1: the
@@ -1562,12 +1722,40 @@ pub async fn chat_handler(
         "chat_handler: completed"
     );
 
-    // Persist the conversation turn to disk. The streaming path updates the
-    // agent's live history (agent.history()) but doesn't save it; persist_history
-    // reads that live history and saves it (same thing WS does on disconnect).
-    // Without this, HTTP chat turns vanish on server restart.
-    if let Err(e) = state.agents.session_manager.persist_history(&id).await {
-        tracing::warn!(session_id = %id, error = %e, "chat_handler: failed to persist history");
+    // Persist the conversation turn (and any verified reply attachments) to disk.
+    let mut persisted_via_attachments = false;
+    if !attachment_collector.is_empty() {
+        let finalized = super::chat_attachments::finalize_turn_attachments(
+            &state,
+            attachment_collector,
+            &response,
+        )
+        .await;
+        if !finalized.is_empty() {
+            let att_values: Vec<serde_json::Value> = finalized
+                .iter()
+                .filter_map(|a| serde_json::to_value(a).ok())
+                .collect();
+            if !att_values.is_empty() {
+                match state
+                    .agents
+                    .session_manager
+                    .attach_attachments_to_last_assistant(&id, att_values)
+                    .await
+                {
+                    Ok(true) => persisted_via_attachments = true,
+                    Ok(false) => {}
+                    Err(e) => {
+                        tracing::warn!(session_id = %id, error = %e, "chat_handler: failed to persist reply attachments");
+                    }
+                }
+            }
+        }
+    }
+    if !persisted_via_attachments {
+        if let Err(e) = state.agents.session_manager.persist_history(&id).await {
+            tracing::warn!(session_id = %id, error = %e, "chat_handler: failed to persist history");
+        }
     }
 
     // Background chat memory extraction — durable facts from this exchange get
@@ -1840,6 +2028,30 @@ pub async fn ws_chat_handler(
         }
     }
 
+    // Reject Viewer role after authentication: viewers are read-only and may
+    // not drive the chat agent or invoke tools over WebSocket.
+    if let Some(ref info) = session_info {
+        if info.role == crate::auth_users::UserRole::Viewer {
+            tracing::warn!(
+                username = %info.username,
+                "Viewer role rejected on WebSocket chat"
+            );
+            return ws.on_upgrade(|mut socket| async move {
+                let _ = socket
+                    .send(AxumMessage::Text(
+                        json!({"type": "Error", "message": "Viewers cannot use chat"}).to_string(),
+                    ))
+                    .await;
+                let _ = socket
+                    .send(AxumMessage::Close(Some(axum::extract::ws::CloseFrame {
+                        code: axum::extract::ws::CloseCode::from(4003u16),
+                        reason: "Viewers cannot use chat".into(),
+                    })))
+                    .await;
+            });
+        }
+    }
+
     // Principal for session ownership: which authenticated identity does
     // this connection speak for? JWT → the user; API key → the shared
     // "apikey" bucket (single-tenant admin credential). Without a principal
@@ -1928,6 +2140,13 @@ async fn send_session_history(
                             obj.insert("contentVersion".to_string(), json!(ver));
                         }
                     }
+                    if let Some(ref atts) = msg.attachments {
+                        if !atts.is_empty() {
+                            if let Some(obj) = history_json.as_object_mut() {
+                                obj.insert("attachments".to_string(), json!(atts));
+                            }
+                        }
+                    }
                     let history_msg = history_json.to_string();
 
                     if socket.send(AxumMessage::Text(history_msg)).await.is_err() {
@@ -1999,6 +2218,25 @@ fn session_read_forbidden(
     principal: &str,
 ) -> bool {
     !session_attach_allowed(manager, sid, principal)
+}
+
+/// Read-only ownership visibility check for list endpoints (`GET /api/sessions`
+/// and `GET /api/sessions/pending`). Admins see every session; other callers
+/// see sessions owned by their principal (plus unclaimed sessions, matching
+/// `session_read_forbidden` without mutating ownership on a list read).
+fn session_visible_to_caller(
+    manager: &neomind_agent::SessionManager,
+    sid: &str,
+    user: Option<&crate::auth_users::SessionInfo>,
+) -> bool {
+    if user.is_some_and(|u| u.role == crate::auth_users::UserRole::Admin) {
+        return true;
+    }
+    let principal = rest_principal(user);
+    match manager.session_owner(sid) {
+        Some(owner) => owner == principal,
+        None => true,
+    }
 }
 
 /// Handle WebSocket connection.
@@ -2144,7 +2382,7 @@ async fn handle_ws_socket(
                                             "message": "Request cancelled by user"
                                         }).to_string();
                                         if socket.send(AxumMessage::Text(cancel_msg)).await.is_err() {
-                                            return;
+                                            break;
                                         }
                                         continue;
                                     }
@@ -2185,7 +2423,7 @@ async fn handle_ws_socket(
                                                         Some("session_forbidden"),
                                                     );
                                                     if socket.send(AxumMessage::Text(ack)).await.is_err() {
-                                                        return;
+                                                        break;
                                                     }
                                                 }
                                                 let msg = json!({
@@ -2194,7 +2432,7 @@ async fn handle_ws_socket(
                                                     "sessionId": req_id,
                                                 }).to_string();
                                                 if socket.send(AxumMessage::Text(msg)).await.is_err() {
-                                                    return;
+                                                    break;
                                                 }
                                                 continue;
                                             }
@@ -2209,7 +2447,7 @@ async fn handle_ws_socket(
                                                 "sessionId": req_id,
                                             }).to_string();
                                             if socket.send(AxumMessage::Text(msg)).await.is_err() {
-                                                return;
+                                                break;
                                             }
 
                                             // Send session history after switching
@@ -2245,7 +2483,7 @@ async fn handle_ws_socket(
                                                 "sessionId": new_id,
                                             }).to_string();
                                             if socket.send(AxumMessage::Text(msg)).await.is_err() {
-                                                return;
+                                                break;
                                             }
                                             new_id
                                         } else {
@@ -2282,7 +2520,7 @@ async fn handle_ws_socket(
                                                 Some("empty_message"),
                                             );
                                             if socket.send(AxumMessage::Text(ack)).await.is_err() {
-                                                return;
+                                                break;
                                             }
                                         }
                                         let (err_frame, end_frame) = ws_reject_terminal_frames(
@@ -2290,10 +2528,10 @@ async fn handle_ws_socket(
                                             "empty_message",
                                         );
                                         if socket.send(AxumMessage::Text(err_frame)).await.is_err() {
-                                            return;
+                                            break;
                                         }
                                         if socket.send(AxumMessage::Text(end_frame)).await.is_err() {
-                                            return;
+                                            break;
                                         }
                                         continue;
                                     }
@@ -2348,7 +2586,7 @@ async fn handle_ws_socket(
                                                         Some(&err.code),
                                                     );
                                                     if socket.send(AxumMessage::Text(ack)).await.is_err() {
-                                                        return;
+                                                        break;
                                                     }
                                                 }
                                                 let err_frame = json!({
@@ -2361,7 +2599,7 @@ async fn handle_ws_socket(
                                                 })
                                                 .to_string();
                                                 if socket.send(AxumMessage::Text(err_frame)).await.is_err() {
-                                                    return;
+                                                    break;
                                                 }
                                                 // Terminal end: Error alone left the client spinning.
                                                 let end = json!({
@@ -2370,7 +2608,7 @@ async fn handle_ws_socket(
                                                 })
                                                 .to_string();
                                                 if socket.send(AxumMessage::Text(end)).await.is_err() {
-                                                    return;
+                                                    break;
                                                 }
                                                 continue;
                                             }
@@ -2428,7 +2666,7 @@ async fn handle_ws_socket(
                                                         Some(prepared.resolutions.as_slice()),
                                                     );
                                                     if socket.send(AxumMessage::Text(ack)).await.is_err() {
-                                                        return;
+                                                        break;
                                                     }
                                                 }
                                                 // Clone the channel sender and session ID for the spawned task
@@ -2454,7 +2692,7 @@ async fn handle_ws_socket(
                                                         Some(receive_ack_reject_reason(&e)),
                                                     );
                                                     if socket.send(AxumMessage::Text(ack)).await.is_err() {
-                                                        return;
+                                                        break;
                                                     }
                                                 }
                                                 let err_str = e.to_string();
@@ -2472,10 +2710,10 @@ async fn handle_ws_socket(
                                                 let (err_frame, end_frame) =
                                                     ws_reject_terminal_frames(&task_session_id, &err_str);
                                                 if socket.send(AxumMessage::Text(err_frame)).await.is_err() {
-                                                    return;
+                                                    break;
                                                 }
                                                 if socket.send(AxumMessage::Text(end_frame)).await.is_err() {
-                                                    return;
+                                                    break;
                                                 }
                                             }
                                         }
@@ -2502,7 +2740,7 @@ async fn handle_ws_socket(
                                                         Some(&err.code),
                                                     );
                                                     if socket.send(AxumMessage::Text(ack)).await.is_err() {
-                                                        return;
+                                                        break;
                                                     }
                                                 }
                                                 let err_frame = json!({
@@ -2515,7 +2753,7 @@ async fn handle_ws_socket(
                                                 })
                                                 .to_string();
                                                 if socket.send(AxumMessage::Text(err_frame)).await.is_err() {
-                                                    return;
+                                                    break;
                                                 }
                                                 let end = json!({
                                                     "type": "end",
@@ -2523,7 +2761,7 @@ async fn handle_ws_socket(
                                                 })
                                                 .to_string();
                                                 if socket.send(AxumMessage::Text(end)).await.is_err() {
-                                                    return;
+                                                    break;
                                                 }
                                                 continue;
                                             }
@@ -2682,21 +2920,21 @@ async fn handle_ws_socket(
                                     })
                                     .to_string();
                                     if socket.send(AxumMessage::Text(err)).await.is_err() {
-                                        return;
+                                        break;
                                     }
                                 }
                             }
                             AxumMessage::Close(_) => {
-                                return;
+                                break;
                             }
                             _ => {}
                         }
                     }
                     Some(Err(_)) => {
-                        return;
+                        break;
                     }
                     None => {
-                        return;
+                        break;
                     }
                 }
             }
@@ -2717,7 +2955,14 @@ async fn handle_ws_socket(
                             break;
                         }
                     }
-                    Err(_) => {
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                        tracing::debug!(
+                            skipped,
+                            "Chat WebSocket lagged behind device update broadcast; continuing"
+                        );
+                        continue;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                         // Channel closed, stop listening
                         break;
                     }
@@ -2932,6 +3177,167 @@ mod history_pagination_tests {
             !session_read_forbidden(&manager, &sid2, "user:bob"),
             "an unclaimed session is claimable by first touch"
         );
+    }
+
+    #[tokio::test]
+    async fn session_handlers_enforce_idor_viewer_and_admin_guards() {
+        let state = crate::server::ServerState::new_for_testing().await;
+        let manager = state.agents.session_manager.clone();
+        let alice_sid = manager.create_session().await.unwrap();
+        manager.set_session_owner(&alice_sid, "user:alice");
+        let bob_sid = manager.create_session().await.unwrap();
+        manager.set_session_owner(&bob_sid, "user:bob");
+
+        let mk_user = |name: &str, role: crate::auth_users::UserRole| crate::auth_users::SessionInfo {
+            user_id: format!("uid-{name}"),
+            username: name.to_string(),
+            role,
+            created_at: 0,
+            expires_at: i64::MAX,
+        };
+        let alice = mk_user("alice", crate::auth_users::UserRole::User);
+        let bob = mk_user("bob", crate::auth_users::UserRole::User);
+        let viewer = mk_user("view", crate::auth_users::UserRole::Viewer);
+        let admin = mk_user("admin", crate::auth_users::UserRole::Admin);
+
+        // List filtering: Bob sees only Bob's session; Admin sees both.
+        let bob_list = list_sessions_handler(
+            State(state.clone()),
+            Query(ListSessionsQuery { page: 1, page_size: 50 }),
+            Some(Extension(bob.clone())),
+        )
+        .await
+        .unwrap()
+        .0
+        .data
+        .unwrap();
+        let bob_ids: Vec<&str> = bob_list
+            .iter()
+            .filter_map(|v| v.get("sessionId").and_then(|s| s.as_str()))
+            .collect();
+        assert!(bob_ids.contains(&bob_sid.as_str()));
+        assert!(!bob_ids.contains(&alice_sid.as_str()));
+
+        let admin_list = list_sessions_handler(
+            State(state.clone()),
+            Query(ListSessionsQuery { page: 1, page_size: 50 }),
+            Some(Extension(admin.clone())),
+        )
+        .await
+        .unwrap()
+        .0
+        .data
+        .unwrap();
+        let admin_ids: Vec<&str> = admin_list
+            .iter()
+            .filter_map(|v| v.get("sessionId").and_then(|s| s.as_str()))
+            .collect();
+        assert!(admin_ids.contains(&alice_sid.as_str()));
+        assert!(admin_ids.contains(&bob_sid.as_str()));
+
+        // IDOR checks on get / update / toggle_memory / compact / chat: Bob -> Alice's session = 403.
+        assert_eq!(
+            get_session_handler(
+                State(state.clone()),
+                Path(alice_sid.clone()),
+                Some(Extension(bob.clone())),
+            )
+            .await
+            .unwrap_err()
+            .status,
+            axum::http::StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            update_session_handler(
+                State(state.clone()),
+                Path(alice_sid.clone()),
+                Some(Extension(bob.clone())),
+                Json(UpdateSessionRequest {
+                    title: Some("hijack".into()),
+                }),
+            )
+            .await
+            .unwrap_err()
+            .status,
+            axum::http::StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            toggle_memory_handler(
+                State(state.clone()),
+                Path(alice_sid.clone()),
+                Some(Extension(bob.clone())),
+                Json(ToggleMemoryRequest { enabled: false }),
+            )
+            .await
+            .unwrap_err()
+            .status,
+            axum::http::StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            compact_session_handler(
+                State(state.clone()),
+                Path(alice_sid.clone()),
+                Some(Extension(bob.clone())),
+            )
+            .await
+            .unwrap_err()
+            .status,
+            axum::http::StatusCode::FORBIDDEN
+        );
+
+        let chat_req = ChatRequest {
+            message: "hi".into(),
+            session_id: None,
+            images: None,
+            backend_id: None,
+            selected_skills: None,
+            page_context: None,
+            references: None,
+            content_version: None,
+            content_nodes: None,
+            session_config: None,
+            authorize_new_operation: None,
+            client_request_id: None,
+        };
+        assert_eq!(
+            chat_handler(
+                State(state.clone()),
+                Path(alice_sid.clone()),
+                Some(Extension(bob.clone())),
+                Json(chat_req.clone()),
+            )
+            .await
+            .unwrap_err()
+            .status,
+            axum::http::StatusCode::FORBIDDEN
+        );
+
+        // Viewer cannot chat even on an unclaimed session.
+        let viewer_sid = manager.create_session().await.unwrap();
+        assert_eq!(
+            chat_handler(
+                State(state.clone()),
+                Path(viewer_sid),
+                Some(Extension(viewer)),
+                Json(chat_req),
+            )
+            .await
+            .unwrap_err()
+            .status,
+            axum::http::StatusCode::FORBIDDEN
+        );
+
+        // Cleanup requires Admin.
+        assert_eq!(
+            cleanup_sessions_handler(State(state.clone()), Some(Extension(alice)))
+                .await
+                .unwrap_err()
+                .status,
+            axum::http::StatusCode::FORBIDDEN
+        );
+        assert!(cleanup_sessions_handler(State(state), Some(Extension(admin)))
+            .await
+            .is_ok());
     }
 
     fn msg(role: &str, content: &str) -> AgentMessage {

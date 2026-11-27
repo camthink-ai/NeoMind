@@ -150,6 +150,39 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
         });
     }
 
+    // P2-2: Hourly eviction of inactive chat sessions from in-memory cache
+    // (persistent history in sessions.redb is preserved and restored on-demand).
+    {
+        let evict_state = state.clone();
+        let evict_shutdown = state.shutdown_token.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(3600));
+            interval.tick().await; // skip immediate tick at startup
+            loop {
+                tokio::select! {
+                    _ = evict_shutdown.cancelled() => {
+                        tracing::info!("Session inactivity eviction task shutting down");
+                        break;
+                    }
+                    _ = interval.tick() => {
+                        let removed = evict_state
+                            .agents
+                            .session_manager
+                            .cleanup_inactive(3600)
+                            .await;
+                        if removed > 0 {
+                            tracing::info!(
+                                category = "session",
+                                removed,
+                                "Evicted inactive chat sessions from memory cache"
+                            );
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     // Split-brain guard: with NEOMIND_DATA_DIR set, stores whose file only
     // exists at the legacy cwd-relative data/ get silently redirected there
     // (upgrade compat — see neomind_core::paths). Half-env/half-legacy is a
@@ -268,9 +301,10 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
             .and_then(|p| p.parse().ok())
             .unwrap_or(9376);
         let target = format!("127.0.0.1:{}", bound_addr.port());
+        let tls_shutdown = state.shutdown_token.clone();
         tokio::spawn(async move {
-            match run_tls_proxy(&cert, &key, tls_port, &target).await {
-                Ok(()) => unreachable!("tls proxy loop never returns Ok"),
+            match run_tls_proxy(&cert, &key, tls_port, &target, tls_shutdown).await {
+                Ok(()) => tracing::info!(port = tls_port, "TLS proxy stopped cleanly"),
                 Err(e) => tracing::error!(error = %e, port = tls_port, "TLS proxy terminated"),
             }
         });
@@ -700,6 +734,7 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
             // 独立 task 运行:不阻塞后续启动(wait_healthy 最多等 60s)。
             {
                 let bg_state_for_builtin = bg_state.clone();
+                let builtin_shutdown = bg_state.shutdown_token.clone();
                 tokio::spawn(async move {
                     // API-owned engine knobs persist here and win over the
                     // systemd env on service restart (2026-10-30: ctx 32768
@@ -713,7 +748,13 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
                     // 重试到可用(与上面 llama.cpp 块相同的 12×5s 节奏)。
                     let mut retry_interval = tokio::time::interval(Duration::from_secs(5));
                     for _ in 0..12 {
-                        retry_interval.tick().await;
+                        tokio::select! {
+                            _ = builtin_shutdown.cancelled() => {
+                                tracing::info!("Builtin LLM bootstrap cancelled due to shutdown");
+                                return;
+                            }
+                            _ = retry_interval.tick() => {}
+                        }
                         let _engine_change =
                             crate::builtin_llm::config::ENGINE_CHANGE_LOCK.lock().await;
                         cfg = crate::builtin_llm::config::BuiltinConfig::from_env();
@@ -769,7 +810,13 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
                     let mut pinned_failures: u32 = 0;
                     let mut recovery = crate::builtin_llm::config::WatchdogRecovery::new(&cfg);
                     loop {
-                        tokio::time::sleep(poll).await;
+                        tokio::select! {
+                            _ = builtin_shutdown.cancelled() => {
+                                tracing::info!("Builtin LLM watchdog shutting down");
+                                break;
+                            }
+                            _ = tokio::time::sleep(poll) => {}
+                        }
                         let _engine_change =
                             crate::builtin_llm::config::ENGINE_CHANGE_LOCK.lock().await;
                         let (latest, pins_changed) =
@@ -784,6 +831,7 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
                             continue;
                         }
                         if crate::builtin_llm::server::health_check(cfg.port).await {
+                            poll = Duration::from_secs(30);
                             backoff = Duration::from_secs(30);
                             wedged_cycles = 0;
                             continue;
@@ -795,7 +843,7 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
                         if crate::builtin_llm::handlers::installed_model(&mdir).is_none() {
                             continue;
                         }
-                        if crate::builtin_llm::server::any_llama_server_alive() {
+                        if crate::builtin_llm::server::is_llama_server_alive_on_port(cfg.port) {
                             wedged_cycles += 1;
                             if wedged_cycles < 10 {
                                 // Alive but not answering yet — wait it out.
@@ -810,13 +858,13 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
                                 port = cfg.port,
                                 "builtin llm watchdog: llama-server alive but unresponsive for ~5min — killing and respawning"
                             );
-                            crate::builtin_llm::server::stop_all_llama_servers();
+                            crate::builtin_llm::server::stop_llama_server_on_port(cfg.port);
                             wedged_cycles = 0;
                         } else {
                             wedged_cycles = 0;
                             // Process gone (the OOM case): clear its stale
                             // registry entry before the replacement lands.
-                            crate::builtin_llm::server::stop_all_llama_servers();
+                            crate::builtin_llm::server::stop_llama_server_on_port(cfg.port);
                         }
                         let Ok(manager) = neomind_agent::get_instance_manager() else {
                             continue;
@@ -991,7 +1039,7 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
 
     // Periodic data-dir backup (see neomind_storage::backup). Runs the same
     // create_backup path as POST /api/settings/backup.
-    spawn_backup_scheduler(state.data_dir.clone());
+    spawn_backup_scheduler(state.data_dir.clone(), state.shutdown_token.clone());
 
     // Run with graceful shutdown.
     // `into_make_service_with_connect_info` populates `ConnectInfo<SocketAddr>` for
@@ -999,15 +1047,21 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
     // extraction, and per-IP discovery throttling. Without this, Optional
     // `ConnectInfo` extractors silently receive `None` and every IP-based security
     // control degrades to no-op.
+    let shutdown_token = state.shutdown_token.clone();
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )
-    .with_graceful_shutdown(crate::shutdown::shutdown_signal_or_test_deadline())
+    .with_graceful_shutdown(async move {
+        crate::shutdown::shutdown_signal_or_test_deadline().await;
+        // Cancel shutdown token immediately so long-lived WS/SSE streams and
+        // background tasks close promptly, letting `axum::serve` drain quickly.
+        shutdown_token.cancel();
+    })
     .await?;
 
-    // Clean up resources after server shuts down
-    crate::shutdown::cleanup_resources(&state_for_cleanup).await;
+    // Clean up resources after server shuts down (with bounded timeout)
+    crate::shutdown::shutdown_with_timeout(&state_for_cleanup).await;
 
     tracing::info!("Server shutdown complete");
     Ok(())
@@ -1019,7 +1073,10 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
 /// seed the default before anything is saved. The first full interval after
 /// boot is skipped so a fresh start does not copy databases while services
 /// are still warming up.
-fn spawn_backup_scheduler(data_dir: std::path::PathBuf) {
+fn spawn_backup_scheduler(
+    data_dir: std::path::PathBuf,
+    shutdown_token: tokio_util::sync::CancellationToken,
+) {
     tracing::info!(category = "backup", "Periodic backup scheduler started");
 
     tokio::spawn(async move {
@@ -1047,7 +1104,13 @@ fn spawn_backup_scheduler(data_dir: std::path::PathBuf) {
         let mut last_config = initial;
 
         loop {
-            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            tokio::select! {
+                _ = shutdown_token.cancelled() => {
+                    tracing::info!(category = "backup", "Periodic backup scheduler shutting down");
+                    break;
+                }
+                _ = tokio::time::sleep(std::time::Duration::from_secs(60)) => {}
+            }
 
             let config = read_config().await.unwrap_or(last_config.clone());
             if config != last_config {
@@ -1135,6 +1198,7 @@ async fn run_tls_proxy(
     key_pem: &str,
     port: u16,
     target: &str,
+    shutdown_token: tokio_util::sync::CancellationToken,
 ) -> anyhow::Result<()> {
     let certs: Vec<rustls::pki_types::CertificateDer<'static>> = {
         let f = std::fs::File::open(cert_pem)?;
@@ -1172,7 +1236,13 @@ async fn run_tls_proxy(
 
     tracing::info!(port, %target, "TLS proxy listening (secure-context front)");
     loop {
-        let (stream, _peer) = listener.accept().await?;
+        let (stream, _peer) = tokio::select! {
+            _ = shutdown_token.cancelled() => {
+                tracing::info!(port, "TLS proxy shutting down");
+                return Ok(());
+            }
+            res = listener.accept() => res?,
+        };
         let _ = stream.set_nodelay(true);
         let acceptor = acceptor.clone();
         let target = target.to_string();

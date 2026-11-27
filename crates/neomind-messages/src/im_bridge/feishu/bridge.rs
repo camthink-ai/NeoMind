@@ -161,6 +161,8 @@ enum EventOutcome {
     Published,
     /// Non-text `message_type` (image / sticker / file / …) — ignored by design.
     NonText,
+    /// Ignored event (non-user sender such as bot/app, or non-receive event type).
+    Ignored,
     /// Malformed JSON or missing required fields — logged as warn, not panic.
     Malformed,
 }
@@ -187,6 +189,18 @@ async fn process_event(payload: &[u8], bus: &EventBus) -> EventOutcome {
         }
     };
 
+    // When header is present, only accept `im.message.receive_v1` events.
+    if let Some(event_type) = v
+        .get("header")
+        .and_then(|h| h.get("event_type"))
+        .and_then(|x| x.as_str())
+    {
+        if event_type != "im.message.receive_v1" {
+            tracing::debug!(event_type = %event_type, "feishu non-message event_type ignored");
+            return EventOutcome::Ignored;
+        }
+    }
+
     // Only forward plain-text messages; image / sticker / file / etc. ignored.
     let message_type = message
         .get("message_type")
@@ -204,10 +218,27 @@ async fn process_event(payload: &[u8], bus: &EventBus) -> EventOutcome {
             return EventOutcome::Malformed;
         }
     };
+
+    // Reject non-user senders (e.g. "app" / "bot") to stop bot echo loops.
+    let sender_type = v
+        .get("event")
+        .and_then(|e| e.get("sender"))
+        .and_then(|s| s.get("sender_type"))
+        .and_then(|x| x.as_str())
+        .unwrap_or("");
+    if sender_type != "user" {
+        tracing::debug!(
+            sender_type = %sender_type,
+            chat_id = %parsed.chat_id,
+            "feishu non-user sender ignored"
+        );
+        return EventOutcome::Ignored;
+    }
+
     tracing::info!(
         chat_id = %parsed.chat_id,
         sender_id = %parsed.sender_id,
-        text = %parsed.text,
+        text_len = parsed.text.len(),
         "feishu text event -> publishing ImMessageReceived"
     );
 
@@ -443,6 +474,53 @@ mod tests {
         let payload = br#"{"schema":"2.0","header":{"event_type":"contact.user.updated_v3"}}"#;
         let outcome = process_event(payload, &bus).await;
         assert_eq!(outcome, EventOutcome::Malformed);
+    }
+
+    /// Bot / app sender must be ignored to prevent bot echo loops.
+    #[tokio::test]
+    async fn process_event_ignores_non_user_sender_and_other_event_types() {
+        let bus = Arc::new(EventBus::new());
+        let mut rx = bus.subscribe();
+
+        let bot_payload = serde_json::json!({
+            "schema": "2.0",
+            "header": { "event_type": "im.message.receive_v1" },
+            "event": {
+                "sender": { "sender_type": "app", "sender_id": { "open_id": "ou_bot" } },
+                "message": {
+                    "message_id": "om_bot1",
+                    "chat_id": "oc_chat_1",
+                    "message_type": "text",
+                    "content": "{\"text\":\"bot echo\"}"
+                }
+            }
+        })
+        .to_string()
+        .into_bytes();
+        assert_eq!(process_event(&bot_payload, &bus).await, EventOutcome::Ignored);
+
+        let wrong_type_payload = serde_json::json!({
+            "schema": "2.0",
+            "header": { "event_type": "im.message.recalled_v1" },
+            "event": {
+                "sender": { "sender_type": "user" },
+                "message": {
+                    "message_id": "om_rec1",
+                    "chat_id": "oc_chat_1",
+                    "message_type": "text",
+                    "content": "{\"text\":\"recalled\"}"
+                }
+            }
+        })
+        .to_string()
+        .into_bytes();
+        assert_eq!(
+            process_event(&wrong_type_payload, &bus).await,
+            EventOutcome::Ignored
+        );
+
+        let res = tokio::time::timeout(Duration::from_millis(100), rx.recv()).await;
+        assert!(res.is_err(), "ignored events must not publish to EventBus");
     }
 
     // ── pure parser unit tests (no bus, no spawn) ──

@@ -356,49 +356,49 @@ impl MessageManager {
                 message.severity.as_str()
             ),
         };
-        {
-            // Check-and-MARK in ONE lock scope: the old read-check here and
-            // the write-back AFTER the fan-out left a window in which two
-            // concurrent same-key alerts both passed dedup and both pushed
-            // (a window the concurrent fan-out rework lengthened to the sum
-            // of channel timeouts). Marking up front closes it; the mark
-            // also covers the send duration, which is exactly the interval
-            // a duplicate would arrive over.
-            let cache = self.dedup_cache.write().await;
+        let is_duplicate = {
+            // Atomic check-and-mark in ONE write lock scope to prevent TOCTOU
+            // races where two concurrent same-key alerts both pass dedup and
+            // both fan out to channels.
+            let mut cache = self.dedup_cache.write().await;
+            let now = chrono::Utc::now();
             if let Some(last_sent) = cache.get(&dedup_key) {
-                let elapsed = (chrono::Utc::now() - *last_sent).num_seconds();
+                let elapsed = (now - *last_sent).num_seconds();
                 if elapsed < DEDUP_INTERVAL_SECS {
                     tracing::debug!(
                         "Skipping duplicate message '{}' (same key sent {}s ago)",
                         message.title,
                         elapsed
                     );
-                    // Still store the message, just don't send to channels
-                    self.messages
-                        .write()
-                        .await
-                        .insert(id.clone(), message.clone());
-                    if let Some(store) = self.storage.read().await.as_ref() {
-                        let stored = Self::message_to_stored(&message);
-                        let _ = store.insert_async(stored).await;
-                    }
-                    return Ok((
-                        message,
-                        DeliveryReport {
-                            attempted: false,
-                            delivered_any: false,
-                            failures: Vec::new(),
-                        },
-                    ));
+                    true
+                } else {
+                    cache.insert(dedup_key.clone(), now);
+                    false
                 }
+            } else {
+                cache.insert(dedup_key.clone(), now);
+                false
             }
-        }
+        };
 
-        // Reserve the key NOW (covers the in-flight send window): concurrent
-        // same-key alerts see the mark and take the dedup path above.
-        {
-            let mut cache = self.dedup_cache.write().await;
-            cache.insert(dedup_key.clone(), chrono::Utc::now());
+        if is_duplicate {
+            // Still store the message, just don't send to channels
+            self.messages
+                .write()
+                .await
+                .insert(id.clone(), message.clone());
+            if let Some(store) = self.storage.read().await.as_ref() {
+                let stored = Self::message_to_stored(&message);
+                let _ = store.insert_async(stored).await;
+            }
+            return Ok((
+                message,
+                DeliveryReport {
+                    attempted: false,
+                    delivered_any: false,
+                    failures: Vec::new(),
+                },
+            ));
         }
 
         // Store in memory for all message types (Notification and DataPush)
@@ -500,6 +500,9 @@ impl MessageManager {
                 }),
             ));
         }
+        // Release the channels read lock immediately after spawning delivery
+        // tasks so channel CRUD operations are not blocked across 90s+ retries.
+        drop(channels);
 
         for (channel_name, handle) in tasks {
             match handle.await {
@@ -588,10 +591,14 @@ impl MessageManager {
             tracing::debug!("Published MessageCreated event for message {}", id);
         }
 
-        // Update dedup cache
+        // Update dedup cache: do NOT re-insert the key when every attempted
+        // channel failed (we intentionally released it above so the next
+        // occurrence can retry during an outage).
         {
             let mut cache = self.dedup_cache.write().await;
-            cache.insert(dedup_key, chrono::Utc::now());
+            if report.delivered_any || !report.attempted {
+                cache.insert(dedup_key, chrono::Utc::now());
+            }
             // Prune old entries (keep only last 5 minutes)
             let cutoff = chrono::Utc::now() - chrono::Duration::seconds(DEDUP_INTERVAL_SECS * 5);
             cache.retain(|_, ts| *ts > cutoff);
@@ -2454,6 +2461,119 @@ mod tests {
         assert_eq!(msg.title, "System Started");
         assert_eq!(msg.source_type, "system");
         assert_eq!(msg.severity, MessageSeverity::Info);
+    }
+
+    /// Regression test (P1-B4): when ALL attempted channels fail, the dedup key
+    /// must stay released (not re-inserted at the end of `try_create_message`)
+    /// so an immediate retry is not silently suppressed for 60s.
+    #[tokio::test]
+    async fn dedup_key_stays_released_when_all_channels_fail() {
+        let manager = MessageManager::new();
+        let sends = Arc::new(AtomicUsize::new(0));
+        {
+            let registry = manager.channels.read().await;
+            registry
+                .register(Arc::new(AlwaysFailingChannel {
+                    sends: sends.clone(),
+                }))
+                .await;
+        }
+
+        let (_, report1) = manager
+            .try_create_message(Message::alert(
+                MessageSeverity::Critical,
+                "Outage Alert".to_string(),
+                "body".to_string(),
+                "sensor_x".to_string(),
+            ))
+            .await
+            .unwrap();
+        assert!(report1.attempted);
+        assert!(!report1.delivered_any);
+        assert_eq!(sends.load(Ordering::SeqCst), 3);
+
+        // Immediate second identical alert MUST attempt delivery again (not deduped).
+        let (_, report2) = manager
+            .try_create_message(Message::alert(
+                MessageSeverity::Critical,
+                "Outage Alert".to_string(),
+                "body".to_string(),
+                "sensor_x".to_string(),
+            ))
+            .await
+            .unwrap();
+        assert!(
+            report2.attempted,
+            "second alert must not be deduped after total delivery failure"
+        );
+        assert_eq!(sends.load(Ordering::SeqCst), 6);
+    }
+
+    /// Regression test (P1-B4): `try_create_message` must drop the `channels`
+    /// read lock BEFORE awaiting delivery task handles so concurrent channel
+    /// registry writes are not blocked by slow channel sends.
+    #[tokio::test]
+    async fn channels_write_lock_not_blocked_during_slow_send() {
+        struct SlowChannel {
+            entered: Arc<tokio::sync::Notify>,
+            release: Arc<tokio::sync::Notify>,
+        }
+
+        #[async_trait::async_trait]
+        impl MessageChannel for SlowChannel {
+            fn name(&self) -> &str {
+                "slow"
+            }
+            fn channel_type(&self) -> &str {
+                "slow"
+            }
+            fn is_enabled(&self) -> bool {
+                true
+            }
+            async fn send(&self, _message: &Message) -> Result<()> {
+                self.entered.notify_one();
+                self.release.notified().await;
+                Ok(())
+            }
+        }
+
+        let manager = Arc::new(MessageManager::new());
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        {
+            let registry = manager.channels.read().await;
+            registry
+                .register(Arc::new(SlowChannel {
+                    entered: entered.clone(),
+                    release: release.clone(),
+                }))
+                .await;
+        }
+
+        let mgr_send = manager.clone();
+        let send_task = tokio::spawn(async move {
+            mgr_send
+                .create_message(Message::system("Slow".into(), "body".into()))
+                .await
+        });
+
+        // Wait until the slow channel is actively inside send().
+        entered.notified().await;
+
+        // Acquiring a write lock on manager.channels MUST succeed immediately.
+        let lock_res = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            manager.channels.write(),
+        )
+        .await;
+        assert!(
+            lock_res.is_ok(),
+            "channels write lock was held across delivery await!"
+        );
+        drop(lock_res);
+
+        release.notify_one();
+        send_task.await.unwrap().unwrap();
     }
 }
 

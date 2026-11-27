@@ -193,6 +193,12 @@ impl ShellTool {
         // which strips most useful information from the output.
         cmd.env("NEOMIND_JSON", "1");
 
+        // Expose the served `/api/images/` backing directory so shell scripts
+        // (Python PIL / matplotlib / ffmpeg) can read session or device images
+        // directly and write new outputs that render in chat automatically.
+        let images_dir = Self::resolve_images_dir();
+        cmd.env("NEOMIND_IMAGES_DIR", &images_dir);
+
         // Prepend a directory containing a `neomind` that resolves to the
         // binary currently running the server, so subprocess `neomind ...`
         // invocations can't hit a stale install (`~/.cargo/bin/neomind` was
@@ -268,6 +274,51 @@ impl ShellTool {
             }
         }
         Some(dir)
+    }
+
+    /// Resolve (and best-effort create) `<data_dir>/images` — the backing
+    /// directory served at `/api/images/...`.
+    ///
+    /// On Unix, if `<data_dir>/images` contains whitespace (e.g. macOS
+    /// `~/Library/Application Support/com.neomind.neomind/data/images`),
+    /// expose a stable space-free symlink under `/tmp/neomind-images-<hash>`
+    /// so small models that forget shell quotes (`cd $NEOMIND_IMAGES_DIR`)
+    /// never get trapped in repeated `no such file or directory: Support/...`
+    /// loops.
+    fn resolve_images_dir() -> std::path::PathBuf {
+        let dir = neomind_core::paths::data_dir().join("images");
+        let _ = std::fs::create_dir_all(&dir);
+        Self::space_free_images_dir(&dir)
+    }
+
+    #[cfg(unix)]
+    fn space_free_images_dir(real_dir: &std::path::Path) -> std::path::PathBuf {
+        let s = real_dir.to_string_lossy();
+        if !s.contains(' ') {
+            return real_dir.to_path_buf();
+        }
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        s.hash(&mut hasher);
+        let hash = hasher.finish();
+        let link = std::path::PathBuf::from(format!("/tmp/neomind-images-{:08x}", hash as u32));
+        let already_ok = std::fs::read_link(&link)
+            .map(|target| target == real_dir)
+            .unwrap_or(false);
+        if already_ok {
+            return link;
+        }
+        let _ = std::fs::remove_file(&link);
+        if std::os::unix::fs::symlink(real_dir, &link).is_ok() {
+            link
+        } else {
+            real_dir.to_path_buf()
+        }
+    }
+
+    #[cfg(not(unix))]
+    fn space_free_images_dir(real_dir: &std::path::Path) -> std::path::PathBuf {
+        real_dir.to_path_buf()
     }
 
     /// Resolve API key for neomind CLI commands.
@@ -532,6 +583,7 @@ impl ShellTool {
             cmd.env("NEOMIND_API_KEY", key);
         }
         cmd.env("NEOMIND_JSON", "1");
+        cmd.env("NEOMIND_IMAGES_DIR", Self::resolve_images_dir());
 
         tracing::debug!(
             target: "neomind::agent::shell",
@@ -2429,9 +2481,16 @@ impl ShellTool {
                     Some("Available actions: list, get, models, create, update, delete, activate, test. Example: neomind llm create --name local --type ollama --endpoint http://localhost:11434 --model qwen3.5:4b".to_string())
                 }
             }
-            _ => Some(format!(
-                "Run 'neomind {domain} --help' for the exact actions and flags. Quick map — connector: list,get,create,test,enable,disable,subscribe. push: get,create,test,enable,disable,logs. settings: timezone,timezones,retention,cleanup. system: info."
-            )),
+            _ => {
+                let help_cmd = if domain.is_empty() {
+                    "neomind --help".to_string()
+                } else {
+                    format!("neomind {domain} --help")
+                };
+                Some(format!(
+                    "Run '{help_cmd}' for the exact actions and flags. Quick map — connector: list,get,create,test,enable,disable,subscribe. push: get,create,test,enable,disable,logs. settings: timezone,timezones,retention,cleanup. system: info."
+                ))
+            }
         }
     }
 
@@ -2500,7 +2559,8 @@ Quick reference (`neomind <domain> --help` or `skill` for full syntax):
 - Control/writes: `device control <ID> <CMD> --param key=value` (NOT standalone `--key` flags), `rule/connector/push enable <ID>`, `llm activate <ID>`, `agent executions|conversation|send-message <ID>`, `message channel-list|channel-create|channel-test`.
 - Extensions: `extension list` (overview), `extension commands --search "<task>"` (use `shell_example`), `extension commands <ID>` (schema).
 - NEVER guess IDs, metrics, or subcommands — read before write when facts are missing or stale.
-- COMPLETE THE FULL FLOW and verify results (e.g. `connector create`, `connector enable`, then `connector test`). On error check `suggestion`."#;
+- COMPLETE THE FULL FLOW and verify results (e.g. `connector create`, `connector enable`, then `connector test`). On error check `suggestion`.
+- Images: `/api/images/<f>` ↔ `$NEOMIND_IMAGES_DIR/<f>`."#;
         SLIM
     }
 

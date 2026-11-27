@@ -42,13 +42,25 @@ fn normalize_hook_id(raw: &str) -> Option<String> {
 
 /// Feishu channel for sending messages via custom bot webhook.
 #[cfg(feature = "feishu")]
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct FeishuChannel {
     name: String,
     enabled: bool,
     hook_id: String,
     secret: Option<String>,
     client: reqwest::Client,
+}
+
+#[cfg(feature = "feishu")]
+impl std::fmt::Debug for FeishuChannel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FeishuChannel")
+            .field("name", &self.name)
+            .field("enabled", &self.enabled)
+            .field("hook_id", &"[REDACTED]")
+            .field("secret", &self.secret.as_ref().map(|_| "[REDACTED]"))
+            .finish()
+    }
 }
 
 #[cfg(feature = "feishu")]

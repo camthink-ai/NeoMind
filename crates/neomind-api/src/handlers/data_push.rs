@@ -124,6 +124,132 @@ pub async fn create_push_target_handler(
     }))
 }
 
+/// Sentinel string substituted for secret fields in GET responses.
+/// Matches the convention used by MQTT broker credential handlers.
+const SECRET_MASK: &str = "*****";
+
+fn is_sensitive_header_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    matches!(
+        lower.as_str(),
+        "authorization"
+            | "proxy-authorization"
+            | "x-api-key"
+            | "api-key"
+            | "apikey"
+            | "x-auth-token"
+            | "x-access-token"
+            | "x-token"
+            | "x-secret"
+            | "cookie"
+            | "set-cookie"
+    ) || lower.contains("token")
+        || lower.contains("secret")
+        || lower.contains("password")
+        || lower.contains("api-key")
+        || lower.contains("apikey")
+}
+
+/// Mask secrets inside a serialized `PushTarget`'s `config` object before
+/// returning it from GET endpoints (`list_push_targets_handler`,
+/// `get_push_target_handler`).
+fn mask_target_config(config: &mut serde_json::Value) {
+    let Some(obj) = config.as_object_mut() else {
+        return;
+    };
+
+    // Webhook Bearer token
+    if let Some(serde_json::Value::String(tok)) = obj.get_mut("auth_token") {
+        if !tok.is_empty() {
+            *tok = SECRET_MASK.to_string();
+        }
+    }
+
+    // Webhook Basic auth password
+    if let Some(serde_json::Value::Object(basic)) = obj.get_mut("auth_basic") {
+        if let Some(serde_json::Value::String(pw)) = basic.get_mut("password") {
+            if !pw.is_empty() {
+                *pw = SECRET_MASK.to_string();
+            }
+        }
+    }
+
+    // MQTT password
+    if let Some(serde_json::Value::String(pw)) = obj.get_mut("password") {
+        if !pw.is_empty() {
+            *pw = SECRET_MASK.to_string();
+        }
+    }
+
+    // Sensitive webhook headers (Authorization, X-API-Key, etc.)
+    if let Some(serde_json::Value::Object(headers)) = obj.get_mut("headers") {
+        for (k, v) in headers.iter_mut() {
+            if is_sensitive_header_name(k) {
+                if let serde_json::Value::String(val) = v {
+                    if !val.is_empty() {
+                        *val = SECRET_MASK.to_string();
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Serialize a `PushTarget` to JSON with sensitive credentials masked.
+fn target_to_masked_json<T: serde::Serialize>(target: &T) -> serde_json::Value {
+    let mut v = json!(target);
+    if let Some(cfg) = v.get_mut("config") {
+        mask_target_config(cfg);
+    }
+    v
+}
+
+/// Restore any fields still carrying `SECRET_MASK` from the previously stored
+/// config so a UI GET -> edit -> PUT round-trip preserves untouched secrets.
+fn restore_masked_secrets(
+    new_config: &mut serde_json::Value,
+    existing_config: &serde_json::Value,
+) {
+    let (Some(new_obj), Some(old_obj)) = (new_config.as_object_mut(), existing_config.as_object())
+    else {
+        return;
+    };
+
+    for field in ["auth_token", "password"] {
+        if new_obj.get(field).and_then(|v| v.as_str()) == Some(SECRET_MASK) {
+            if let Some(old_val) = old_obj.get(field) {
+                new_obj.insert(field.to_string(), old_val.clone());
+            }
+        }
+    }
+
+    if let (
+        Some(serde_json::Value::Object(new_basic)),
+        Some(serde_json::Value::Object(old_basic)),
+    ) = (new_obj.get_mut("auth_basic"), old_obj.get("auth_basic"))
+    {
+        if new_basic.get("password").and_then(|v| v.as_str()) == Some(SECRET_MASK) {
+            if let Some(old_pw) = old_basic.get("password") {
+                new_basic.insert("password".to_string(), old_pw.clone());
+            }
+        }
+    }
+
+    if let (
+        Some(serde_json::Value::Object(new_headers)),
+        Some(serde_json::Value::Object(old_headers)),
+    ) = (new_obj.get_mut("headers"), old_obj.get("headers"))
+    {
+        for (k, v) in new_headers.iter_mut() {
+            if is_sensitive_header_name(k) && v.as_str() == Some(SECRET_MASK) {
+                if let Some(old_val) = old_headers.get(k) {
+                    *v = old_val.clone();
+                }
+            }
+        }
+    }
+}
+
 /// List all push targets.
 /// GET /api/data-push
 #[utoipa::path(
@@ -150,9 +276,11 @@ pub async fn list_push_targets_handler(
         .list_targets()
         .map_err(|e| ErrorResponse::internal(e.to_string()))?;
 
+    let masked: Vec<serde_json::Value> = targets.iter().map(target_to_masked_json).collect();
+
     ok(json!({
-        "targets": targets,
-        "total": targets.len(),
+        "targets": masked,
+        "total": masked.len(),
     }))
 }
 
@@ -184,7 +312,7 @@ pub async fn get_push_target_handler(
         .map_err(|e| ErrorResponse::internal(e.to_string()))?
         .ok_or_else(|| ErrorResponse::not_found(format!("Push target not found: {}", id)))?;
 
-    ok(json!(target))
+    ok(target_to_masked_json(&target))
 }
 
 /// Update a push target.
@@ -205,14 +333,17 @@ pub async fn get_push_target_handler(
 pub async fn update_push_target_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
-    Json(request): Json<UpdateTargetRequest>,
+    Json(mut request): Json<UpdateTargetRequest>,
 ) -> HandlerResult<serde_json::Value> {
     let data_push = state.data_push.read().await;
     let manager = data_push
         .as_ref()
         .ok_or_else(|| ErrorResponse::internal("Data push manager not initialized"))?;
 
-    if let Some(ref config) = request.config {
+    if let Some(ref mut config) = request.config {
+        if let Ok(Some(existing)) = manager.get_target(&id) {
+            restore_masked_secrets(config, &existing.config);
+        }
         if let Some(msg) = webhook_self_loop_error(config) {
             return Err(ErrorResponse::bad_request(msg));
         }
@@ -451,5 +582,47 @@ mod tests {
         // MQTT-style config has no `url` field.
         let cfg = serde_json::json!({"broker": "localhost", "topic": "t"});
         assert!(webhook_self_loop_error(&cfg).is_none());
+    }
+
+    #[test]
+    fn mask_and_restore_webhook_and_mqtt_secrets() {
+        let existing_webhook = serde_json::json!({
+            "url": "https://example.com/hook",
+            "auth_token": "tok-secret-123",
+            "auth_basic": { "username": "alice", "password": "pw-secret-456" },
+            "headers": {
+                "Authorization": "Bearer hdr-secret",
+                "X-API-Key": "key-789",
+                "X-Custom": "public-val"
+            }
+        });
+
+        let mut masked = existing_webhook.clone();
+        mask_target_config(&mut masked);
+        assert_eq!(masked["auth_token"], SECRET_MASK);
+        assert_eq!(masked["auth_basic"]["username"], "alice");
+        assert_eq!(masked["auth_basic"]["password"], SECRET_MASK);
+        assert_eq!(masked["headers"]["Authorization"], SECRET_MASK);
+        assert_eq!(masked["headers"]["X-API-Key"], SECRET_MASK);
+        assert_eq!(masked["headers"]["X-Custom"], "public-val");
+
+        // Round-trip update with untouched masked values preserves original secrets.
+        restore_masked_secrets(&mut masked, &existing_webhook);
+        assert_eq!(masked["auth_token"], "tok-secret-123");
+        assert_eq!(masked["auth_basic"]["password"], "pw-secret-456");
+        assert_eq!(masked["headers"]["Authorization"], "Bearer hdr-secret");
+        assert_eq!(masked["headers"]["X-API-Key"], "key-789");
+
+        // MQTT password masking + restore.
+        let existing_mqtt = serde_json::json!({
+            "broker": "mqtt.example.com",
+            "username": "u",
+            "password": "mqtt-secret-password"
+        });
+        let mut masked_mqtt = existing_mqtt.clone();
+        mask_target_config(&mut masked_mqtt);
+        assert_eq!(masked_mqtt["password"], SECRET_MASK);
+        restore_masked_secrets(&mut masked_mqtt, &existing_mqtt);
+        assert_eq!(masked_mqtt["password"], "mqtt-secret-password");
     }
 }

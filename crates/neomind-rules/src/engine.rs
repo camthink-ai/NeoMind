@@ -97,6 +97,9 @@ impl ValueProvider for InMemoryValueProvider {
 /// Maximum number of in-memory history entries per engine instance.
 const MAX_HISTORY_SIZE: usize = 1000;
 
+/// Maximum number of concurrently spawned rule actions across all rules.
+const MAX_CONCURRENT_RULE_ACTIONS: usize = 32;
+
 /// Event-driven rule engine.
 ///
 /// Rules are evaluated only when [`on_data_update`] is called — no polling.
@@ -131,6 +134,10 @@ pub struct RuleEngine {
     /// time instead of polling the history API. Wired at construction; the
     /// engine degrades gracefully to no-publish when absent.
     event_bus: Arc<tokio::sync::RwLock<Option<Arc<neomind_core::EventBus>>>>,
+    /// Pending `for_duration` expiry timers keyed by rule id (at most one per rule).
+    for_duration_timers: Arc<StdRwLock<HashMap<RuleId, tokio::task::AbortHandle>>>,
+    /// Bounds total concurrent spawned rule actions (Notify / Execute / TriggerAgent / RunOperator).
+    action_semaphore: Arc<tokio::sync::Semaphore>,
 }
 
 /// Identifies the rule execution an action is running under.
@@ -163,6 +170,78 @@ impl RuleEngine {
             agent_trigger: Arc::new(tokio::sync::RwLock::new(None)),
             rule_store: Arc::new(StdRwLock::new(None)),
             event_bus: Arc::new(tokio::sync::RwLock::new(None)),
+            for_duration_timers: Arc::new(StdRwLock::new(HashMap::new())),
+            action_semaphore: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_RULE_ACTIONS)),
+        }
+    }
+
+    /// Cheap internal handle clone sharing all underlying Arc state (used by
+    /// `for_duration` expiry timers).
+    fn clone_handle(&self) -> Self {
+        Self {
+            rules: Arc::clone(&self.rules),
+            subscription_index: Arc::clone(&self.subscription_index),
+            cooldowns: Arc::clone(&self.cooldowns),
+            consecutive_action_failures: Arc::clone(&self.consecutive_action_failures),
+            value_provider: Arc::clone(&self.value_provider),
+            history: Arc::clone(&self.history),
+            message_manager: Arc::clone(&self.message_manager),
+            device_action_executor: Arc::clone(&self.device_action_executor),
+            extension_action_executor: Arc::clone(&self.extension_action_executor),
+            agent_trigger: Arc::clone(&self.agent_trigger),
+            rule_store: Arc::clone(&self.rule_store),
+            event_bus: Arc::clone(&self.event_bus),
+            for_duration_timers: Arc::clone(&self.for_duration_timers),
+            action_semaphore: Arc::clone(&self.action_semaphore),
+        }
+    }
+
+    /// Cancel and remove any pending `for_duration` expiry timer for `rule_id`.
+    fn cancel_for_duration_timer(&self, rule_id: &RuleId) {
+        if let Some(handle) = self.for_duration_timers.write().remove(rule_id) {
+            handle.abort();
+        }
+    }
+
+    /// Spawn a bounded per-rule timer that re-evaluates `rule_id` once
+    /// `wait` (+ 50ms cushion) elapses, provided the rule is still enabled and
+    /// `condition_since` still equals `expected_since`. Any existing timer for
+    /// the same rule is aborted and replaced.
+    fn schedule_for_duration_timer(
+        &self,
+        rule_id: RuleId,
+        expected_since: chrono::DateTime<Utc>,
+        wait: Duration,
+    ) {
+        let engine = self.clone_handle();
+        let timer_rule_id = rule_id.clone();
+        let sleep_dur = wait.saturating_add(Duration::from_millis(50));
+        let handle = tokio::spawn(async move {
+            tokio::time::sleep(sleep_dur).await;
+            // Remove our handle before evaluating so evaluate_and_fire's
+            // cleanup does not abort the currently executing task.
+            engine.for_duration_timers.write().remove(&timer_rule_id);
+
+            let should_eval = {
+                let rules = engine.rules.read();
+                rules.get(&timer_rule_id).is_some_and(|r| {
+                    r.enabled && r.state.condition_since == Some(expected_since)
+                })
+            };
+            if should_eval {
+                if let Err(e) = engine.evaluate_and_fire(&timer_rule_id).await {
+                    tracing::warn!(
+                        rule_id = %timer_rule_id,
+                        error = %e,
+                        "for_duration expiry evaluation failed"
+                    );
+                }
+            }
+        });
+
+        let mut timers = self.for_duration_timers.write();
+        if let Some(prev) = timers.insert(rule_id, handle.abort_handle()) {
+            prev.abort();
         }
     }
 
@@ -218,6 +297,7 @@ impl RuleEngine {
 
     /// Remove a rule and its subscription entries.
     pub async fn remove_rule(&self, id: &RuleId) -> Result<bool, RuleError> {
+        self.cancel_for_duration_timer(id);
         let mut rules = self.rules.write();
         let removed = rules.remove(id).is_some();
         drop(rules);
@@ -230,8 +310,12 @@ impl RuleEngine {
     }
 
     /// Update an existing rule (or insert if new).
-    pub async fn update_rule(&self, rule: CompiledRule) -> Result<(), RuleError> {
+    pub async fn update_rule(&self, mut rule: CompiledRule) -> Result<(), RuleError> {
         let id = rule.id.clone();
+        // Reset condition_since so editing a rule never carries over stale
+        // elapsed time into the updated condition's for_duration check.
+        rule.state.condition_since = None;
+        self.cancel_for_duration_timer(&id);
         let mut rules = self.rules.write();
         rules.insert(id, rule);
         drop(rules);
@@ -252,10 +336,16 @@ impl RuleEngine {
 
     /// Enable / disable a rule.
     pub async fn set_enabled(&self, id: &RuleId, enabled: bool) -> Result<(), RuleError> {
+        if !enabled {
+            self.cancel_for_duration_timer(id);
+        }
         let mut rules = self.rules.write();
         match rules.get_mut(id) {
             Some(rule) => {
                 rule.enabled = enabled;
+                if !enabled {
+                    rule.state.condition_since = None;
+                }
                 rule.updated_at = Utc::now();
                 Ok(())
             }
@@ -386,6 +476,7 @@ impl RuleEngine {
                 Ok(true) => {}
                 Ok(false) | Err(_) => {
                     // Reset condition_since on failure
+                    self.cancel_for_duration_timer(id);
                     self.update_condition_since(id, false).await;
                     return RuleExecutionResult {
                         rule_id: id.clone(),
@@ -598,25 +689,42 @@ impl RuleEngine {
         .await;
 
         if !condition_met {
-            // Reset condition_since
+            // Reset condition_since and cancel any pending for_duration timer
+            self.cancel_for_duration_timer(rule_id);
             self.update_condition_since(rule_id, false).await;
             return Ok(());
         }
 
         // Check for_duration
         if let Some(dur) = rule.for_duration {
-            let since = self.update_condition_since(rule_id, true).await;
-            match since {
-                Some(since_time) => {
-                    let elapsed = Utc::now()
-                        .signed_duration_since(since_time)
-                        .to_std()
-                        .unwrap_or(Duration::ZERO);
-                    if elapsed < dur {
-                        return Ok(()); // Not yet sustained long enough
+            if dur > Duration::ZERO {
+                let (since, newly_started) =
+                    self.update_condition_since_tracked(rule_id, true).await;
+                match since {
+                    Some(since_time) => {
+                        let elapsed = Utc::now()
+                            .signed_duration_since(since_time)
+                            .to_std()
+                            .unwrap_or(Duration::ZERO);
+                        if elapsed < dur {
+                            if newly_started {
+                                self.schedule_for_duration_timer(
+                                    rule_id.clone(),
+                                    since_time,
+                                    dur,
+                                );
+                            } else if !self.for_duration_timers.read().contains_key(rule_id) {
+                                self.schedule_for_duration_timer(
+                                    rule_id.clone(),
+                                    since_time,
+                                    dur.saturating_sub(elapsed),
+                                );
+                            }
+                            return Ok(()); // Not yet sustained long enough
+                        }
                     }
+                    None => return Ok(()), // Just set, wait for next evaluation
                 }
-                None => return Ok(()), // Just set, wait for next evaluation
             }
         }
 
@@ -762,14 +870,41 @@ impl RuleEngine {
         find_first(condition, provider)
     }
 
-    /// Overwrite the recorded outcome of an execution whose action was
-    /// SPAWNED (accepted) and later failed for real. `RuleStore::save_history`
-    /// keys rows by (triggered_at, rule_id), so re-saving the same identity
-    /// REPLACES the optimistic "(spawned)" row — durable history never claims
-    /// a delivery that did not happen. The in-memory deque entry is updated
-    /// in place so the API matches the store. (Process death between spawn
-    /// and this correction still leaves only the optimistic row; that
-    /// residual window is accepted and noted at the spawn sites.)
+    /// Annotate a single failed spawned action on an existing execution history
+    /// row while preserving all other actions and the original `duration_ms`.
+    fn apply_spawned_failure(
+        entry: &mut RuleExecutionResult,
+        action_label: &str,
+        failure: &str,
+    ) {
+        entry.success = false;
+        let spawned_tag = format!("{action_label} (spawned)");
+        let failed_tag = format!("{action_label} (failed: {failure})");
+        if let Some(slot) = entry
+            .actions_executed
+            .iter_mut()
+            .find(|a| *a == &spawned_tag || *a == action_label)
+        {
+            *slot = failed_tag;
+        } else {
+            entry.actions_executed.push(failed_tag);
+        }
+        let err_msg = format!("delivery failed: {failure}");
+        match &mut entry.error {
+            Some(existing) => {
+                existing.push_str("; ");
+                existing.push_str(&err_msg);
+            }
+            None => entry.error = Some(err_msg),
+        }
+    }
+
+    /// Update the recorded outcome of an execution whose action was SPAWNED
+    /// (accepted) and later failed for real. Loads the existing history row
+    /// (preserving all other actions and `duration_ms`), annotates only the
+    /// failed action, updates the in-memory deque in place, and re-saves via
+    /// `spawn_blocking` so durable history never claims a delivery that did
+    /// not happen.
     async fn correct_spawned_outcome(
         history: &Arc<RwLock<VecDeque<RuleExecutionResult>>>,
         store: Option<Arc<RuleStore>>,
@@ -777,49 +912,89 @@ impl RuleEngine {
         action_label: String,
         failure: String,
     ) {
-        let corrected = RuleExecutionResult {
-            rule_id: execution.rule_id.clone(),
-            rule_name: execution.rule_name.clone(),
-            success: false,
-            actions_executed: vec![action_label],
-            error: Some(format!("delivery failed: {failure}")),
-            // Delivery time, not rule-eval time — the row corrects the
-            // OUTCOME of the accepted execution, not its timing.
-            duration_ms: 0,
-            triggered_at: execution.triggered_at,
-        };
-        if let Some(store) = store {
-            // The optimistic row is written by `record_history` AFTER this
-            // spawn returns — a fast-failing delivery can reach this point
-            // first, and the optimistic save (same identity key) would then
-            // clobber the correction. Wait, bounded, for the identity to
-            // appear in the in-memory deque; record_history pushes to the
-            // deque immediately after its store save, so presence here
-            // means the optimistic row is durable and safe to overwrite.
-            // (All-channels-failed deliveries take ≥ seconds of retries and
-            // never wait; only hard errors can land in this window.)
-            for _ in 0..40 {
-                if history.read().await.iter().any(|r| {
-                    r.rule_id == corrected.rule_id && r.triggered_at == corrected.triggered_at
-                }) {
-                    break;
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        // The optimistic row is written by `record_history` AFTER this spawn
+        // returns — a fast-failing delivery can reach this point first, and
+        // the optimistic save (same identity key) would then clobber the
+        // correction. Wait, bounded, for the identity to appear in the
+        // in-memory deque; record_history pushes to the deque immediately
+        // after its store save, so presence here means the optimistic row is
+        // durable and safe to update.
+        for _ in 0..40 {
+            if history.read().await.iter().any(|r| {
+                r.rule_id == execution.rule_id && r.triggered_at == execution.triggered_at
+            }) {
+                break;
             }
-            if let Err(e) = store.save_history(&corrected) {
-                tracing::warn!(
-                    rule_id = %corrected.rule_id,
-                    error = %e,
-                    "Failed to correct rule history after delivery failure"
-                );
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+
+        // Prefer updating the live in-memory entry in place (preserving all
+        // other actions & duration_ms).
+        let mut corrected = {
+            let mut history_guard = history.write().await;
+            if let Some(entry) = history_guard.iter_mut().find(|r| {
+                r.rule_id == execution.rule_id && r.triggered_at == execution.triggered_at
+            }) {
+                Self::apply_spawned_failure(entry, &action_label, &failure);
+                Some(entry.clone())
+            } else {
+                None
+            }
+        };
+
+        // If evicted from in-memory deque, try loading the existing row from
+        // persistent storage before falling back to a minimal record.
+        if corrected.is_none() {
+            if let Some(ref s) = store {
+                let s_load = Arc::clone(s);
+                let rule_id = execution.rule_id.clone();
+                let triggered_at = execution.triggered_at;
+                if let Ok(Ok(rows)) =
+                    tokio::task::spawn_blocking(move || s_load.load_history(&rule_id)).await
+                {
+                    if let Some(mut existing) =
+                        rows.into_iter().find(|r| r.triggered_at == triggered_at)
+                    {
+                        Self::apply_spawned_failure(&mut existing, &action_label, &failure);
+                        corrected = Some(existing);
+                    }
+                }
             }
         }
-        let mut history = history.write().await;
-        if let Some(entry) = history
-            .iter_mut()
-            .find(|r| r.rule_id == corrected.rule_id && r.triggered_at == corrected.triggered_at)
-        {
-            *entry = corrected;
+
+        let corrected = corrected.unwrap_or_else(|| {
+            let mut fallback = RuleExecutionResult {
+                rule_id: execution.rule_id.clone(),
+                rule_name: execution.rule_name.clone(),
+                success: false,
+                actions_executed: Vec::new(),
+                error: None,
+                duration_ms: 0,
+                triggered_at: execution.triggered_at,
+            };
+            Self::apply_spawned_failure(&mut fallback, &action_label, &failure);
+            fallback
+        });
+
+        if let Some(store) = store {
+            let to_save = corrected.clone();
+            match tokio::task::spawn_blocking(move || store.save_history(&to_save)).await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    tracing::warn!(
+                        rule_id = %corrected.rule_id,
+                        error = %e,
+                        "Failed to correct rule history after delivery failure"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        rule_id = %corrected.rule_id,
+                        error = %e,
+                        "spawn_blocking join error while correcting rule history"
+                    );
+                }
+            }
         }
     }
 
@@ -875,7 +1050,17 @@ impl RuleEngine {
                     let execution_ref = execution.clone();
                     let accepted = format!("NOTIFY: {}", formatted);
                     let accepted_for_correction = accepted.clone();
+                    let Ok(permit) = self.action_semaphore.clone().try_acquire_owned() else {
+                        tracing::warn!(
+                            rule_id = %execution.rule_id,
+                            action = %accepted,
+                            "NOTIFY skipped: max concurrent rule actions ({}) reached",
+                            MAX_CONCURRENT_RULE_ACTIONS
+                        );
+                        return Err(format!("{accepted}: max concurrent rule actions reached"));
+                    };
                     tokio::spawn(async move {
+                        let _permit = permit;
                         // try_create_message (not create_message): the plain
                         // call returns Ok even when EVERY channel failed —
                         // the message is stored, only the push is lost — and
@@ -942,7 +1127,17 @@ impl RuleEngine {
                         let store = self.rule_store.read().as_ref().cloned();
                         let execution_ref = execution.clone();
                         let (target, command) = (target.clone(), command.clone());
+                        let Ok(permit) = self.action_semaphore.clone().try_acquire_owned() else {
+                            tracing::warn!(
+                                rule_id = %execution.rule_id,
+                                action = %label,
+                                "EXECUTE device skipped: max concurrent rule actions ({}) reached",
+                                MAX_CONCURRENT_RULE_ACTIONS
+                            );
+                            return Err(format!("{label}: max concurrent rule actions reached"));
+                        };
                         tokio::spawn(async move {
+                            let _permit = permit;
                             if let Err(e) = ex
                                 .execute_command_with_retry(&target, &command, &params_map)
                                 .await
@@ -970,7 +1165,8 @@ impl RuleEngine {
                         let ext_action = crate::extension_integration::ExtensionCommandAction::new(
                             target, command,
                         )
-                        .with_args(params.clone());
+                        .with_args(params.clone())
+                        .with_timeout(crate::extension_integration::DEFAULT_EXTENSION_TIMEOUT_MS);
                         // [decoupled] extension processes run out-of-process
                         // with their own timeouts; same consumer-loop stall
                         // risk as the device arm above.
@@ -979,7 +1175,17 @@ impl RuleEngine {
                         let history = Arc::clone(&self.history);
                         let store = self.rule_store.read().as_ref().cloned();
                         let execution_ref = execution.clone();
+                        let Ok(permit) = self.action_semaphore.clone().try_acquire_owned() else {
+                            tracing::warn!(
+                                rule_id = %execution.rule_id,
+                                action = %label,
+                                "EXTENSION skipped: max concurrent rule actions ({}) reached",
+                                MAX_CONCURRENT_RULE_ACTIONS
+                            );
+                            return Err(format!("{label}: max concurrent rule actions reached"));
+                        };
                         tokio::spawn(async move {
+                            let _permit = permit;
                             let failure = match ex.execute(&ext_action).await {
                                 Ok(result) if result.success => None,
                                 Ok(result) => {
@@ -1016,8 +1222,14 @@ impl RuleEngine {
                 input,
                 data,
             } => {
-                self.spawn_agent_run(agent_id, input.clone(), data.clone(), "TRIGGER_AGENT")
-                    .await
+                self.spawn_agent_run(
+                    agent_id,
+                    input.clone(),
+                    data.clone(),
+                    "TRIGGER_AGENT",
+                    execution,
+                )
+                .await
             }
 
             RuleAction::RunOperator { agent_id } => {
@@ -1025,7 +1237,7 @@ impl RuleEngine {
                 // answers with schema-validated fields — there is no prompt to
                 // hand it. Which execution branch actually runs is decided by
                 // the agent's own mode downstream, not here.
-                self.spawn_agent_run(agent_id, None, None, "RUN_OPERATOR")
+                self.spawn_agent_run(agent_id, None, None, "RUN_OPERATOR", execution)
                     .await
             }
         }
@@ -1047,6 +1259,7 @@ impl RuleEngine {
         input: Option<String>,
         data: Option<serde_json::Value>,
         label: &str,
+        execution: &RuleExecutionRef,
     ) -> Result<String, String> {
         let cb = {
             let trigger = self.agent_trigger.read().await;
@@ -1062,12 +1275,29 @@ impl RuleEngine {
             }
         };
 
+        let action_label = format!("{}: {}", label, agent_id);
+        let Ok(permit) = self.action_semaphore.clone().try_acquire_owned() else {
+            tracing::warn!(
+                rule_id = %execution.rule_id,
+                action = %action_label,
+                "{} skipped: max concurrent rule actions ({}) reached",
+                label,
+                MAX_CONCURRENT_RULE_ACTIONS
+            );
+            return Err(format!("{action_label}: max concurrent rule actions reached"));
+        };
+
         let (spawn_id, log_id, spawn_label) = (
             agent_id.to_string(),
             agent_id.to_string(),
             label.to_string(),
         );
+        let history = Arc::clone(&self.history);
+        let store = self.rule_store.read().as_ref().cloned();
+        let execution_ref = execution.clone();
+        let label_for_correction = action_label.clone();
         tokio::spawn(async move {
+            let _permit = permit;
             if let Err(e) = cb(spawn_id, input, data).await {
                 tracing::warn!(
                     agent_id = %log_id,
@@ -1075,10 +1305,18 @@ impl RuleEngine {
                     "{} execution failed",
                     spawn_label
                 );
+                Self::correct_spawned_outcome(
+                    &history,
+                    store,
+                    &execution_ref,
+                    label_for_correction,
+                    e,
+                )
+                .await;
             }
         });
 
-        Ok(format!("{}: {} (spawned)", label, agent_id))
+        Ok(format!("{action_label} (spawned)"))
     }
 
     // -- State helpers --
@@ -1114,36 +1352,57 @@ impl RuleEngine {
         rule_id: &RuleId,
         condition_met: bool,
     ) -> Option<chrono::DateTime<Utc>> {
-        let (result, rule_snapshot) = {
+        self.update_condition_since_tracked(rule_id, condition_met)
+            .await
+            .0
+    }
+
+    /// Update `condition_since` and return `(current_since, newly_started)`.
+    /// `newly_started` is `true` iff `condition_since` transitioned `None -> Some(_)`.
+    async fn update_condition_since_tracked(
+        &self,
+        rule_id: &RuleId,
+        condition_met: bool,
+    ) -> (Option<chrono::DateTime<Utc>>, bool) {
+        let (result, newly_started, rule_snapshot) = {
             let mut rules = self.rules.write();
-            let rule = rules.get_mut(rule_id)?;
+            let Some(rule) = rules.get_mut(rule_id) else {
+                return (None, false);
+            };
             if condition_met {
                 if rule.state.condition_since.is_none() {
                     rule.state.condition_since = Some(Utc::now());
-                    (rule.state.condition_since, Some(rule.clone()))
+                    (rule.state.condition_since, true, Some(rule.clone()))
                 } else {
-                    (rule.state.condition_since, None) // no state change
+                    (rule.state.condition_since, false, None) // no state change
                 }
             } else if rule.state.condition_since.is_some() {
                 rule.state.condition_since = None;
-                (None, Some(rule.clone()))
+                (None, false, Some(rule.clone()))
             } else {
-                (None, None) // no state change
+                (None, false, None) // no state change
             }
         };
-        // Persist only when condition_since changed (was missing — for_duration
-        // elapsed accumulation was lost on restart, causing premature triggering).
+        // Persist only when condition_since changed (offloaded from Tokio worker).
         if let Some(rule) = rule_snapshot {
-            if let Some(store) = self.rule_store.read().as_ref() {
-                if let Err(e) = store.save(&rule) {
-                    tracing::warn!(rule_id = %rule_id, error = %e, "Failed to persist condition_since");
+            let store = self.rule_store.read().clone();
+            if let Some(store) = store {
+                match tokio::task::spawn_blocking(move || store.save(&rule)).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => {
+                        tracing::warn!(rule_id = %rule_id, error = %e, "Failed to persist condition_since");
+                    }
+                    Err(e) => {
+                        tracing::warn!(rule_id = %rule_id, error = %e, "spawn_blocking join error while persisting condition_since");
+                    }
                 }
             }
         }
-        result
+        (result, newly_started)
     }
 
     async fn update_rule_state_after_trigger(&self, rule_id: &RuleId) {
+        self.cancel_for_duration_timer(rule_id);
         let rule_snapshot = {
             let mut rules = self.rules.write();
             if let Some(rule) = rules.get_mut(rule_id) {
@@ -1156,11 +1415,18 @@ impl RuleEngine {
             }
         };
 
-        // Persist to store
+        // Persist to store (offloaded from Tokio worker)
         if let Some(rule) = rule_snapshot {
-            if let Some(store) = self.rule_store.read().as_ref() {
-                if let Err(e) = store.save(&rule) {
-                    tracing::warn!(rule_id = %rule_id, error = %e, "Failed to persist rule state");
+            let store = self.rule_store.read().clone();
+            if let Some(store) = store {
+                match tokio::task::spawn_blocking(move || store.save(&rule)).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => {
+                        tracing::warn!(rule_id = %rule_id, error = %e, "Failed to persist rule state");
+                    }
+                    Err(e) => {
+                        tracing::warn!(rule_id = %rule_id, error = %e, "spawn_blocking join error while persisting rule state");
+                    }
                 }
             }
         }
@@ -1179,10 +1445,18 @@ impl RuleEngine {
         })
         .await;
 
-        // Persist to store if available
-        if let Some(store) = self.rule_store.read().as_ref() {
-            if let Err(e) = store.save_history(&result) {
-                tracing::warn!("Failed to persist rule history: {}", e);
+        // Persist to store if available (offloaded from Tokio worker)
+        let store = self.rule_store.read().clone();
+        if let Some(store) = store {
+            let to_save = result.clone();
+            match tokio::task::spawn_blocking(move || store.save_history(&to_save)).await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    tracing::warn!("Failed to persist rule history: {}", e);
+                }
+                Err(e) => {
+                    tracing::warn!("spawn_blocking join error while persisting rule history: {}", e);
+                }
             }
         }
 
@@ -1827,5 +2101,175 @@ mod tests {
         let mut devices = engine.subscribed_virtual_metric_devices("__last_seen_age_secs");
         devices.sort();
         assert_eq!(devices, vec!["dev-A".to_string(), "dev-C".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn set_enabled_false_clears_condition_since() {
+        let provider = Arc::new(InMemoryValueProvider::new());
+        let engine = RuleEngine::new(provider.clone());
+
+        let mut rule = CompiledRule::new("Sustained High Temp");
+        rule.condition = Some(RuleCondition::Comparison {
+            source: DataSourceId::device("sensor1", "temperature"),
+            operator: ComparisonOperator::GreaterThan,
+            threshold: 50.0,
+            threshold_value: None,
+        });
+        rule.trigger = RuleTrigger::from_condition(&rule.condition);
+        rule.for_duration = Some(Duration::from_secs(60));
+        rule.actions = vec![RuleAction::Notify {
+            message: "Too hot".into(),
+            severity: NotifySeverity::Warning,
+        }];
+        rule.finalize();
+
+        let rule_id = rule.id.clone();
+        engine.add_rule(rule).await.unwrap();
+
+        // Trigger initial condition_since start
+        provider.set_value("device:sensor1:temperature", 75.0);
+        engine
+            .on_data_update(
+                &DataSourceId::device("sensor1", "temperature"),
+                RuleValue::Number(75.0),
+            )
+            .await;
+
+        let r = engine.get_rule(&rule_id).await.unwrap();
+        assert!(
+            r.state.condition_since.is_some(),
+            "condition_since should be set while waiting for for_duration"
+        );
+        assert_eq!(r.state.trigger_count, 0);
+
+        // Disabling the rule must clear condition_since and cancel the timer
+        engine.set_enabled(&rule_id, false).await.unwrap();
+        let r = engine.get_rule(&rule_id).await.unwrap();
+        assert!(!r.enabled);
+        assert!(
+            r.state.condition_since.is_none(),
+            "set_enabled(false) must clear condition_since"
+        );
+        assert!(
+            !engine.for_duration_timers.read().contains_key(&rule_id),
+            "pending for_duration timer must be cancelled on disable"
+        );
+    }
+
+    #[tokio::test]
+    async fn for_duration_fires_on_single_flat_metric_without_second_event() {
+        let provider = Arc::new(InMemoryValueProvider::new());
+        let engine = RuleEngine::new(provider.clone());
+
+        let mut rule = CompiledRule::new("Flat High Temp");
+        rule.condition = Some(RuleCondition::Comparison {
+            source: DataSourceId::device("sensor1", "temperature"),
+            operator: ComparisonOperator::GreaterThan,
+            threshold: 50.0,
+            threshold_value: None,
+        });
+        rule.trigger = RuleTrigger::from_condition(&rule.condition);
+        rule.for_duration = Some(Duration::from_millis(120));
+        rule.actions = vec![RuleAction::Notify {
+            message: "Sustained high temp".into(),
+            severity: NotifySeverity::Warning,
+        }];
+        rule.finalize();
+
+        let rule_id = rule.id.clone();
+        engine.add_rule(rule).await.unwrap();
+
+        // Send a SINGLE data update; no second event will arrive.
+        provider.set_value("device:sensor1:temperature", 75.0);
+        engine
+            .on_data_update(
+                &DataSourceId::device("sensor1", "temperature"),
+                RuleValue::Number(75.0),
+            )
+            .await;
+
+        // Immediately after first event, rule must NOT have fired yet.
+        let r = engine.get_rule(&rule_id).await.unwrap();
+        assert_eq!(r.state.trigger_count, 0);
+        assert!(r.state.condition_since.is_some());
+
+        // Wait for the for_duration expiry timer to fire the rule.
+        for _ in 0..40 {
+            if engine.get_rule(&rule_id).await.unwrap().state.trigger_count == 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+
+        let r = engine.get_rule(&rule_id).await.unwrap();
+        assert_eq!(
+            r.state.trigger_count, 1,
+            "for_duration timer must fire the rule even with no second data event"
+        );
+        assert!(r.state.condition_since.is_none());
+    }
+
+    #[tokio::test]
+    async fn spawned_agent_failure_corrects_history_preserving_other_actions() {
+        let provider = Arc::new(InMemoryValueProvider::new());
+        let engine = RuleEngine::new(provider);
+        let store = RuleStore::memory().unwrap();
+        engine.set_rule_store(store.clone());
+
+        engine
+            .set_agent_trigger_callback(Arc::new(|_agent_id, _input, _data| {
+                Box::pin(async { Err("agent offline".to_string()) })
+            }))
+            .await;
+
+        let mut rule = CompiledRule::new("Multi Action Rule");
+        rule.trigger = RuleTrigger::Manual;
+        rule.actions = vec![
+            RuleAction::Notify {
+                message: "Alert sent".into(),
+                severity: NotifySeverity::Info,
+            },
+            RuleAction::TriggerAgent {
+                agent_id: "agent-42".into(),
+                input: Some("check".into()),
+                data: None,
+            },
+        ];
+        rule.finalize();
+        let rule_id = rule.id.clone();
+        engine.add_rule(rule).await.unwrap();
+
+        let _res = engine.execute_rule(&rule_id).await;
+
+        // Wait for the spawned agent callback failure to correct history
+        let mut corrected = None;
+        for _ in 0..40 {
+            let hist = engine.get_rule_history(&rule_id).await;
+            if let Some(entry) = hist.first() {
+                if !entry.success {
+                    corrected = Some(entry.clone());
+                    break;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+
+        let entry = corrected.expect("failed TriggerAgent must mark history row failed");
+        assert!(!entry.success);
+        assert_eq!(
+            entry.actions_executed.len(),
+            2,
+            "all other actions must be preserved: {:?}",
+            entry.actions_executed
+        );
+        assert!(entry.actions_executed[0].contains("NOTIFY: Alert sent"));
+        assert!(entry.actions_executed[1].contains("TRIGGER_AGENT: agent-42"));
+        assert!(entry.actions_executed[1].contains("agent offline"));
+
+        // Durable store must reflect the same correction
+        let stored = store.load_history(&rule_id).unwrap();
+        assert_eq!(stored.len(), 1);
+        assert!(!stored[0].success);
+        assert_eq!(stored[0].actions_executed.len(), 2);
     }
 }

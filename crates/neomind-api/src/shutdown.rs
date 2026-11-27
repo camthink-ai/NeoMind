@@ -70,11 +70,38 @@ pub async fn shutdown_signal() {
 pub async fn cleanup_resources(state: &ServerState) {
     tracing::info!("Cleaning up resources...");
 
+    // Ensure all shutdown-aware background tasks, WS/SSE streams, schedulers,
+    // watchdogs, and the TLS proxy are signalled to terminate.
+    state.shutdown_token.cancel();
+
     // 0. Stop the clean-slate Cron/Interval ticker (in-flight submits finish
     // under their own timeout; there is no separate event-task abort map).
     if let Some(rt) = state.agents.clean_slate.read().await.as_ref() {
         rt.stop();
         tracing::info!("Stopped clean-slate agent scheduler at shutdown");
+    }
+
+    // 0b. Stop DataPush scheduler tasks without disabling persisted target configs
+    // (taking/dropping PushManager drops all ScheduledHandle watch senders,
+    // waking each running push task's `cancel.changed()` branch to flush & exit).
+    if state.data_push.write().await.take().is_some() {
+        tracing::info!("Stopped DataPush scheduler at shutdown");
+    }
+
+    // 0c. Stop all registered IM bridges.
+    if let Some(router) = state.im_router.read().await.clone() {
+        let platforms = router.registry.list().await;
+        for platform in platforms {
+            if let Some(bridge) = router.registry.remove(&platform).await {
+                match tokio::time::timeout(Duration::from_secs(5), bridge.stop()).await {
+                    Ok(Ok(())) => tracing::info!(platform = ?platform, "Stopped IM bridge"),
+                    Ok(Err(e)) => {
+                        tracing::warn!(platform = ?platform, error = %e, "IM bridge stop error")
+                    }
+                    Err(_) => tracing::warn!(platform = ?platform, "IM bridge stop timed out"),
+                }
+            }
+        }
     }
 
     // 1. Stop the builtin llama-server children EXPLICITLY. kill_on_drop
@@ -84,16 +111,32 @@ pub async fn cleanup_resources(state: &ServerState) {
     // and relied on the NEXT boot's port-conflict detection to reclaim it.
     crate::builtin_llm::server::stop_all_llama_servers();
 
-    // 2. Stop MQTT adapter through DeviceService (with timeout)
+    // 1b. Stop isolated extension runner processes (with timeout).
+    match tokio::time::timeout(
+        Duration::from_secs(10),
+        state.extensions.runtime.stop_all(),
+    )
+    .await
+    {
+        Ok(()) => tracing::info!("Stopped isolated extensions at shutdown"),
+        Err(_) => tracing::warn!("Stopping isolated extensions timed out after 10s"),
+    }
+
+    // 2. Stop ALL registered device adapters through DeviceService (with timeout)
     let device_service = state.devices.service.clone();
-    let mqtt_task = tokio::spawn(async move {
-        if let Some(adapter) = device_service.get_adapter("internal-mqtt").await {
-            if let Err(e) = adapter.stop().await {
-                tracing::warn!("MQTT adapter stop error: {}", e);
+    let adapters_task = tokio::spawn(async move {
+        let adapters = device_service.list_adapters().await;
+        for adapter in adapters {
+            if let Err(e) = device_service.stop_adapter(&adapter.id).await {
+                tracing::warn!(
+                    adapter_id = %adapter.id,
+                    error = %e,
+                    "Device adapter stop error"
+                );
             }
         }
     });
-    let _ = tokio::time::timeout(Duration::from_secs(5), mqtt_task).await;
+    let _ = tokio::time::timeout(Duration::from_secs(5), adapters_task).await;
 
     // 3. Stop embedded broker (feature-gated)
     #[cfg(feature = "embedded-broker")]

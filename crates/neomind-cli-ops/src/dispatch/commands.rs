@@ -1189,9 +1189,12 @@ pub enum DashboardCommand {
     ///
     /// Appends new widgets without replacing existing ones.
     /// This is the RECOMMENDED way to add widgets.
+    /// Position is optional — omitted or overlapping positions are auto-arranged
+    /// on the 12-column grid (KPI tiles balanced on top, charts/media below).
+    /// Data widgets should include `data_source` (the CLI warns if left unbound).
     ///
     /// Chat/shell (preferred):
-    ///   `{ "command": "neomind dashboard add-components <ID>", "params": [ { "id":"c1", "type":"value-card", "position":{"x":0,"y":0,"w":4,"h":2}, "data_source":{...} } ] }`
+    ///   `{ "command": "neomind dashboard add-components <ID>", "params": [ { "id":"c1", "type":"value-card", "title":"Temp", "data_source":{...} } ] }`
     /// Add only 1–2 components per call; append again for more.
     /// Do NOT invent CLI `--params` — the primary flag is `--components`.
     /// Human CLI fallback: `neomind dashboard add-components <ID> --components '[{...}]'`
@@ -1232,7 +1235,7 @@ pub enum DashboardCommand {
     ///
     /// Generates a shareable link for the dashboard. Use --public=true for open access
     /// or --expires to set a time-limited link. Defaults to private (--public=false).
-    /// Example: `neomind dashboard share dash-001 --public=true --expires "2025-12-31"`
+    /// Example: `neomind dashboard share dash-001 --public=true --expires 7d`
     Share {
         /// Dashboard ID.
         #[arg(required = true)]
@@ -1240,7 +1243,7 @@ pub enum DashboardCommand {
         /// Make public (use --public=true or --public=false). Defaults to false.
         #[arg(short, long)]
         public: Option<bool>,
-        /// Expiration date/time.
+        /// Expiration duration: hours (e.g. 24, 24h), days (7d), minutes (30m), or never.
         #[arg(short, long)]
         expires: Option<String>,
     },

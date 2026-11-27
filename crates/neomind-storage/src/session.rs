@@ -181,6 +181,10 @@ pub struct SessionMessage {
         rename = "contentVersion"
     )]
     pub content_version: Option<u32>,
+    /// Server-extracted structured reply attachments (v1: image media, entity
+    /// chips, result cards). Opaque JSON; never injected into LLM context.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attachments: Option<Vec<serde_json::Value>>,
     /// Message timestamp.
     pub timestamp: i64,
 }
@@ -217,6 +221,7 @@ impl SessionMessage {
             end_reason: None,
             content_nodes: None,
             content_version: None,
+            attachments: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -238,6 +243,7 @@ impl SessionMessage {
             end_reason: None,
             content_nodes: None,
             content_version: None,
+            attachments: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -259,6 +265,7 @@ impl SessionMessage {
             end_reason: None,
             content_nodes: None,
             content_version: None,
+            attachments: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -280,6 +287,7 @@ impl SessionMessage {
             end_reason: None,
             content_nodes: None,
             content_version: None,
+            attachments: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -301,6 +309,7 @@ impl SessionMessage {
             end_reason: None,
             content_nodes: None,
             content_version: None,
+            attachments: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -1589,6 +1598,7 @@ mod tests {
             end_reason: None,
             content_nodes: None,
             content_version: None,
+            attachments: None,
             timestamp: chrono::Utc::now().timestamp(),
         };
         let msg2 = SessionMessage {
@@ -1606,6 +1616,7 @@ mod tests {
             end_reason: None,
             content_nodes: None,
             content_version: None,
+            attachments: None,
             timestamp: chrono::Utc::now().timestamp(),
         };
         let messages = vec![msg1, msg2];
@@ -1743,6 +1754,7 @@ mod tests {
             end_reason: None,
             content_nodes: None,
             content_version: None,
+            attachments: None,
             timestamp: 12345,
         };
 
@@ -1777,6 +1789,7 @@ mod tests {
             end_reason: Some("normal".to_string()),
             content_nodes: None,
             content_version: None,
+            attachments: None,
             timestamp: 42,
         };
         let v: serde_json::Value =
@@ -1816,6 +1829,7 @@ mod tests {
                 }),
             ]),
             content_version: Some(1),
+            attachments: None,
             timestamp: 99,
         };
         let v: serde_json::Value =
@@ -1831,6 +1845,43 @@ mod tests {
         assert_eq!(back.content_version, Some(1));
         assert_eq!(back.content_nodes.as_ref().unwrap().len(), 2);
         assert_eq!(back.content_nodes.as_ref().unwrap()[1]["id"], "sensor-001");
+    }
+
+    #[test]
+    fn session_message_attachments_round_trip_and_compat() {
+        let mut msg = SessionMessage::assistant("已创建规则");
+        msg.attachments = Some(vec![serde_json::json!({
+            "id": "rule:r-1",
+            "version": 1,
+            "kind": "rule",
+            "action": "created",
+            "display": "card",
+            "entityId": "r-1",
+            "title": "高温告警",
+            "snapshot": {"enabled": true}
+        })]);
+
+        let v: serde_json::Value =
+            serde_json::from_slice(&serde_json::to_vec(&msg).unwrap()).unwrap();
+        assert_eq!(v["attachments"][0]["id"], "rule:r-1");
+        assert_eq!(v["attachments"][0]["display"], "card");
+
+        let back: SessionMessage = serde_json::from_value(v).unwrap();
+        assert_eq!(back.attachments.as_ref().unwrap().len(), 1);
+        assert_eq!(back.attachments.as_ref().unwrap()[0]["entityId"], "r-1");
+
+        // Legacy messages without `attachments` deserialize cleanly as None.
+        let legacy: SessionMessage = serde_json::from_value(serde_json::json!({
+            "role": "assistant",
+            "content": "legacy",
+            "tool_calls": null,
+            "tool_call_id": null,
+            "tool_call_name": null,
+            "thinking": null,
+            "timestamp": 1
+        }))
+        .unwrap();
+        assert!(legacy.attachments.is_none());
     }
 
     #[test]

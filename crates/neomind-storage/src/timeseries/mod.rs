@@ -11,7 +11,7 @@
 
 use parking_lot::Mutex;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -506,6 +506,9 @@ struct BufferedWrite {
     point: DataPoint,
 }
 
+/// Backoff window (seconds) after a flush failure before automatic flushes retry.
+const FLUSH_ERROR_BACKOFF_SECS: i64 = 5;
+
 /// Write-behind buffer for batching single-point writes into efficient batch transactions.
 struct WriteBuffer {
     /// Pending writes, guarded by a parking_lot mutex (non-async, held briefly).
@@ -516,6 +519,10 @@ struct WriteBuffer {
     flush_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
     /// Shutdown flag for the background flush task.
     shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Single-flight guard so at most one automatic flush runs concurrently.
+    flushing: AtomicBool,
+    /// Epoch seconds before which automatic flushes back off after a flush error.
+    next_retry_at: AtomicI64,
 }
 
 impl WriteBuffer {
@@ -525,6 +532,8 @@ impl WriteBuffer {
             max_size,
             flush_task: Mutex::new(None),
             shutdown: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            flushing: AtomicBool::new(false),
+            next_retry_at: AtomicI64::new(0),
         }
     }
 
@@ -533,6 +542,36 @@ impl WriteBuffer {
         let mut pending = self.pending.lock();
         pending.push(write);
         pending.len() >= self.max_size
+    }
+
+    /// Try to acquire the single-flight automatic flush slot, respecting
+    /// backoff after a recent flush failure. Explicit `flush()` / `shutdown()`
+    /// bypass this guard.
+    fn try_acquire_auto_flush(&self) -> bool {
+        let now = Utc::now().timestamp();
+        if now < self.next_retry_at.load(Ordering::Relaxed) {
+            return false;
+        }
+        self.flushing
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
+
+    /// Release the single-flight automatic flush slot.
+    fn release_auto_flush(&self) {
+        self.flushing.store(false, Ordering::Release);
+    }
+
+    /// Update backoff state after a flush completes.
+    fn record_flush_outcome(&self, had_failures: bool) {
+        if had_failures {
+            self.next_retry_at.store(
+                Utc::now().timestamp() + FLUSH_ERROR_BACKOFF_SECS,
+                Ordering::Relaxed,
+            );
+        } else {
+            self.next_retry_at.store(0, Ordering::Relaxed);
+        }
     }
 
     /// Drain all pending writes, returning them.
@@ -571,13 +610,19 @@ impl WriteBuffer {
                 if shutdown.load(std::sync::atomic::Ordering::Relaxed) {
                     break;
                 }
-                // Offload synchronous redb writes to a blocking thread
+                if !store.write_buffer.try_acquire_auto_flush() {
+                    continue;
+                }
+                // Offload synchronous redb writes to a blocking thread; guard
+                // releases `flushing` even on panic or early drop.
                 let s = store.clone();
-                if let Err(e) = tokio::task::spawn_blocking(move || s.flush_buffer()).await {
+                if let Err(e) =
+                    tokio::task::spawn_blocking(move || s.flush_buffer_with_auto_release()).await
+                {
                     tracing::error!("Periodic flush task join error: {}", e);
                 }
             }
-            // Final flush on shutdown
+            // Final flush on shutdown — bypasses backoff.
             let s = store.clone();
             if let Err(e) = tokio::task::spawn_blocking(move || s.flush_buffer()).await {
                 tracing::error!("Shutdown flush task join error: {}", e);

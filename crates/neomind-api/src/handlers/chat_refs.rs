@@ -604,6 +604,28 @@ async fn resolve_one_inline(state: &ServerState, r: &ChatReference) -> (bool, St
                 format!("【agent `{safe_id}`: NOT FOUND (lookup failed) — Do NOT substitute】"),
             ),
         },
+        "dashboard" => match state.dashboard_store.load(&r.id) {
+            Ok(Some(d)) => {
+                let name = sanitize_text(&d.name, 60);
+                (
+                    true,
+                    name.clone(),
+                    format!("【dashboard `{safe_id}` \"{name}\"】"),
+                )
+            }
+            Ok(None) => (
+                false,
+                "no dashboard with this id".into(),
+                format!(
+                    "【dashboard `{safe_id}`: NOT FOUND (no dashboard with this id) — Do NOT substitute】"
+                ),
+            ),
+            Err(e) => (
+                false,
+                format!("lookup failed: {e}"),
+                format!("【dashboard `{safe_id}`: NOT FOUND (lookup failed) — Do NOT substitute】"),
+            ),
+        },
         other => (
             false,
             format!("unknown type {other}"),
@@ -683,8 +705,18 @@ async fn resolve_one(state: &ServerState, r: &ChatReference) -> String {
             },
             Err(e) => not_found(r, &format!("lookup failed: {e}")),
         },
+        "dashboard" => match state.dashboard_store.load(&r.id) {
+            Ok(Some(d)) => format!(
+                "- dashboard `{}` \"{}\": {} component(s)",
+                sanitize_id(&r.id),
+                sanitize_text(&d.name, 60),
+                d.components.len()
+            ),
+            Ok(None) => not_found(r, "no dashboard with this id"),
+            Err(e) => not_found(r, &format!("lookup failed: {e}")),
+        },
         other => format!(
-            "- `{}`: UNKNOWN REFERENCE TYPE \"{}\" — valid types: device, rule, transform, agent. Ask the user to re-select the reference.",
+            "- `{}`: UNKNOWN REFERENCE TYPE \"{}\" — valid types: device, rule, transform, agent, dashboard. Ask the user to re-select the reference.",
             sanitize_id(&r.id),
             sanitize_type(other)
         ),

@@ -36,15 +36,36 @@ pub fn tool_exposed_in_profile(
     has_user_images: bool,
     vlm_available: bool,
 ) -> bool {
+    tool_exposed_in_profile_with_session_images(
+        tool_name,
+        profile,
+        has_user_images,
+        has_user_images,
+        vlm_available,
+    )
+}
+
+/// Same as [`tool_exposed_in_profile`], but separates current-turn inline images
+/// (`has_user_images`, which gates `vision`) from session-wide image presence
+/// (`has_session_images`, which keeps `image_edit` reachable on follow-up text
+/// turns referencing earlier uploads or `/api/images/...` snapshots).
+pub fn tool_exposed_in_profile_with_session_images(
+    tool_name: &str,
+    profile: ToolProfile,
+    has_user_images: bool,
+    has_session_images: bool,
+    vlm_available: bool,
+) -> bool {
     // Vision: omit when the user already attached images (inline) OR no VLM.
     if tool_name == "vision" && (has_user_images || !vlm_available) {
         return false;
     }
 
+    let allow_image_edit = has_user_images || has_session_images;
     match profile {
         ToolProfile::Light => match tool_name {
-            // High-cost / low-freq: defer unless the turn already has images.
-            "image_edit" => has_user_images,
+            // High-cost / low-freq: defer unless this turn or session has images.
+            "image_edit" => allow_image_edit,
             // Heavy file-edit + fetch schemas: on-demand for small windows.
             "file_edit" | "web_fetch" => false,
             // `vision` stays reachable on Light when vlm_available && !has_user_images
@@ -53,7 +74,7 @@ pub fn tool_exposed_in_profile(
         },
         ToolProfile::Balanced => {
             // Mid windows: keep Stage-1 image_edit deferral for pure-text turns.
-            tool_name != "image_edit" || has_user_images
+            tool_name != "image_edit" || allow_image_edit
         }
         ToolProfile::Standard => {
             // Full exposure (≥32K). Vision still gated by VLM / inline images above.
@@ -237,5 +258,33 @@ mod tests {
         // When user images are already inline, `image_edit` is exposed and `vision` is omitted.
         let kept_inline = filter_tools_for_profile(names, |s| *s, 8_192, true, true);
         assert_eq!(kept_inline, vec!["shell", "image_edit", "memory"]);
+    }
+
+    #[test]
+    fn followup_turn_with_session_images_exposes_image_edit_and_keeps_vision() {
+        // Text-only follow-up in a session that already has images:
+        // `image_edit` must stay exposed on Light/Balanced, and `vision` stays reachable
+        // because images are not inline in the current turn.
+        assert!(tool_exposed_in_profile_with_session_images(
+            "image_edit",
+            ToolProfile::Light,
+            false,
+            true,
+            true
+        ));
+        assert!(tool_exposed_in_profile_with_session_images(
+            "image_edit",
+            ToolProfile::Balanced,
+            false,
+            true,
+            true
+        ));
+        assert!(tool_exposed_in_profile_with_session_images(
+            "vision",
+            ToolProfile::Light,
+            false,
+            true,
+            true
+        ));
     }
 }

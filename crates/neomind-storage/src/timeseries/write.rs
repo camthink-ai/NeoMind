@@ -27,9 +27,9 @@ impl TimeSeriesStore {
             point,
         });
 
-        if should_flush {
+        if should_flush && self.write_buffer.try_acquire_auto_flush() {
             let store = Arc::clone(self);
-            tokio::task::spawn_blocking(move || store.flush_buffer())
+            tokio::task::spawn_blocking(move || store.flush_buffer_with_auto_release())
                 .await
                 .map_err(|e| Error::Storage(format!("spawn_blocking flush: {}", e)))?;
         }
@@ -38,6 +38,20 @@ impl TimeSeriesStore {
     }
 }
 impl TimeSeriesStore {
+    /// Run `flush_buffer()` and unconditionally release the single-flight
+    /// `flushing` guard (even on panic). Caller must have acquired the slot
+    /// via `write_buffer.try_acquire_auto_flush()`.
+    pub(crate) fn flush_buffer_with_auto_release(&self) {
+        struct AutoFlushGuard<'a>(&'a WriteBuffer);
+        impl Drop for AutoFlushGuard<'_> {
+            fn drop(&mut self) {
+                self.0.release_auto_flush();
+            }
+        }
+        let _guard = AutoFlushGuard(&self.write_buffer);
+        self.flush_buffer();
+    }
+
     /// Flush all buffered writes to redb in batched transactions.
     ///
     /// Groups buffered points by (source_id, metric) and writes each group
@@ -73,6 +87,7 @@ impl TimeSeriesStore {
         // own group. Worst case (fast path always fails) behaves exactly like
         // the previous per-group-only implementation.
         if self.write_all_groups_sync(&groups).is_ok() {
+            self.write_buffer.record_flush_outcome(false);
             if let Ok(mut stats) = self.stats.try_write() {
                 stats.write_count += total_count as u64;
                 stats.total_write_ns += start.elapsed().as_nanos() as u64;
@@ -154,6 +169,11 @@ impl TimeSeriesStore {
                 );
             }
         }
+
+        // Update automatic flush backoff state: back off when any points
+        // failed to persist, clear backoff once a flush succeeds cleanly.
+        self.write_buffer
+            .record_flush_outcome(requeued_count > 0);
 
         // Record stats — count only points that actually landed. Counting the
         // full drained set would double-count re-queued points on every retry.

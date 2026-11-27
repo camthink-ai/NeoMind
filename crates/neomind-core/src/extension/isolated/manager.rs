@@ -423,48 +423,56 @@ impl IsolatedExtensionManager {
                         }
 
                         for ext_id in dead_extensions {
-                            // 🔧 Phase 1: Check restart policy before attempting restart
-                            let should_restart = {
+                            // 🔧 Phase 1: Check restart policy before attempting restart.
+                            // Distinguish permanent policy exhaustion (restart disabled or
+                            // max_restart_attempts reached) from cooldown waiting: crashing
+                            // within restart_cooldown_secs sleeps for the remaining cooldown
+                            // and retries rather than permanently giving up.
+                            let restart_decision = {
                                 let info_cache = self.info_cache.read();
-                                info_cache
-                                    .get(&ext_id)
-                                    .map(|info| {
-                                        let config = &self.config.extension_config;
-                                        let can_restart = config.restart_on_crash;
-                                        // Budget decay: a process that stayed
-                                        // up ≥1h since the last restart has
-                                        // effectively recovered — treat the
-                                        // budget as fresh. Without this, a
-                                        // long-lived system that crashed N
-                                        // times historically permanently
-                                        // loses auto-restart (observed:
-                                        // 3 manual kills exhausted
-                                        // max_restart_attempts and every
-                                        // later death needed a serve restart).
-                                        let now = chrono::Utc::now().timestamp();
-                                        let budget_count = match info.runtime.last_restart_at {
-                                            Some(t) if now - t >= 3600 => 0,
-                                            _ => info.runtime.restart_count,
-                                        };
-                                        let within_limit =
-                                            budget_count < config.max_restart_attempts as u64;
+                                info_cache.get(&ext_id).map(|info| {
+                                    let config = &self.config.extension_config;
+                                    let can_restart = config.restart_on_crash;
+                                    // Budget decay: a process that stayed
+                                    // up ≥1h since the last restart has
+                                    // effectively recovered — treat the
+                                    // budget as fresh. Without this, a
+                                    // long-lived system that crashed N
+                                    // times historically permanently
+                                    // loses auto-restart (observed:
+                                    // 3 manual kills exhausted
+                                    // max_restart_attempts and every
+                                    // later death needed a serve restart).
+                                    let now = chrono::Utc::now().timestamp();
+                                    let budget_count = match info.runtime.last_restart_at {
+                                        Some(t) if now - t >= 3600 => 0,
+                                        _ => info.runtime.restart_count,
+                                    };
+                                    let within_limit =
+                                        budget_count < config.max_restart_attempts as u64;
 
-                                        // Check cooldown period
-                                        let past_cooldown = if let Some(last_restart) =
-                                            info.runtime.last_restart_at
-                                        {
-                                            (now - last_restart)
-                                                >= config.restart_cooldown_secs as i64
+                                    let cooldown_wait_secs = if let Some(last_restart) =
+                                        info.runtime.last_restart_at
+                                    {
+                                        let elapsed = now.saturating_sub(last_restart);
+                                        let cooldown = config.restart_cooldown_secs as i64;
+                                        if elapsed < cooldown {
+                                            (cooldown - elapsed) as u64
                                         } else {
-                                            true
-                                        };
+                                            0
+                                        }
+                                    } else {
+                                        0
+                                    };
 
-                                        can_restart && within_limit && past_cooldown
-                                    })
-                                    .unwrap_or(false)
+                                    (can_restart && within_limit, cooldown_wait_secs)
+                                })
                             };
 
-                            if !should_restart {
+                            let (policy_allows_restart, cooldown_wait_secs) =
+                                restart_decision.unwrap_or((false, 0));
+
+                            if !policy_allows_restart {
                                 tracing::warn!(
                                     extension_id = %ext_id,
                                     "Auto-restart skipped: policy limit reached (max_attempts={}, cooldown={}s)",
@@ -481,6 +489,41 @@ impl IsolatedExtensionManager {
                                     }
                                 }
                                 continue;
+                            }
+
+                            if cooldown_wait_secs > 0 {
+                                tracing::info!(
+                                    extension_id = %ext_id,
+                                    wait_secs = cooldown_wait_secs,
+                                    "Extension crashed within restart cooldown, sleeping before auto-restart"
+                                );
+                                tokio::time::sleep(std::time::Duration::from_secs(
+                                    cooldown_wait_secs,
+                                ))
+                                .await;
+
+                                // Re-verify the extension was not unloaded or already restarted while sleeping
+                                if !self.info_cache.read().contains_key(&ext_id) {
+                                    tracing::debug!(
+                                        extension_id = %ext_id,
+                                        "Extension unloaded during restart cooldown, cancelling auto-restart"
+                                    );
+                                    continue;
+                                }
+                                if self
+                                    .extensions
+                                    .read()
+                                    .await
+                                    .get(&ext_id)
+                                    .map(|ext| ext.is_alive())
+                                    .unwrap_or(false)
+                                {
+                                    tracing::debug!(
+                                        extension_id = %ext_id,
+                                        "Extension already alive after restart cooldown, skipping auto-restart"
+                                    );
+                                    continue;
+                                }
                             }
 
                             tracing::warn!(extension_id = %ext_id, "Extension died, attempting auto-restart...");
@@ -526,13 +569,18 @@ impl IsolatedExtensionManager {
                                             }
                                         }
 
-                                        // 🔧 Phase 1: Update restart tracking
+                                        // 🔧 Phase 1: Update restart tracking (applying 1h budget decay)
                                         {
+                                            let now = chrono::Utc::now().timestamp();
                                             let mut info_cache = self.info_cache.write();
                                             if let Some(info) = info_cache.get_mut(&ext_id) {
-                                                info.runtime.last_restart_at =
-                                                    Some(chrono::Utc::now().timestamp());
-                                                info.runtime.restart_count += 1;
+                                                let decayed_count =
+                                                    match info.runtime.last_restart_at {
+                                                        Some(t) if now - t >= 3600 => 0,
+                                                        _ => info.runtime.restart_count,
+                                                    };
+                                                info.runtime.last_restart_at = Some(now);
+                                                info.runtime.restart_count = decayed_count + 1;
                                             }
                                         }
                                         let restart_count = {
@@ -786,12 +834,12 @@ impl IsolatedExtensionManager {
         // Set capability provider if configured
         if let Some(provider) = self.capability_provider.read().await.as_ref() {
             loaded.set_capability_provider(provider.clone());
-
-            // Set up death notification for auto-restart
-            loaded
-                .set_death_notification(self.death_channel.0.clone())
-                .await;
         }
+
+        // Always set up death notification for auto-restart, even when no capability provider is set
+        loaded
+            .set_death_notification(self.death_channel.0.clone())
+            .await;
 
         // Create runtime state.
         //
@@ -961,9 +1009,8 @@ impl IsolatedExtensionManager {
         }?;
 
         // Acquire the per-extension loading lock to avoid racing with death monitor.
-        // The death monitor also calls `load()` which acquires the same lock,
-        // so whichever gets here first will perform the restart; the other will
-        // see the extension already loaded and return the existing metadata.
+        // We hold `_guard` and call `load_internal(&path)` directly (which does NOT
+        // re-acquire `loading_locks`) to preserve mutual exclusion without self-deadlocking.
         let loading_lock = {
             let mut locks = self.loading_locks.write().await;
             locks
@@ -1008,7 +1055,7 @@ impl IsolatedExtensionManager {
             "Lazy restarting extension..."
         );
 
-        match self.load(&path).await {
+        match self.load_internal(&path).await {
             Ok(_) => {
                 // Update restart tracking
                 {
@@ -1257,5 +1304,53 @@ mod tests {
         let manager = IsolatedExtensionManager::with_defaults();
         let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime for test");
         assert_eq!(rt.block_on(async { manager.count().await }), 0);
+    }
+
+    #[tokio::test]
+    async fn test_try_lazy_restart_does_not_self_deadlock() {
+        // Regression test for P0-7: try_lazy_restart holds `loading_lock` and previously
+        // called `self.load(&path)` which read manifest.json and tried to re-acquire the
+        // exact same `loading_lock`, causing a guaranteed self-deadlock.
+        let tmp_dir = std::env::temp_dir().join(format!(
+            "neomind-lazy-restart-deadlock-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+        std::fs::create_dir_all(&tmp_dir).unwrap();
+
+        let ext_id = "test-deadlock-ext";
+        std::fs::write(
+            tmp_dir.join("manifest.json"),
+            format!(r#"{{"id":"{}","name":"Test","version":"1.0.0"}}"#, ext_id),
+        )
+        .unwrap();
+        let fake_binary = tmp_dir.join("extension.dylib");
+
+        let manager = IsolatedExtensionManager::with_defaults();
+        let descriptor = crate::extension::system::ExtensionDescriptor::new(
+            ExtensionMetadata::new(ext_id, "Test", "1.0.0"),
+        );
+        manager.info_cache.write().insert(
+            ext_id.to_string(),
+            IsolatedExtensionInfo {
+                descriptor,
+                path: fake_binary,
+                runtime: crate::extension::system::ExtensionRuntimeState::isolated(),
+            },
+        );
+
+        // Must complete promptly (failing on missing runner/binary) instead of deadlocking.
+        let res = tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            manager.try_lazy_restart(ext_id),
+        )
+        .await;
+
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+        assert!(
+            res.is_ok(),
+            "try_lazy_restart timed out — self-deadlock on loading_lock!"
+        );
+        assert!(res.unwrap().is_none());
     }
 }

@@ -79,12 +79,20 @@ pub(crate) struct EndpointConfig {
 }
 
 impl EndpointConfig {
+    /// Minimum allowed ping interval (seconds) to prevent server-supplied 0s
+    /// values from causing a tight ping spin loop.
+    const MIN_PING_INTERVAL_SECS: u64 = 5;
+
     /// Parse the endpoint response `data` payload. `url` is `data.URL`,
     /// `cfg` is `data.ClientConfig`.
     fn from_parts(url: String, cfg: &serde_json::Value) -> Result<Self> {
         let get_u64 = |k: &str| cfg.get(k).and_then(|v| v.as_u64());
         // PingInterval/ReconnectInterval are seconds (JS world ×1000 → ms).
-        let ping_interval = Duration::from_secs(get_u64("PingInterval").unwrap_or(30));
+        // Clamp ping_interval >= 5s so a zero/tiny value can't hot-spin pings.
+        let ping_secs = get_u64("PingInterval")
+            .unwrap_or(30)
+            .max(Self::MIN_PING_INTERVAL_SECS);
+        let ping_interval = Duration::from_secs(ping_secs);
         let reconnect_interval = Duration::from_secs(get_u64("ReconnectInterval").unwrap_or(3));
         // ReconnectCount is a signed int (< 0 ⇒ infinite); JSON number → i64.
         let reconnect_count = cfg
@@ -126,19 +134,45 @@ fn parse_service_id(url: &str) -> Option<i32> {
 /// Feishu splits a single large event across `sum` data frames, each tagged
 /// with the same `message_id` and a 1-indexed `seq`. We buffer fragments per
 /// `message_id`; once we hold `sum` shards we concatenate (ordered by `seq`)
-/// and emit the assembled payload.
+/// and emit the assembled payload. Bounded to 256 concurrent partial messages
+/// with a 60s TTL so incomplete shards cannot leak memory unboundedly.
 struct DataCache {
     /// message_id → (seq → payload fragment). `BTreeMap` keeps `seq` sorted.
     shards: HashMap<String, BTreeMap<u64, Vec<u8>>>,
     /// message_id → expected total shard count (`sum`).
     sums: HashMap<String, u64>,
+    /// message_id → first-seen timestamp for TTL expiration & oldest-eviction.
+    timestamps: HashMap<String, std::time::Instant>,
 }
 
 impl DataCache {
+    const MAX_ENTRIES: usize = 256;
+    const ENTRY_TTL: Duration = Duration::from_secs(60);
+
     fn new() -> Self {
         Self {
             shards: HashMap::new(),
             sums: HashMap::new(),
+            timestamps: HashMap::new(),
+        }
+    }
+
+    fn prune_expired(&mut self, now: std::time::Instant) {
+        let expired: Vec<String> = self
+            .timestamps
+            .iter()
+            .filter_map(|(k, ts)| {
+                if now.saturating_duration_since(*ts) > Self::ENTRY_TTL {
+                    Some(k.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for k in expired {
+            self.shards.remove(&k);
+            self.sums.remove(&k);
+            self.timestamps.remove(&k);
         }
     }
 
@@ -152,6 +186,26 @@ impl DataCache {
         sum: u64,
         payload: Vec<u8>,
     ) -> Option<Vec<u8>> {
+        let now = std::time::Instant::now();
+        self.prune_expired(now);
+
+        if !self.shards.contains_key(message_id) && self.shards.len() >= Self::MAX_ENTRIES {
+            // Evict oldest incomplete entry to maintain hard bound.
+            if let Some(oldest_key) = self
+                .timestamps
+                .iter()
+                .min_by_key(|(_, ts)| *ts)
+                .map(|(k, _)| k.clone())
+            {
+                self.shards.remove(&oldest_key);
+                self.sums.remove(&oldest_key);
+                self.timestamps.remove(&oldest_key);
+            }
+        }
+
+        self.timestamps
+            .entry(message_id.to_string())
+            .or_insert(now);
         self.sums.insert(message_id.to_string(), sum);
         let entry = self.shards.entry(message_id.to_string()).or_default();
         // Last-write-wins per seq; Feishu shouldn't resend differing bytes for
@@ -168,6 +222,7 @@ impl DataCache {
             let message_id = message_id.to_string();
             self.shards.remove(&message_id);
             self.sums.remove(&message_id);
+            self.timestamps.remove(&message_id);
             Some(merged)
         } else {
             None
@@ -292,8 +347,8 @@ impl FeishuWsClient {
                 "feishu ws endpoint acquired; connecting"
             );
 
-            match connect_async(&cfg.url).await {
-                Ok((stream, _resp)) => {
+            match tokio::time::timeout(Duration::from_secs(15), connect_async(&cfg.url)).await {
+                Ok(Ok((stream, _resp))) => {
                     tracing::info!("feishu ws connected");
                     // Reset attempts only after a clean connect — a flapping
                     // endpoint shouldn't silently zero the failure counter.
@@ -304,12 +359,23 @@ impl FeishuWsClient {
                         .await;
                     tracing::info!("feishu ws connection ended; will reconnect");
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     tracing::warn!(error = %e, "feishu ws connect failed");
                     attempts += 1;
                     if !self.should_retry(attempts, cfg.reconnect_count) {
                         return Err(anyhow!(
                             "ws connect gave up after {} attempts (reconnect_count={})",
+                            attempts,
+                            cfg.reconnect_count
+                        ));
+                    }
+                }
+                Err(_) => {
+                    tracing::warn!("feishu ws connect timed out after 15s");
+                    attempts += 1;
+                    if !self.should_retry(attempts, cfg.reconnect_count) {
+                        return Err(anyhow!(
+                            "ws connect timed out after {} attempts (reconnect_count={})",
                             attempts,
                             cfg.reconnect_count
                         ));
@@ -434,29 +500,43 @@ impl FeishuWsClient {
         // first ping goes out after one full `ping_interval` (matches Feishu's
         // keepalive cadence, and avoids a spurious ping right at connect).
         let _ = ping.tick().await;
+        let mut last_activity = tokio::time::Instant::now();
 
         loop {
             if !self.running.load(Ordering::SeqCst) {
                 break;
             }
 
+            let liveness_deadline = last_activity + cfg.ping_interval.saturating_mul(3);
+
             tokio::select! {
                 msg = read.next() => {
                     match msg {
                         Some(Ok(Message::Binary(bytes))) => {
+                            last_activity = tokio::time::Instant::now();
                             tracing::info!(len = bytes.len(), "feishu ws received binary frame");
+                            let prev_ping = cfg.ping_interval;
                             self.handle_frame(&mut write, cfg, &mut cache, &bytes, event_handler).await;
+                            if cfg.ping_interval != prev_ping {
+                                ping = tokio::time::interval(cfg.ping_interval);
+                                ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                                let _ = ping.tick().await;
+                            }
                         }
                         Some(Ok(Message::Ping(p))) => {
+                            last_activity = tokio::time::Instant::now();
                             // tungstenite auto-pongs at protocol level; ignore explicitly.
                             let _ = p;
                         }
-                        Some(Ok(Message::Pong(_))) => { /* ws-level pong; ignore */ }
+                        Some(Ok(Message::Pong(_))) => {
+                            last_activity = tokio::time::Instant::now();
+                        }
                         Some(Ok(Message::Close(_))) => {
                             tracing::info!("feishu ws peer closed");
                             break;
                         }
                         Some(Ok(_)) => {
+                            last_activity = tokio::time::Instant::now();
                             // Text / raw frame — pbbp2 only travels as Binary.
                         }
                         Some(Err(e)) => {
@@ -475,6 +555,13 @@ impl FeishuWsClient {
                         tracing::warn!(error = %e, "feishu ws ping send failed; reconnecting");
                         break;
                     }
+                }
+                _ = tokio::time::sleep_until(liveness_deadline) => {
+                    tracing::warn!(
+                        timeout_secs = cfg.ping_interval.saturating_mul(3).as_secs(),
+                        "feishu ws read/pong liveness deadline exceeded; reconnecting"
+                    );
+                    break;
                 }
             }
         }
@@ -704,6 +791,34 @@ mod tests {
         c.insert("m3", 2, 2, b"b".to_vec());
         // retried duplicate after ack must start fresh, not falsely "complete"
         assert!(c.insert("m3", 1, 2, b"a".to_vec()).is_none());
+    }
+
+    #[test]
+    fn endpoint_config_clamps_ping_interval_to_minimum_5s() {
+        let cfg_val = serde_json::json!({ "PingInterval": 0 });
+        let cfg = EndpointConfig::from_parts("wss://open.feishu.cn/cb".into(), &cfg_val).unwrap();
+        assert_eq!(cfg.ping_interval, Duration::from_secs(5));
+
+        let cfg_val_small = serde_json::json!({ "PingInterval": 2 });
+        let cfg2 =
+            EndpointConfig::from_parts("wss://open.feishu.cn/cb".into(), &cfg_val_small).unwrap();
+        assert_eq!(cfg2.ping_interval, Duration::from_secs(5));
+    }
+
+    #[test]
+    fn data_cache_caps_incomplete_entries_at_256() {
+        let mut c = DataCache::new();
+        for i in 0..300 {
+            assert!(c.insert(&format!("msg-{i}"), 1, 2, vec![1]).is_none());
+        }
+        assert!(
+            c.shards.len() <= DataCache::MAX_ENTRIES,
+            "cache must stay bounded to {} entries, got {}",
+            DataCache::MAX_ENTRIES,
+            c.shards.len()
+        );
+        assert_eq!(c.shards.len(), c.sums.len());
+        assert_eq!(c.shards.len(), c.timestamps.len());
     }
 
     // ── unit: ack frame shape ─────────────────────────────────────────────────

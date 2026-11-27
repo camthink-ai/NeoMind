@@ -11,6 +11,11 @@ use crate::config;
 use crate::models::error::ErrorResponse;
 use crate::server::ServerState;
 
+/// Process-wide lock serializing first-time setup operations so concurrent
+/// requests to `/api/setup/initialize` (or `/api/setup/llm-config`) cannot race
+/// past the `list_users().is_empty()` check and create multiple initial admins.
+static SETUP_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// Basic email validation helper
 fn is_valid_email(email: &str) -> bool {
     // Simple email validation: must contain @ and . after @
@@ -151,6 +156,10 @@ pub async fn initialize_admin_handler(
         .auth
         .user_state
         .record_signup_attempt("setup", Some(&ip));
+
+    // Serialize first-time admin creation so two concurrent requests cannot both
+    // observe `users.is_empty()` and create two initial admin accounts.
+    let _setup_guard = SETUP_LOCK.lock().await;
 
     // Validate that this is truly first-time setup
     let users = state.auth.user_state.list_users().await;
@@ -302,6 +311,10 @@ pub async fn save_llm_config_handler(
     // exists, anonymous callers must not be able to overwrite the LLM
     // backend config (which would let them redirect agent traffic to an
     // attacker-controlled endpoint or exfiltrate API keys).
+    // Serialize against initialize_admin_handler so first-time LLM setup cannot
+    // race past admin creation.
+    let _setup_guard = SETUP_LOCK.lock().await;
+
     let users = state.auth.user_state.list_users().await;
     if !users.is_empty() {
         return Err(ErrorResponse {

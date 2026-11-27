@@ -302,12 +302,12 @@ pub static ROUTES: &[RouteDoc] = &[
     RouteDoc {
         method: "POST",
         path: "/api/onboarding/dismiss",
-        auth: "public",
+        auth: "jwt-or-api-key",
     },
     RouteDoc {
         method: "POST",
         path: "/api/onboarding/reset",
-        auth: "public",
+        auth: "jwt-or-api-key",
     },
     RouteDoc {
         method: "GET",

@@ -44,13 +44,25 @@ fn normalize_access_token(raw: &str) -> Option<String> {
 
 /// DingTalk channel for sending messages via custom robot webhook.
 #[cfg(feature = "dingtalk")]
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct DingTalkChannel {
     name: String,
     enabled: bool,
     access_token: String,
     secret: Option<String>,
     client: reqwest::Client,
+}
+
+#[cfg(feature = "dingtalk")]
+impl std::fmt::Debug for DingTalkChannel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DingTalkChannel")
+            .field("name", &self.name)
+            .field("enabled", &self.enabled)
+            .field("access_token", &"[REDACTED]")
+            .field("secret", &self.secret.as_ref().map(|_| "[REDACTED]"))
+            .finish()
+    }
 }
 
 #[cfg(feature = "dingtalk")]

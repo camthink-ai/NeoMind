@@ -324,6 +324,46 @@ impl WebhookAdapter {
         Ok(())
     }
 
+    /// Validate adapter-level controls (API key, IP allowlist/blocklist) AND
+    /// per-device `webhook_token` (if the device is registered and has one).
+    ///
+    /// Call this BEFORE parsing/base64-encoding large request bodies so
+    /// unauthenticated callers cannot trigger multi-megabyte allocations.
+    pub async fn validate_auth(
+        &self,
+        device_id: &str,
+        provided_token: Option<&str>,
+        provided_api_key: Option<&str>,
+        remote_ip: Option<&IpAddr>,
+    ) -> AdapterResult<()> {
+        self.validate_request(device_id, provided_api_key, remote_ip)?;
+
+        let registry = self.device_registry.read().await;
+        if let Some(device) = registry.get_device(device_id) {
+            if let Some(expected) = device
+                .connection_config
+                .extra
+                .get("webhook_token")
+                .and_then(|v| v.as_str())
+            {
+                match provided_token {
+                    Some(token) if constant_time_eq(token, expected) => {}
+                    Some(_) => {
+                        return Err(AdapterError::Connection(
+                            "Invalid webhook token".to_string(),
+                        ));
+                    }
+                    None => {
+                        return Err(AdapterError::Connection(
+                            "Webhook token required".to_string(),
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Process a webhook payload and emit events.
     ///
     /// `provided_token`: Optional per-device webhook token from `Authorization: Bearer`
@@ -397,36 +437,11 @@ impl WebhookAdapter {
             .and_then(crate::adapters::mqtt::normalize_epoch_seconds)
             .unwrap_or_else(|| chrono::Utc::now().timestamp());
 
-        // Track device first sighting (for DeviceOnline emission on registered devices)
-        let is_new = {
-            let mut devices = self.devices.write().await;
-            if !devices.contains(&device_id) {
-                devices.push(device_id.clone());
-                true
-            } else {
-                false
-            }
-        };
-
-        // For known/registered devices, emit DeviceOnline only on first sighting
-        if is_new && is_registered {
-            if let Some(bus) = &self.event_bus {
-                use neomind_core::NeoMindEvent;
-
-                bus.publish(NeoMindEvent::DeviceOnline {
-                    device_id: device_id.clone(),
-                    device_type: device_type.clone(),
-                    timestamp,
-                })
-                .await;
-            }
-        }
-
-        // For unknown/unregistered devices, emit DeviceDiscovered subject to a
-        // per-IP rate cap. Without this cap, an attacker rotating `device_id`s
-        // can bypass per-device rate limiting and flood the auto-onboard manager
-        // (which may call an LLM per discovery). Metrics are still processed below
-        // even when the discovery event is throttled — data isn't lost.
+        // Match MQTT's rule: for unknown/unregistered devices, emit throttled
+        // `DeviceDiscovered` ONLY — do NOT write to `TimeSeriesStorage`, do NOT
+        // publish `DeviceMetric` or `DeviceOnline`, and do NOT push unknown
+        // `device_id`s into `self.devices` (prevents unbounded state/storage
+        // injection by rotating arbitrary IDs).
         if !is_registered {
             let ip_key = remote_ip
                 .map(|ip| ip.to_string())
@@ -485,8 +500,35 @@ impl WebhookAdapter {
                 warn!(
                     adapter = %self.name,
                     device_id = %device_id,
-                    "Discovery event throttled for unknown device; metrics still recorded"
+                    "Discovery event throttled for unregistered device; payload ignored"
                 );
+            }
+
+            return Ok(0);
+        }
+
+        // Track registered device first sighting (for DeviceOnline emission)
+        let is_new = {
+            let mut devices = self.devices.write().await;
+            if !devices.contains(&device_id) {
+                devices.push(device_id.clone());
+                true
+            } else {
+                false
+            }
+        };
+
+        // Emit DeviceOnline only on first sighting of a registered device
+        if is_new {
+            if let Some(bus) = &self.event_bus {
+                use neomind_core::NeoMindEvent;
+
+                bus.publish(NeoMindEvent::DeviceOnline {
+                    device_id: device_id.clone(),
+                    device_type: device_type.clone(),
+                    timestamp,
+                })
+                .await;
             }
         }
 
@@ -1074,7 +1116,8 @@ mod tests {
         );
 
         // Phase 2: fire 3 more. Discovery events MUST be throttled → zero
-        // new Discovery. Metrics still process (return value == 1).
+        // new Discovery, and unregistered devices MUST NOT ingest metrics
+        // or populate `self.devices` (matches MQTT's unregistered-device rule).
         for i in 3..6 {
             let payload = WebhookPayload {
                 device_id: Some(format!("unreg-{i}")),
@@ -1085,18 +1128,25 @@ mod tests {
             let n = adapter
                 .process_webhook(format!("unreg-{i}"), payload, None, None, Some(&src_ip))
                 .await
-                .expect("metrics still process when discovery is throttled");
-            assert!(n >= 1, "metrics must still process when throttled");
+                .expect("unregistered webhook call returns Ok(0)");
+            assert_eq!(n, 0, "unregistered device must not ingest metrics");
         }
+        assert_eq!(
+            adapter.device_count(),
+            0,
+            "unregistered devices must not be pushed into adapter.devices"
+        );
 
-        // Drain again; only Metric events should appear.
+        // Drain again; neither Discovery nor Metric events should appear.
         let mut discoveries_phase2 = 0u32;
+        let mut metrics_phase2 = 0u32;
         let drain_deadline = tokio::time::Instant::now() + Duration::from_millis(150);
         loop {
             tokio::select! {
                 _ = tokio::time::sleep_until(drain_deadline) => break,
                 ev = stream.next() => match ev {
                     Some(DeviceEvent::Discovery { .. }) => discoveries_phase2 += 1,
+                    Some(DeviceEvent::Metric { .. }) => metrics_phase2 += 1,
                     Some(_) => continue,
                     None => break,
                 },
@@ -1106,6 +1156,74 @@ mod tests {
             discoveries_phase2, 0,
             "discovery events must be throttled once per-IP cap is hit"
         );
+        assert_eq!(
+            metrics_phase2, 0,
+            "unregistered devices must not emit Metric events"
+        );
+    }
+
+    #[tokio::test]
+    async fn registered_webhook_device_ingests_metrics_while_unregistered_does_not() {
+        let registry = Arc::new(DeviceRegistry::new());
+        let storage =
+            Arc::new(crate::telemetry::TimeSeriesStorage::memory().expect("memory timeseries"));
+        let adapter = WebhookAdapter::new(WebhookAdapterConfig::new("t"), None, registry.clone());
+        adapter.set_telemetry_storage(storage.clone()).await;
+
+        // Register template and one device.
+        registry
+            .register_template(crate::registry::DeviceTypeTemplate::new("sensor", "Sensor"))
+            .await
+            .unwrap();
+        let dev_cfg = crate::registry::DeviceConfig {
+            device_id: "reg-1".to_string(),
+            name: "Registered Sensor".to_string(),
+            device_type: "sensor".to_string(),
+            adapter_type: "webhook".to_string(),
+            connection_config: crate::registry::ConnectionConfig::default(),
+            adapter_id: Some("t".to_string()),
+            offline_timeout_secs: None,
+            last_seen: 0,
+        };
+        registry.register_device(dev_cfg).await.unwrap();
+
+        // Unregistered post writes nothing to storage and adds nothing to devices.
+        let unreg_payload = WebhookPayload {
+            device_id: Some("ghost-1".to_string()),
+            timestamp: None,
+            quality: None,
+            data: serde_json::json!({"temp": 99.0}),
+        };
+        let n_unreg = adapter
+            .process_webhook("ghost-1".to_string(), unreg_payload, None, None, None)
+            .await
+            .unwrap();
+        assert_eq!(n_unreg, 0);
+        assert!(storage
+            .latest("device:ghost-1", "temp")
+            .await
+            .unwrap()
+            .is_none());
+        assert!(!adapter.list_devices().contains(&"ghost-1".to_string()));
+
+        // Registered post stores metrics and tracks device.
+        let reg_payload = WebhookPayload {
+            device_id: Some("reg-1".to_string()),
+            timestamp: None,
+            quality: None,
+            data: serde_json::json!({"temp": 23.5}),
+        };
+        let n_reg = adapter
+            .process_webhook("reg-1".to_string(), reg_payload, None, None, None)
+            .await
+            .unwrap();
+        assert!(n_reg >= 1, "registered device must ingest metrics");
+        assert!(storage
+            .latest("device:reg-1", "temp")
+            .await
+            .unwrap()
+            .is_some());
+        assert!(adapter.list_devices().contains(&"reg-1".to_string()));
     }
 
     /// T4 2026-11-24. An agent run starts the moment a metric event is

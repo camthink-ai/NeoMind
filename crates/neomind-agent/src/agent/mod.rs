@@ -929,6 +929,29 @@ impl Agent {
     pub async fn history(&self) -> Vec<AgentMessage> {
         self.internal_state.read().await.memory.clone()
     }
+
+    /// Attach server-extracted structured attachments to the most recent
+    /// assistant message in memory. Returns true if an assistant message was
+    /// updated.
+    pub async fn set_last_assistant_attachments(
+        &self,
+        attachments: Vec<serde_json::Value>,
+    ) -> bool {
+        if attachments.is_empty() {
+            return false;
+        }
+        let mut state = self.internal_state.write().await;
+        for msg in state.memory.iter_mut().rev() {
+            if msg.role == "assistant" {
+                msg.attachments = Some(attachments);
+                return true;
+            }
+            if msg.role == "user" {
+                break;
+            }
+        }
+        false
+    }
 }
 impl Agent {
     /// Restore conversation history from persisted data.

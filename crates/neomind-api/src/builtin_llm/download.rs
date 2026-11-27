@@ -1,8 +1,8 @@
 //! Resumable GGUF download with SHA256 verification.
 
-use std::io::Write;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
+use tokio::io::AsyncWriteExt;
 
 // User-cancel flag for the active download. Checked between chunks; the
 // partial .part file is KEPT (resume semantics) so re-downloading the same
@@ -53,11 +53,10 @@ pub async fn download_with_resume(
         std::fs::create_dir_all(dir)?;
     }
 
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&part)?;
-    let existing = file.metadata()?.len();
+    let existing = tokio::fs::metadata(&part)
+        .await
+        .map(|m| m.len())
+        .unwrap_or(0);
 
     let mut req = client.get(url);
     if existing > 0 {
@@ -65,6 +64,24 @@ pub async fn download_with_resume(
     }
     let resp = req.send().await?;
     let status = resp.status();
+    if !status.is_success() {
+        anyhow::bail!(
+            "download failed with HTTP {} for {}",
+            status,
+            url
+        );
+    }
+    if existing > 0
+        && status != reqwest::StatusCode::PARTIAL_CONTENT
+        && status != reqwest::StatusCode::OK
+    {
+        anyhow::bail!(
+            "unexpected HTTP {} while resuming download for {}",
+            status,
+            url
+        );
+    }
+
     // Total size for progress. On a 206 (resumed) response `content_length()`
     // is the REMAINING bytes, not the full file — without fixing it the bar
     // reports 100% as soon as downloaded surpasses that remaining amount.
@@ -86,25 +103,41 @@ pub async fn download_with_resume(
     };
 
     use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    if existing > 0 && status == reqwest::StatusCode::PARTIAL_CONTENT {
-        // 校验起点:前 existing 字节已写入 part,流式喂进 hasher(避免整读多 GB 文件)
-        use std::io::{BufReader, Read};
-        let mut reader = BufReader::with_capacity(64 * 1024, std::fs::File::open(&part)?);
-        let mut buf = vec![0u8; 64 * 1024];
-        loop {
-            let n = reader.read(&mut buf)?;
-            if n == 0 {
-                break;
-            }
-            hasher.update(&buf[..n]);
-        }
-    } else if status != reqwest::StatusCode::PARTIAL_CONTENT && existing > 0 {
-        // 服务端忽略 Range 返回 200 → 从头下,覆盖
-        file = std::fs::File::create(&part)?;
-    }
+    let (mut file, mut hasher, initial_downloaded) =
+        if existing > 0 && status == reqwest::StatusCode::PARTIAL_CONTENT {
+            // 校验起点:前 existing 字节已写入 part,流式喂进 hasher(避免整读多 GB 文件),
+            // 放到 spawn_blocking 避免阻塞 async worker 线程。
+            let part_for_hash = part.clone();
+            let hasher = tokio::task::spawn_blocking(move || -> anyhow::Result<Sha256> {
+                use std::io::{BufReader, Read};
+                let mut hasher = Sha256::new();
+                let mut reader =
+                    BufReader::with_capacity(64 * 1024, std::fs::File::open(&part_for_hash)?);
+                let mut buf = vec![0u8; 64 * 1024];
+                loop {
+                    let n = reader.read(&mut buf)?;
+                    if n == 0 {
+                        break;
+                    }
+                    hasher.update(&buf[..n]);
+                }
+                Ok(hasher)
+            })
+            .await??;
+            let file = tokio::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&part)
+                .await?;
+            (file, hasher, existing)
+        } else {
+            // 服务端忽略 Range 返回 200 OK(或首次下载) → 仅在 200 OK 时截断重写,
+            // 并将进度计数重置为 0。
+            let file = tokio::fs::File::create(&part).await?;
+            (file, Sha256::new(), 0)
+        };
 
-    let counter = AtomicU64::new(existing);
+    let counter = AtomicU64::new(initial_downloaded);
     let body = resp.bytes_stream();
     use futures::StreamExt;
     let mut stream = std::pin::pin!(body);
@@ -118,19 +151,19 @@ pub async fn download_with_resume(
         let chunk = match tokio::time::timeout(STALL_TIMEOUT, stream.next()).await {
             Ok(c) => c,
             Err(_) => {
-                let _ = file.flush();
+                let _ = file.flush().await;
                 anyhow::bail!("download stalled: no data for 60s");
             }
         };
         let Some(chunk) = chunk else { break };
         if download_cancel_requested() {
             // Keep the partial file — resume on next attempt.
-            let _ = file.flush();
+            let _ = file.flush().await;
             anyhow::bail!("cancelled by user");
         }
         let chunk = chunk?;
         hasher.update(&chunk);
-        file.write_all(&chunk)?;
+        file.write_all(&chunk).await?;
         let d = counter.fetch_add(chunk.len() as u64, Ordering::SeqCst) + chunk.len() as u64;
         if let Some(cb) = on_progress {
             cb(DownloadProgress {
@@ -139,17 +172,19 @@ pub async fn download_with_resume(
             });
         }
     }
-    file.flush()?;
+    file.flush().await?;
 
     if !expected_sha256.is_empty() {
         let got = format!("{:x}", hasher.finalize());
         if !got.eq_ignore_ascii_case(expected_sha256) {
-            let _ = std::fs::remove_file(&part);
+            drop(file);
+            let _ = tokio::fs::remove_file(&part).await;
             anyhow::bail!("sha256 mismatch: expected {} got {}", expected_sha256, got);
         }
     }
-    let size = file.metadata()?.len();
-    std::fs::rename(&part, dest)?;
+    let size = file.metadata().await?.len();
+    drop(file);
+    tokio::fs::rename(&part, dest).await?;
     Ok(size)
 }
 
@@ -247,6 +282,79 @@ mod tests {
         .unwrap();
         assert_eq!(n, data.len() as u64);
         assert_eq!(std::fs::read(&dest).unwrap(), data);
+        let _ = std::fs::remove_dir_all(&dir);
+        h.abort();
+    }
+
+    #[tokio::test]
+    async fn http_error_fails_without_truncating_existing_part() {
+        let router = Router::new().route(
+            "/err",
+            get(|| async {
+                (
+                    axum::http::StatusCode::RANGE_NOT_SATISFIABLE,
+                    "range not satisfiable error page",
+                )
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let h = tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        let client = reqwest::Client::new();
+        let dir = std::env::temp_dir().join(format!("builtin-dl4-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let dest = dir.join("model.gguf");
+        let part = dir.join("model.gguf.part");
+        std::fs::write(&part, b"existing-partial-data").unwrap();
+
+        let url = format!("http://{}/err", addr);
+        let err = download_with_resume(&client, &url, &dest, "", None)
+            .await
+            .expect_err("non-2xx must fail");
+        assert!(err.to_string().contains("416"), "got: {err}");
+        assert!(!dest.exists(), "must not create dest on HTTP error");
+        assert_eq!(
+            std::fs::read(&part).unwrap(),
+            b"existing-partial-data",
+            "existing .part must not be truncated or overwritten on 4xx/5xx"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        h.abort();
+    }
+
+    #[tokio::test]
+    async fn full_200_response_resets_progress_counter_to_zero() {
+        let data: &'static [u8] = b"0123456789abcdef";
+        let (url, h) = start_server(data).await;
+        let client = reqwest::Client::new();
+        let dir = std::env::temp_dir().join(format!("builtin-dl5-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let dest = dir.join("model.gguf");
+        let part = dir.join("model.gguf.part");
+        std::fs::write(&part, b"stale-prefix-1234").unwrap();
+
+        let max_seen = AtomicU64::new(0);
+        let n = download_with_resume(
+            &client,
+            &url,
+            &dest,
+            "",
+            Some(&|p| {
+                max_seen.fetch_max(p.downloaded, Ordering::SeqCst);
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(n, data.len() as u64);
+        assert_eq!(
+            max_seen.load(Ordering::SeqCst),
+            data.len() as u64,
+            "200 OK must count from 0, not from stale .part size"
+        );
         let _ = std::fs::remove_dir_all(&dir);
         h.abort();
     }

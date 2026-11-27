@@ -271,6 +271,11 @@ pub struct ServerState {
     /// `/api/system/upgrade*`, see `handlers::system`). Holds the
     /// single-flight lock, task status and the release-check cache.
     pub upgrade: Arc<crate::upgrade::service::UpgradeState>,
+
+    /// Process-wide graceful shutdown token. Cancelled as soon as SIGTERM,
+    /// SIGINT, or the test exit deadline triggers so WS/SSE streams, schedulers,
+    /// watchdogs, IM router, and the TLS proxy terminate promptly.
+    pub shutdown_token: tokio_util::sync::CancellationToken,
 }
 
 // Backward compatibility: Provide direct field access as before
@@ -1379,6 +1384,7 @@ impl ServerState {
             internal_proxy_secret: Arc::new(generate_internal_proxy_secret()),
             im_router: Arc::new(tokio::sync::RwLock::new(None)),
             upgrade: Arc::new(crate::upgrade::service::UpgradeState::new()),
+            shutdown_token: tokio_util::sync::CancellationToken::new(),
         }
     }
 
@@ -1640,6 +1646,7 @@ impl ServerState {
             internal_proxy_secret: Arc::new(generate_internal_proxy_secret()),
             im_router: Arc::new(tokio::sync::RwLock::new(None)),
             upgrade: Arc::new(crate::upgrade::service::UpgradeState::new()),
+            shutdown_token: tokio_util::sync::CancellationToken::new(),
         }
     }
 
@@ -2779,6 +2786,7 @@ impl ServerState {
         // Start cron scheduler tick for Schedule-type rules
         {
             let rule_engine = self.automation.rule_engine.clone();
+            let shutdown_token = self.shutdown_token.clone();
             tokio::spawn(async move {
                 use chrono::Utc;
                 use cron::Schedule;
@@ -2787,47 +2795,67 @@ impl ServerState {
 
                 let mut ticker = tokio::time::interval(std::time::Duration::from_secs(30));
                 ticker.tick().await; // First tick completes immediately
+                let mut last_tick = Utc::now();
 
                 loop {
-                    ticker.tick().await;
+                    tokio::select! {
+                        _ = shutdown_token.cancelled() => {
+                            tracing::info!("Rule cron scheduler shutting down");
+                            break;
+                        }
+                        _ = ticker.tick() => {}
+                    }
                     let now = Utc::now();
+                    let window_start = last_tick;
+                    last_tick = now;
+
+                    // Load configured global timezone (falling back to UTC) so
+                    // cron expressions evaluate in the operator's timezone.
+                    let tz_str = neomind_storage::SettingsStore::open_default()
+                        .ok()
+                        .map(|s| s.get_global_timezone())
+                        .unwrap_or_else(|| "UTC".to_string());
+                    let tz: chrono_tz::Tz = tz_str.parse().unwrap_or(chrono_tz::UTC);
+                    let window_start_tz = window_start.with_timezone(&tz);
+                    let now_tz = now.with_timezone(&tz);
 
                     let schedule_rules = rule_engine.list_schedule_rules().await;
                     for (rule_id, cron_expr) in schedule_rules {
-                        // Parse cron and check if it should fire now (within the last 30s window)
                         let parsed: Result<Schedule, _> = cron_expr.parse();
                         let parsed = match parsed {
                             Ok(s) => s,
                             Err(_) => continue,
                         };
 
-                        // Get the next scheduled time after (now - 30s).
-                        // If that time is <= now, the rule should fire.
-                        let window_start = now - chrono::Duration::seconds(30);
-                        let next = parsed.after(&window_start.fixed_offset()).next();
-                        if let Some(next_time) = next {
-                            if next_time.timestamp() <= now.timestamp() {
-                                tracing::debug!(
-                                    rule_id = %rule_id,
-                                    cron = %cron_expr,
-                                    "Executing scheduled rule"
-                                );
-                                let result = rule_engine.execute_rule(&rule_id).await;
-                                if result.success {
-                                    tracing::info!(
+                        // Evaluate strictly after `last_tick` up to `now` in the
+                        // configured timezone so execution latency never skips
+                        // windows and timer jitter never double-fires.
+                        if let Some(next_time) = parsed.after(&window_start_tz).next() {
+                            if next_time <= now_tz {
+                                let rule_engine_exec = rule_engine.clone();
+                                tokio::spawn(async move {
+                                    tracing::debug!(
                                         rule_id = %rule_id,
-                                        rule_name = %result.rule_name,
-                                        duration_ms = result.duration_ms,
-                                        "Scheduled rule executed successfully"
+                                        cron = %cron_expr,
+                                        "Executing scheduled rule"
                                     );
-                                } else {
-                                    tracing::warn!(
-                                        rule_id = %rule_id,
-                                        rule_name = %result.rule_name,
-                                        error = ?result.error,
-                                        "Scheduled rule execution failed"
-                                    );
-                                }
+                                    let result = rule_engine_exec.execute_rule(&rule_id).await;
+                                    if result.success {
+                                        tracing::info!(
+                                            rule_id = %rule_id,
+                                            rule_name = %result.rule_name,
+                                            duration_ms = result.duration_ms,
+                                            "Scheduled rule executed successfully"
+                                        );
+                                    } else {
+                                        tracing::warn!(
+                                            rule_id = %rule_id,
+                                            rule_name = %result.rule_name,
+                                            error = ?result.error,
+                                            "Scheduled rule execution failed"
+                                        );
+                                    }
+                                });
                             }
                         }
                     }
@@ -3321,12 +3349,32 @@ impl ServerState {
         // dropping it on bus close terminates the `while let` cleanly.
         if let Some(bus) = self.core.event_bus.clone() {
             let r = router.clone();
+            let shutdown_token = self.shutdown_token.clone();
             let mut rx = bus.subscribe_filtered(move |e| {
                 matches!(e, neomind_core::NeoMindEvent::ImMessageReceived { .. })
             });
             tokio::spawn(async move {
                 tracing::info!(category = "im", "IM router event listener started");
-                while let Some((ev, _meta)) = rx.recv().await {
+                // Bound concurrent inbound IM handling while never blocking
+                // `rx.recv()` inline (which previously caused EventBus Lagged drops).
+                let inbound_semaphore = Arc::new(tokio::sync::Semaphore::new(32));
+                loop {
+                    let ev = tokio::select! {
+                        _ = shutdown_token.cancelled() => {
+                            tracing::info!(category = "im", "IM router event listener shutting down");
+                            break;
+                        }
+                        next = rx.recv() => match next {
+                            Some((ev, _meta)) => ev,
+                            None => {
+                                tracing::warn!(
+                                    category = "im",
+                                    "IM router event listener exited (EventBus closed)"
+                                );
+                                break;
+                            }
+                        }
+                    };
                     if let neomind_core::NeoMindEvent::ImMessageReceived {
                         platform,
                         im_chat_id,
@@ -3341,21 +3389,24 @@ impl ServerState {
                         // the message; this mirrors the bridge's own inbound
                         // publish path.
                         let p = ImPlatform::parse(&platform).unwrap_or(ImPlatform::Telegram);
-                        r.handle_inbound(InboundMessage {
+                        let msg = InboundMessage {
                             platform: p,
                             chat_id: im_chat_id,
                             sender_id,
                             text,
                             msg_id,
                             timestamp,
-                        })
-                        .await;
+                        };
+                        let r = r.clone();
+                        let sem = inbound_semaphore.clone();
+                        tokio::spawn(async move {
+                            let Ok(_permit) = sem.acquire_owned().await else {
+                                return;
+                            };
+                            r.handle_inbound(msg).await;
+                        });
                     }
                 }
-                tracing::warn!(
-                    category = "im",
-                    "IM router event listener exited (EventBus closed)"
-                );
             });
         } else {
             tracing::warn!(

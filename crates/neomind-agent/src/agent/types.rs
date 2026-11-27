@@ -553,6 +553,11 @@ pub struct AgentMessage {
         rename = "contentVersion"
     )]
     pub content_version: Option<u32>,
+    /// Server-extracted structured reply attachments (v1: image media, entity
+    /// chips, result cards). Persisted via SessionMessage; never injected into
+    /// LLM context.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attachments: Option<Vec<Value>>,
     /// Timestamp
     pub timestamp: i64,
 }
@@ -631,6 +636,7 @@ impl AgentMessage {
             end_reason: None,
             content_nodes: None,
             content_version: None,
+            attachments: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -652,6 +658,7 @@ impl AgentMessage {
             end_reason: None,
             content_nodes: None,
             content_version: None,
+            attachments: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -673,6 +680,7 @@ impl AgentMessage {
             end_reason: None,
             content_nodes: None,
             content_version: None,
+            attachments: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -697,6 +705,7 @@ impl AgentMessage {
             end_reason: None,
             content_nodes: None,
             content_version: None,
+            attachments: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -718,6 +727,7 @@ impl AgentMessage {
             end_reason: None,
             content_nodes: None,
             content_version: None,
+            attachments: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -739,6 +749,7 @@ impl AgentMessage {
             end_reason: None,
             content_nodes: None,
             content_version: None,
+            attachments: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -760,6 +771,7 @@ impl AgentMessage {
             end_reason: None,
             content_nodes: None,
             content_version: None,
+            attachments: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -785,6 +797,7 @@ impl AgentMessage {
             end_reason: None,
             content_nodes: None,
             content_version: None,
+            attachments: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -944,6 +957,7 @@ impl AgentMessage {
             end_reason: None,
             content_nodes: None,
             content_version: None,
+            attachments: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -1423,6 +1437,25 @@ impl LargeDataCache {
             seq: next_cache_seq(),
         };
         self.entries.insert(key.to_string(), cached);
+        self.evict_if_needed();
+    }
+
+    /// Update the canonical `user_image` slot with a durable internal `/api/images/...`
+    /// URL (e.g. right after `image_edit` succeeds) so follow-up calls using
+    /// `$cached:user_image` target the latest edited image instead of the original.
+    pub fn store_latest_image_ref(&mut self, url: &str) {
+        let trimmed = url.trim();
+        if !trimmed.starts_with("/api/images/") {
+            return;
+        }
+        let cached = CachedLargeResult {
+            content_type: Self::detect_content_type(trimmed),
+            data: trimmed.to_string(),
+            size_bytes: trimmed.len(),
+            cached_at: chrono::Utc::now().timestamp(),
+            seq: next_cache_seq(),
+        };
+        self.entries.insert("user_image".to_string(), cached);
         self.evict_if_needed();
     }
 
