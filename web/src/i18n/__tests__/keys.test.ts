@@ -266,7 +266,9 @@ describe('translation keys referenced from source', () => {
     // both locales — ratchet down so it cannot creep back.
     // 251 -> 245 (UI polish pass): common:totalRecords, viewMode, listView,
     // gridView and auth:signIn* added to both locales — ratchet down.
-    const FROZEN = 245
+    // 245 -> 242 (Extensions UI polish): extensions:market.readme added and
+    // metric stats switched to existing extensions:latest/min/max/avg keys — ratchet down.
+    const FROZEN = 242
     const soft = [...referenced.values()].filter(
       (r) => r.bare.length === 0 && resolve(bundleOf('en', r.ns) ?? {}, r.key) === undefined,
     )

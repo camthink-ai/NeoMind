@@ -19,6 +19,8 @@ import {
   UserCheck,
   Wifi,
   CloudSun,
+  Globe,
+  Upload,
 } from "lucide-react"
 import type { Extension } from "@/types"
 
@@ -54,6 +56,9 @@ interface ExtensionGridProps {
   /** Controlled search text — lifted to the page's toolbar row. */
   searchQuery: string
   onSearchChange: (value: string) => void
+  /** Quick CTAs surfaced in the empty showcase state. */
+  onOpenMarketplace?: () => void
+  onOpenUpload?: () => void
 }
 
 // Status filter options with counts
@@ -65,6 +70,8 @@ export function ExtensionGrid({
   onReload,
   searchQuery,
   onSearchChange,
+  onOpenMarketplace,
+  onOpenUpload,
 }: ExtensionGridProps) {
   const { t } = useTranslation(["extensions", "common"])
 
@@ -108,17 +115,21 @@ export function ExtensionGrid({
         {Array.from({ length: 6 }).map((_, i) => (
           <div
             key={i}
-            className="border rounded-xl p-5 space-y-4 animate-fade-in-up"
+            className="rounded-xl border border-border bg-card p-4 space-y-3 animate-fade-in-up"
             style={{ animationDelay: `${i * 60}ms`, animationFillMode: 'both' }}
           >
             <div className="flex items-start gap-3">
-              <Skeleton className="h-10 w-10 rounded-xl" />
+              <Skeleton className="h-10 w-10 rounded-lg shrink-0" />
               <div className="flex-1 space-y-2">
-                <Skeleton className="h-5 w-3/4" />
-                <Skeleton className="h-3 w-1/2" />
+                <Skeleton className="h-4 w-3/5" />
+                <Skeleton className="h-3 w-2/5" />
               </div>
             </div>
-            <Skeleton className="h-16 w-full" />
+            <Skeleton className="h-9 w-full" />
+            <div className="flex items-center justify-between pt-1">
+              <Skeleton className="h-3 w-24" />
+              <Skeleton className="h-3 w-16" />
+            </div>
           </div>
         ))}
       </div>
@@ -149,6 +160,23 @@ export function ExtensionGrid({
         <p className="mt-2 max-w-md text-center text-sm leading-relaxed text-muted-foreground">
           {t("empty.description")}
         </p>
+
+        {(onOpenMarketplace || onOpenUpload) && (
+          <div className="mt-5 flex flex-wrap items-center justify-center gap-2.5">
+            {onOpenMarketplace && (
+              <Button size="sm" onClick={onOpenMarketplace}>
+                <Globe className="mr-2 h-4 w-4" />
+                {t("empty.browseMarket", { defaultValue: "Browse Marketplace" })}
+              </Button>
+            )}
+            {onOpenUpload && (
+              <Button size="sm" variant="outline" onClick={onOpenUpload}>
+                <Upload className="mr-2 h-4 w-4" />
+                {t("empty.uploadLocal", { defaultValue: "Upload Package" })}
+              </Button>
+            )}
+          </div>
+        )}
 
         <div className="mt-8 w-full space-y-1 text-sm sm:hidden">
           {showcaseExtensions.slice(0, 4).map((ext) => (

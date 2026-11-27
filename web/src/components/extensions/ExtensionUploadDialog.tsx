@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { useToast } from "@/hooks/use-toast"
 import { useStore } from "@/store"
-import { Loader2, Package, AlertCircle } from "lucide-react"
+import { Loader2, Package, AlertCircle, Upload } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { UnifiedFormDialog } from "@/components/dialog/UnifiedFormDialog"
 
@@ -34,24 +34,17 @@ export function ExtensionUploadDialog({
   const isAuthenticated = useStore((state) => state.isAuthenticated)
 
   const [uploading, setUploading] = useState(false)
+  const [isDragging, setIsDragging] = useState(false)
   const [progress, setProgress] = useState<UploadProgress | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const handleFileSelect = () => {
-    fileInputRef.current?.click()
+    if (!uploading) {
+      fileInputRef.current?.click()
+    }
   }
 
-  const handleFileInputChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-
-    // Reset file input immediately to allow selecting the same file again
-    // This fixes the issue where the dialog needs to be opened twice
-    if (fileInputRef.current) {
-      fileInputRef.current.value = ''
-    }
-
-    if (!file) return
-
+  const processFile = async (file: File) => {
     // Check authentication status before upload
     if (!isAuthenticated) {
       toast({
@@ -94,7 +87,7 @@ export function ExtensionUploadDialog({
       if (interval) clearInterval(interval)
 
       // Handle specific error types
-      let errorMessage = 'Upload failed'
+      let errorMessage = t('extensions:installFailed')
 
       if (error instanceof Error) {
         if (error.name === 'AbortError' || error.message.includes('timeout')) {
@@ -219,8 +212,50 @@ export function ExtensionUploadDialog({
     }
   }
 
+  const handleFileInputChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+
+    // Reset file input immediately to allow selecting the same file again
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+
+    if (!file) return
+    await processFile(file)
+  }
+
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!uploading) {
+      setIsDragging(true)
+    }
+  }
+
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.currentTarget === e.target) {
+      setIsDragging(false)
+    }
+  }
+
+  const handleDrop = async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragging(false)
+    if (uploading) return
+    const file = e.dataTransfer.files?.[0]
+    if (!file) return
+    if (progress?.status === 'error') {
+      resetForm()
+    }
+    await processFile(file)
+  }
+
   const resetForm = () => {
     setProgress(null)
+    setIsDragging(false)
     if (fileInputRef.current) {
       fileInputRef.current.value = ''
     }
@@ -234,17 +269,30 @@ export function ExtensionUploadDialog({
   }, [uploading, onOpenChange])
 
   const uploadContent = (
-    <div className="space-y-4">
-      {/* File Upload */}
+    <div className="space-y-3">
+      {/* File Upload Dropzone */}
       <div
+        role="button"
+        tabIndex={uploading ? -1 : 0}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        onKeyDown={(e) => {
+          if (!uploading && (e.key === 'Enter' || e.key === ' ')) {
+            e.preventDefault()
+            if (progress?.status === 'error') resetForm()
+            handleFileSelect()
+          }
+        }}
         className={cn(
-          "border-2 border-dashed rounded-lg p-6 text-center transition-colors",
-          progress?.status === 'error'
-            ? 'border-error bg-muted cursor-pointer hover:border-error'
-            : 'cursor-pointer hover:border-border'
+          "rounded-xl border-2 border-dashed p-6 text-center transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+          uploading && "cursor-default border-border bg-muted-20",
+          !uploading && progress?.status === 'error' && "cursor-pointer border-error bg-error-light",
+          !uploading && progress?.status !== 'error' && isDragging && "cursor-copy border-primary bg-primary-light",
+          !uploading && progress?.status !== 'error' && !isDragging && "cursor-pointer border-border bg-card hover:border-border-hover hover:bg-muted-20",
         )}
         onClick={() => {
-          // Allow clicking to retry when there's an error
+          if (uploading) return
           if (progress?.status === 'error') {
             resetForm()
           }
@@ -268,8 +316,8 @@ export function ExtensionUploadDialog({
                   <AlertCircle className="h-5 w-5" />
                   <span className="text-sm font-medium">{t('extensions:installFailed')}</span>
                 </div>
-                <p className="text-sm text-muted-foreground">{progress.filename}</p>
-                <div className="text-error text-xs bg-muted rounded p-2">
+                <p className="truncate font-mono text-xs text-muted-foreground">{progress.filename}</p>
+                <div className="rounded-lg border border-error bg-background px-3 py-2 text-xs text-error break-words">
                   {progress.message || t('extensions:installFailed')}
                 </div>
                 <p className="text-xs text-muted-foreground">
@@ -280,30 +328,43 @@ export function ExtensionUploadDialog({
               // Uploading/Processing state
               <>
                 <div className="flex items-center justify-center gap-2">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  <span className="text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                  <span className="text-sm font-medium text-foreground">
                     {progress.status === 'processing'
                       ? t('extensions:processing')
                       : t('extensions:uploading')}
                   </span>
                 </div>
-                <Progress value={(progress.loaded / progress.total) * 100} />
-                <p className="text-sm text-muted-foreground">{progress.filename}</p>
+                <Progress value={(progress.loaded / Math.max(progress.total, 1)) * 100} />
+                <p className="truncate font-mono text-xs text-muted-foreground">{progress.filename}</p>
               </>
             )}
           </div>
         ) : (
-          <div className="space-y-2">
-            <Package className="h-12 w-12 mx-auto text-muted-foreground" />
-            <p className="text-sm font-medium">{t('extensions:dragDrop')}</p>
-            <p className="text-xs text-muted-foreground">
-              {t('extensions:dragDropDescription')}
-            </p>
+          <div className="flex flex-col items-center gap-2.5 py-2">
+            <div className={cn(
+              "flex h-11 w-11 items-center justify-center rounded-xl border transition-colors",
+              isDragging
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-border bg-muted-30 text-foreground",
+            )}>
+              <Upload className="h-5 w-5" strokeWidth={1.75} />
+            </div>
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-foreground">
+                {isDragging
+                  ? t('extensions:dropToUpload', { defaultValue: 'Release to upload package' })
+                  : t('extensions:dragDrop')}
+              </p>
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                {t('extensions:dragDropDescription')}
+              </p>
+            </div>
           </div>
         )}
       </div>
-      <p className="text-xs text-muted-foreground text-center">
-        {t('extensions:supportedFormats')}: .nep, .zip
+      <p className="text-center text-xs text-muted-foreground">
+        {t('extensions:supportedFormats')}: <span className="font-mono">.nep</span>, <span className="font-mono">.zip</span>
       </p>
     </div>
   )
@@ -325,10 +386,10 @@ export function ExtensionUploadDialog({
       preventCloseOnSubmit={true}
       footer={
         <>
-          <Button variant="outline" onClick={handleClose} disabled={uploading} className="min-w-[80px]">
+          <Button variant="outline" size="sm" onClick={handleClose} disabled={uploading} className="min-w-[80px]">
             {t('common:cancel')}
           </Button>
-          <Button onClick={handleFileSelect} disabled={uploading} className="min-w-[80px]">
+          <Button size="sm" onClick={handleFileSelect} disabled={uploading} className="min-w-[80px]">
             {uploading ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -336,7 +397,7 @@ export function ExtensionUploadDialog({
               </>
             ) : (
               <>
-                <Package className="mr-2 h-4 w-4" />
+                <Upload className="mr-2 h-4 w-4" />
                 {t('extensions:uploadAndInstall')}
               </>
             )}

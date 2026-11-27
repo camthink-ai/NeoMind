@@ -14,7 +14,9 @@
     "catSmartHome": "Smart Home",
     "catMedia": "Media Streaming",
     "catData": "Data Services",
-    "catTool": "AI Tools"
+    "catTool": "AI Tools",
+    "browseMarket": "Browse Marketplace",
+    "uploadLocal": "Upload Package"
   },
   "loading": "Loading...",
   "extensionId": "Extension ID",
@@ -50,6 +52,7 @@
   "authRequired": "Authentication required",
   "authRequiredDescription": "Please log in to upload extensions",
   "dragDrop": "Click or drop your .nep file here",
+  "dropToUpload": "Release to upload package",
   "dragDropDescription": "Supports .nep extension packages with binaries and frontend components",
   "selectFile": "Select File",
   "uploading": "Uploading...",
@@ -135,7 +138,9 @@
   "commands": {
     "noCommands": "No Commands",
     "executing": "Executing",
-    "execute": "Execute"
+    "execute": "Execute",
+    "resultSuccess": "Execution succeeded",
+    "resultFailed": "Execution failed"
   },
   "commandsLabel": "Commands",
   "metricsLabel": "Metrics",
@@ -230,6 +235,7 @@
     "requirements": "Requirements",
     "requiresNetwork": "Requires network access",
     "homepage": "Homepage",
+    "readme": "Documentation",
     "reload": "Reload",
     "confirmReload": "Reload Extension",
     "confirmReloadDescription": "Are you sure you want to reload \"{{name}}\"? This will reload the extension from its source file.",
@@ -248,7 +254,13 @@
     "count": "{{count}} entries",
     "refresh": "Refresh",
     "clear": "Clear",
-    "noLogs": "No log entries yet"
+    "noLogs": "No log entries yet",
+    "levelAll": "All",
+    "levelError": "Error",
+    "levelWarn": "Warn",
+    "levelInfo": "Info",
+    "noMatchingLogs": "No logs match the selected level",
+    "copied": "Logs copied to clipboard"
   },
   "sections": {
     "overview": "Overview",
@@ -263,7 +275,7 @@
     "fileInfo": "File Info"
   },
   "info": {
-    "id": "Id",
+    "id": "ID",
     "name": "Name",
     "version": "Version",
     "state": "State",
@@ -282,7 +294,14 @@
     "noConfig": "No Config",
     "title": "Title",
     "configure": "Configure",
-    "saveReload": "Save Reload"
+    "saveReload": "Save & Reload",
+    "saved": "Configuration saved",
+    "reloadedWithConfig": "Extension reloaded with new configuration",
+    "reloadedPartial": "Extension reloaded, but config may not have been applied"
+  },
+  "pageHost": {
+    "loadFailed": "Failed to load extension page",
+    "loading": "Loading {{title}}..."
   },
   "extensionList": "Extension List",
   "extensionReloaded": "Extension Reloaded",

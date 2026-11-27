@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback } from "react"
 import { useTranslation } from "react-i18next"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
+import { Skeleton } from "@/components/ui/skeleton"
+import { SearchInput } from "@/components/shared"
 import { useToast } from "@/components/ui/use-toast"
 import {
   FullScreenDialog,
@@ -15,7 +16,6 @@ import {
 import {
   Loader2,
   Download,
-  Search,
   Check,
   Globe,
   Package,
@@ -29,11 +29,13 @@ import {
   FileText,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { textMini, textNano } from "@/design-system/tokens/typography"
 import { api } from "@/lib/api"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { useStore } from "@/store"
 import { useIsMobile } from "@/hooks/useMobile"
+import { categoryIcon } from "./ExtensionCard"
 
 // ============================================================================
 // TYPES
@@ -296,19 +298,30 @@ export function MarketplaceDialog({
   return (
     <FullScreenDialog open={open} onOpenChange={(v) => { if (!v) handleClose(); else onOpenChange(v) }}>
       {showDetail ? (
-        <header className="shrink-0 flex items-center justify-between gap-3 px-3 md:px-5 py-3 md:py-4 ">
-          <div className="flex items-center gap-2 min-w-0">
-            <Button variant="ghost" size={isMobile ? "icon" : "sm"} onClick={handleBack} disabled={installing} className="-ml-2 shrink-0">
+        <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border px-4 md:px-6">
+          <div className="flex min-w-0 items-center gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size={isMobile ? "icon" : "sm"}
+              onClick={handleBack}
+              disabled={installing}
+              className="-ml-2 shrink-0"
+            >
               <ChevronLeft className="h-4 w-4" />
               {!isMobile && t("common:back")}
             </Button>
-            <span className="text-base md:text-lg font-semibold truncate">{selectedExtension?.name}</span>
+            <span className="truncate text-base font-semibold text-foreground md:text-lg">
+              {selectedExtension?.name}
+            </span>
           </div>
           <button
+            type="button"
             onClick={handleClose}
-            className="shrink-0 flex items-center justify-center w-8 h-8 md:w-9 rounded-lg text-muted-foreground hover:text-foreground bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 transition-all"
+            aria-label={t("common:close", { defaultValue: "Close" })}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring md:h-9 md:w-9"
           >
-            <X className="w-5 h-5" />
+            <X className="h-5 w-5" />
           </button>
         </header>
       ) : (
@@ -319,11 +332,12 @@ export function MarketplaceDialog({
         />
       )}
       <FullScreenDialogContent>
-        <FullScreenDialogMain className="p-4 md:p-6">
+        <FullScreenDialogMain className={cn("p-4 md:p-6", showDetail && "bg-muted-20")}>
           {showDetail ? (
             selectedExtension ? (
               <ExtensionDetailView
                 extension={selectedExtension}
+                installed={isInstalled(selectedExtension.id)}
                 installing={installing && installingId === selectedExtension.id}
                 onInstall={() => handleInstall(selectedExtension.id)}
                 onBack={handleBack}
@@ -331,127 +345,177 @@ export function MarketplaceDialog({
               />
             ) : null
           ) : (
-            <div className="space-y-4">
-              {/* Search and Filter */}
-              <div className="flex flex-col gap-3 sm:flex-row sm:gap-3">
-                <div className="relative flex-1">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    placeholder={t("extensions:market.searchPlaceholder", "Search extensions...")}
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="pl-9"
-                  />
-                </div>
-                <div className="flex gap-2 flex-wrap overflow-x-auto pb-1">
-                  <Button
-                    variant={selectedCategory === null ? "default" : "outline"}
-                    size="sm"
+            <div className="space-y-5">
+              {/* Search and Category Filter */}
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <SearchInput
+                  value={searchQuery}
+                  onChange={setSearchQuery}
+                  placeholder={t("extensions:market.searchPlaceholder", "Search extensions...")}
+                  aria-label={t("extensions:market.searchPlaceholder", "Search extensions...")}
+                  className="w-full lg:max-w-sm"
+                />
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
+                  <button
+                    type="button"
                     onClick={() => setSelectedCategory(null)}
-                    className="shrink-0"
+                    className={cn(
+                      "h-8 shrink-0 rounded-lg border px-3 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                      selectedCategory === null
+                        ? "border-primary bg-primary text-primary-foreground"
+                        : "border-border bg-card text-muted-foreground hover:bg-muted-30 hover:text-foreground",
+                    )}
                   >
                     {t("extensions:market.allCategories", "All")}
-                  </Button>
-                  {getAllCategories().slice(0, 5).map((cat) => (
-                    <Button
+                  </button>
+                  {getAllCategories().map((cat) => (
+                    <button
                       key={cat}
-                      variant={selectedCategory === cat ? "default" : "outline"}
-                      size="sm"
+                      type="button"
                       onClick={() => setSelectedCategory(cat)}
-                      className="shrink-0"
+                      className={cn(
+                        "h-8 shrink-0 rounded-lg border px-3 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                        selectedCategory === cat
+                          ? "border-primary bg-primary text-primary-foreground"
+                          : "border-border bg-card text-muted-foreground hover:bg-muted-30 hover:text-foreground",
+                      )}
                     >
                       {cat}
-                    </Button>
+                    </button>
                   ))}
                 </div>
               </div>
 
               {/* Extensions List */}
               {loading ? (
-                <div className="flex items-center justify-center h-64">
-                  <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(max(25%_-_1rem,280px),1fr))] gap-4">
+                  {Array.from({ length: 6 }).map((_, i) => (
+                    <div
+                      key={i}
+                      className="rounded-xl border border-border bg-card p-4 space-y-3"
+                    >
+                      <div className="flex items-start gap-3">
+                        <Skeleton className="h-10 w-10 rounded-lg shrink-0" />
+                        <div className="flex-1 space-y-2">
+                          <Skeleton className="h-4 w-3/5" />
+                          <Skeleton className="h-3 w-2/5" />
+                        </div>
+                      </div>
+                      <Skeleton className="h-9 w-full" />
+                      <div className="flex items-center justify-between pt-1">
+                        <Skeleton className="h-4 w-20" />
+                        <Skeleton className="h-4 w-16" />
+                      </div>
+                    </div>
+                  ))}
                 </div>
               ) : filteredExtensions.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-64 text-center">
-                  <Package className="h-12 w-12 text-muted-foreground mb-4" />
-                  <p className="text-muted-foreground">
+                <div className="flex flex-col items-center justify-center py-16 text-center">
+                  <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-xl border border-border bg-muted-30 text-muted-foreground">
+                    <Package className="h-5 w-5" strokeWidth={1.75} />
+                  </div>
+                  <p className="text-sm text-muted-foreground">
                     {searchQuery || selectedCategory
                       ? t("extensions:market.noResults", "No extensions found")
                       : t("extensions:market.noExtensions", "No extensions available")}
                   </p>
+                  {(searchQuery || selectedCategory) && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="mt-4"
+                      onClick={() => {
+                        setSearchQuery("")
+                        setSelectedCategory(null)
+                      }}
+                    >
+                      <X className="mr-1.5 h-3.5 w-3.5" />
+                      {t("common:clearFilters", { defaultValue: "Clear Filters" })}
+                    </Button>
+                  )}
                 </div>
               ) : (
                 <div className="grid grid-cols-[repeat(auto-fill,minmax(max(25%_-_1rem,280px),1fr))] gap-4">
-                  {/* Same auto-fill grid as the agents page: cards adapt to the
-                      container (min 25% / 280px) instead of stretching one
-                      full-width row per extension on wide screens. */}
+                  {/* Same auto-fill grid as ExtensionGrid & AgentsPage */}
                   {filteredExtensions.map((ext) => {
                     const installed = isInstalled(ext.id)
+                    const CategoryIcon = categoryIcon(ext.id, ext.name)
                     return (
                       <Card
                         key={ext.id}
-                        className={cn(
-                          "p-4 flex flex-col hover:bg-accent transition-colors overflow-hidden",
-                          !installed && "cursor-pointer",
-                          installed && "border-border"
-                        )}
-                        onClick={() => !installed && loadExtensionDetails(ext.id)}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => loadExtensionDetails(ext.id)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault()
+                            loadExtensionDetails(ext.id)
+                          }
+                        }}
+                        className="group flex h-full cursor-pointer flex-col overflow-hidden rounded-xl border border-border bg-card p-4 shadow-sm transition-all duration-fast ease-out hover:border-[var(--border-hover)] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                       >
-                        <div className="flex items-center gap-2 mb-1 flex-wrap min-w-0">
-                          <h3 className="font-semibold truncate min-w-0">{ext.name}</h3>
-                          {installed && (
-                            <Badge variant="secondary" className="text-xs shrink-0">
-                              <Check className="h-3 w-3 mr-1" />
-                              {t("extensions:market.installed", "Installed")}
-                            </Badge>
-                          )}
-                          <Badge variant="outline" className="text-xs shrink-0">
-                            {ext.version}
-                          </Badge>
+                        {/* Header: monochrome icon tile + name + status/version */}
+                        <div className="mb-3 flex min-w-0 items-start gap-3">
+                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border bg-muted-30 text-foreground">
+                            <CategoryIcon className="h-4 w-4" strokeWidth={1.75} />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <h3 className="truncate text-sm font-semibold text-foreground" title={ext.name}>
+                                {ext.name}
+                              </h3>
+                              {installed && (
+                                <span className={cn(textNano, "inline-flex shrink-0 items-center gap-1 rounded-full bg-success-light px-1.5 py-0.5 font-medium text-success")}>
+                                  <Check className="h-2.5 w-2.5" />
+                                  {t("extensions:market.installed", "Installed")}
+                                </span>
+                              )}
+                            </div>
+                            <div className="mt-0.5 flex items-center gap-2">
+                              <span className={cn(textMini, "truncate font-mono text-muted-foreground")} title={ext.id}>
+                                {ext.id}
+                              </span>
+                              <span className={cn(textNano, "shrink-0 font-mono text-muted-foreground")}>
+                                v{ext.version}
+                              </span>
+                            </div>
+                          </div>
                         </div>
-                        <p className="text-sm text-muted-foreground line-clamp-2 leading-5">
-                          {ext.description}
-                        </p>
-                        <div className="flex items-center gap-2 flex-wrap mt-2 mb-3">
-                          {ext.categories.slice(0, 3).map((cat) => (
-                            <Badge key={cat} variant="secondary" className="text-xs">
-                              {cat}
-                            </Badge>
-                          ))}
-                          {ext.author && (
-                            <span className="text-xs text-muted-foreground truncate min-w-0">
-                              by {ext.author}
-                            </span>
-                          )}
+
+                        {/* Fixed 2-line description slot for uniform grid row height */}
+                        <div className="mb-3 min-h-10">
+                          <p className="line-clamp-2 text-xs leading-relaxed text-muted-foreground">
+                            {ext.description}
+                          </p>
                         </div>
-                        {/* Pinned to the card floor so buttons align across a
-                            grid row regardless of description length. */}
-                        <div className="mt-auto flex items-center gap-2">
-                          {installed ? (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="w-full"
-                              disabled
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <Check className="h-4 w-4 mr-1" />
-                              {t("extensions:market.installed", "Installed")}
-                            </Button>
-                          ) : (
-                            <Button
-                              variant="default"
-                              size="sm"
-                              className="w-full"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                loadExtensionDetails(ext.id)
-                              }}
-                            >
-                              {t("extensions:market.viewDetails", "View Details")}
-                              <ChevronRight className="h-4 w-4 ml-1" />
-                            </Button>
-                          )}
+
+                        {/* Categories */}
+                        {ext.categories.length > 0 && (
+                          <div className="mb-3 flex flex-wrap items-center gap-1.5">
+                            {ext.categories.slice(0, 3).map((cat) => (
+                              <span
+                                key={cat}
+                                className={cn(
+                                  textNano,
+                                  "rounded-full border border-glass-border bg-muted-20 px-2 py-0.5 text-muted-foreground",
+                                )}
+                              >
+                                {cat}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Footer: author + subtle detail affordance */}
+                        <div className="mt-auto flex items-center justify-between gap-2 border-t border-glass-border pt-2.5">
+                          <span className={cn(textMini, "min-w-0 truncate text-muted-foreground")}>
+                            {ext.author ? t("extensions:card.byAuthor", { author: ext.author, defaultValue: `By ${ext.author}` }) : ""}
+                          </span>
+                          <span className="inline-flex shrink-0 items-center gap-0.5 text-xs font-medium text-muted-foreground transition-colors group-hover:text-foreground">
+                            {t("extensions:market.viewDetails", "View Details")}
+                            <ChevronRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
+                          </span>
                         </div>
                       </Card>
                     )
@@ -464,7 +528,7 @@ export function MarketplaceDialog({
       </FullScreenDialogContent>
       {showInstallFooter && (
         <FullScreenDialogFooter>
-          <Button onClick={() => handleInstall(selectedExtension!.id)} disabled={installing} className={isMobile ? "flex-1" : ""}>
+          <Button onClick={() => handleInstall(selectedExtension!.id)} disabled={installing} size="sm" className={isMobile ? "flex-1" : ""}>
             {installing ? (
               <>
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -489,6 +553,7 @@ export function MarketplaceDialog({
 
 interface ExtensionDetailViewProps {
   extension: FullExtensionMetadata
+  installed?: boolean
   installing: boolean
   onInstall: () => void
   onBack: () => void
@@ -497,6 +562,7 @@ interface ExtensionDetailViewProps {
 
 function ExtensionDetailView({
   extension,
+  installed = false,
   installing: _installing,
   onInstall: _onInstall,
   onBack: _onBack,
@@ -589,122 +655,137 @@ function ExtensionDetailView({
   }
 
   const safeHomepage = sanitizeSafeLinkUrl(extension.homepage)
+  const CategoryIcon = categoryIcon(extension.id, extension.name)
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="border-b pb-4">
-        <div className="flex items-center gap-2 mb-2 flex-wrap">
-          <h2 className="text-lg font-semibold">{extension.name}</h2>
-          <Badge variant="outline">{extension.version}</Badge>
-          {extension.package_url && (
-            <Badge variant="default" className="text-xs">
-              <Package className="h-3 w-3 mr-1" />
-              .nep Package
-            </Badge>
-          )}
-          {extension.categories.slice(0, isMobile ? 2 : undefined).map((cat) => (
-            <Badge key={cat} variant="secondary">
-              {cat}
-            </Badge>
-          ))}
-        </div>
-        <p className="text-muted-foreground">{extension.description}</p>
-        <div className="flex items-center gap-4 mt-2 text-sm text-muted-foreground flex-wrap">
-          <span>by {extension.author}</span>
-          <span>{extension.license}</span>
-          {safeHomepage && (
-            <a
-              href={safeHomepage}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1 hover:text-primary"
-            >
-              <ExternalLink className="h-3 w-3" />
-              {t("extensions:market.homepage", "Homepage")}
-            </a>
-          )}
+    <div className="mx-auto flex w-full max-w-4xl flex-col gap-5 pb-4">
+      {/* Header Summary Card */}
+      <div className="rounded-xl border border-border bg-card p-5 space-y-3">
+        <div className="flex items-start gap-3.5">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-border bg-muted-30 text-foreground">
+            <CategoryIcon className="h-5 w-5" strokeWidth={1.75} />
+          </div>
+          <div className="min-w-0 flex-1 space-y-1.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-lg font-semibold text-foreground">{extension.name}</h2>
+              <Badge variant="outline" className="font-mono text-xs font-normal">
+                v{extension.version}
+              </Badge>
+              {installed && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-success-light px-2 py-0.5 text-xs font-medium text-success">
+                  <Check className="h-3 w-3" />
+                  {t("extensions:market.installed", "Installed")}
+                </span>
+              )}
+              {extension.package_url && (
+                <Badge variant="outline" className="bg-muted-20 text-xs font-normal text-muted-foreground">
+                  <Package className="mr-1 h-3 w-3" />
+                  .nep
+                </Badge>
+              )}
+              {extension.categories.slice(0, isMobile ? 2 : undefined).map((cat) => (
+                <Badge key={cat} variant="outline" className="border-glass-border bg-muted-20 text-xs font-normal text-muted-foreground">
+                  {cat}
+                </Badge>
+              ))}
+            </div>
+            <p className="text-sm leading-relaxed text-muted-foreground">{extension.description}</p>
+            <div className="flex flex-wrap items-center gap-4 pt-1 text-xs text-muted-foreground">
+              <span>{t("extensions:card.byAuthor", { author: extension.author, defaultValue: `By ${extension.author}` })}</span>
+              <span>{extension.license}</span>
+              <code className="font-mono">{extension.id}</code>
+              {safeHomepage && (
+                <a
+                  href={safeHomepage}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-foreground hover:underline"
+                >
+                  <ExternalLink className="h-3 w-3" />
+                  {t("extensions:market.homepage", "Homepage")}
+                </a>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 
       {/* Capabilities */}
-      <div className="flex-1 overflow-y-auto py-4 space-y-6">
+      <div className="space-y-5">
         {/* Tools */}
         {extension.capabilities.tools.length > 0 && (
-          <div>
-            <h3 className="font-semibold mb-3 flex items-center gap-2">
-              <Settings className="h-4 w-4" />
+          <section className="space-y-2.5">
+            <h3 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              <Settings className="h-3.5 w-3.5" />
               {t("extensions:market.tools", "Tools")} ({extension.capabilities.tools.length})
             </h3>
             <div className="grid gap-2">
               {extension.capabilities.tools.map((tool) => (
-                <Card key={tool.name} className="p-3">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <div className="font-medium">{tool.display_name}</div>
-                      <div className="text-sm text-muted-foreground">
-                        <code className="text-xs bg-muted px-1 rounded">{tool.name}</code>
-                      </div>
-                      <p className="text-sm text-muted-foreground mt-1">
-                        {tool.description}
-                      </p>
-                    </div>
+                <div key={tool.name} className="rounded-xl border border-border bg-card p-3.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-medium text-foreground">{tool.display_name}</span>
+                    <code className="rounded-md border border-border bg-muted-30 px-1.5 py-0.5 font-mono text-xs text-muted-foreground">
+                      {tool.name}
+                    </code>
                   </div>
-                </Card>
+                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                    {tool.description}
+                  </p>
+                </div>
               ))}
             </div>
-          </div>
+          </section>
         )}
 
         {/* Metrics */}
         {extension.capabilities.metrics.length > 0 && (
-          <div>
-            <h3 className="font-semibold mb-3 flex items-center gap-2">
-              <Info className="h-4 w-4" />
+          <section className="space-y-2.5">
+            <h3 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              <Info className="h-3.5 w-3.5" />
               {t("extensions:market.metrics", "Metrics")} ({extension.capabilities.metrics.length})
             </h3>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
               {extension.capabilities.metrics.map((metric) => (
-                <Card key={metric.name} className="p-3">
-                  <div className="text-sm font-medium">{metric.display_name}</div>
-                  <div className="text-xs text-muted-foreground">
-                    <code>{metric.name}</code>
+                <div key={metric.name} className="rounded-xl border border-border bg-card p-3">
+                  <div className="truncate text-sm font-medium text-foreground">{metric.display_name}</div>
+                  <div className="mt-0.5 truncate font-mono text-xs text-muted-foreground">
+                    {metric.name}
                   </div>
-                  <div className="text-xs text-muted-foreground mt-1">
+                  <div className="mt-1.5 text-xs text-muted-foreground">
                     {metric.data_type}
                     {metric.unit && ` · ${metric.unit}`}
                   </div>
-                </Card>
+                </div>
               ))}
             </div>
-          </div>
+          </section>
         )}
 
         {/* Commands */}
         {extension.capabilities.commands.length > 0 && (
-          <div>
-            <h3 className="font-semibold mb-3 flex items-center gap-2">
-              <Package className="h-4 w-4" />
+          <section className="space-y-2.5">
+            <h3 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              <Package className="h-3.5 w-3.5" />
               {t("extensions:market.commands", "Commands")} ({extension.capabilities.commands.length})
             </h3>
             <div className="flex flex-wrap gap-2">
               {extension.capabilities.commands.map((cmd) => (
-                <Badge key={cmd.name} variant="secondary" className="text-sm py-1 px-3">
+                <Badge key={cmd.name} variant="outline" className="bg-card px-3 py-1 text-xs font-normal text-foreground">
                   {cmd.display_name}
                 </Badge>
               ))}
             </div>
-          </div>
+          </section>
         )}
 
         {/* Requirements */}
         {(extension.requirements.network || extension.requirements.api_keys.length > 0) && (
-          <div className="rounded-lg p-4">
-            <h3 className="font-semibold mb-2 flex items-center gap-2">
-              <AlertCircle className="h-4 w-4" />
+          <section className="rounded-xl border border-border bg-card p-4 space-y-2">
+            <h3 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              <AlertCircle className="h-3.5 w-3.5" />
               {t("extensions:market.requirements", "Requirements")}
             </h3>
-            <ul className="text-sm space-y-1">
+            <ul className="space-y-1 text-xs leading-relaxed text-muted-foreground">
               {extension.requirements.network && (
                 <li>• {t("extensions:market.requiresNetwork", "Requires network access")}</li>
               )}
@@ -712,15 +793,15 @@ function ExtensionDetailView({
                 <li key={key}>• {key}</li>
               ))}
             </ul>
-          </div>
+          </section>
         )}
 
         {/* README / Documentation — render only once content arrives, so a
             missing README never flashes a title that then vanishes. */}
         {readme && (
-          <div>
-            <h3 className="font-semibold mb-3 flex items-center gap-2">
-              <FileText className="h-4 w-4" />
+          <section className="rounded-xl border border-border bg-card p-5 space-y-3">
+            <h3 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              <FileText className="h-3.5 w-3.5" />
               {t("extensions:market.readme", "Documentation")}
             </h3>
             <div className="prose prose-sm dark:prose-invert max-w-none">
@@ -752,7 +833,7 @@ function ExtensionDetailView({
                 {readme}
               </ReactMarkdown>
             </div>
-          </div>
+          </section>
         )}
       </div>
     </div>

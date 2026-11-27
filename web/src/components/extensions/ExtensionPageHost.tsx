@@ -5,6 +5,8 @@
  */
 
 import { Component, type ComponentType } from 'react'
+import i18n from 'i18next'
+import { AlertCircle, Loader2 } from 'lucide-react'
 
 interface HostState {
   Component: ComponentType | null
@@ -107,17 +109,23 @@ export class ExtensionPageHost extends Component<ExtensionPageHostProps, HostSta
     if (error) {
       return (
         <div className="flex h-full items-center justify-center p-8">
-          <div className="max-w-md rounded-lg border border-error bg-error-light p-6 text-center">
-            <div className="mb-1 font-semibold text-destructive">扩展页面加载失败</div>
-            <div className="text-sm text-muted-foreground">{title}: {error}</div>
+          <div className="max-w-md rounded-xl border border-error bg-error-light p-6 text-center space-y-2">
+            <div className="flex items-center justify-center gap-2 text-sm font-semibold text-error">
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              <span>{i18n.t('extensions:pageHost.loadFailed', { defaultValue: 'Failed to load extension page' })}</span>
+            </div>
+            <div className="text-xs leading-relaxed text-muted-foreground break-words [overflow-wrap:anywhere]">
+              {title}: {error}
+            </div>
           </div>
         </div>
       )
     }
     if (!Component) {
       return (
-        <div className="flex h-full items-center justify-center p-8 text-muted-foreground">
-          正在加载 {title}…
+        <div className="flex h-full items-center justify-center gap-2.5 p-8 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin text-primary" />
+          <span>{i18n.t('extensions:pageHost.loading', { title, defaultValue: `Loading ${title}...` })}</span>
         </div>
       )
     }

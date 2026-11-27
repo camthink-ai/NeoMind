@@ -214,6 +214,8 @@ export function ExtensionsPage() {
             onReload={handleReload}
             searchQuery={searchQuery}
             onSearchChange={setSearchQuery}
+            onOpenMarketplace={() => setMarketplaceDialogOpen(true)}
+            onOpenUpload={() => setUploadDialogOpen(true)}
           />
         </div>
       </PageLayout>

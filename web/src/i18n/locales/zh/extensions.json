@@ -14,7 +14,9 @@
     "catSmartHome": "智能家居",
     "catMedia": "媒体流",
     "catData": "数据服务",
-    "catTool": "AI 工具"
+    "catTool": "AI 工具",
+    "browseMarket": "浏览扩展市场",
+    "uploadLocal": "上传本地包"
   },
   "loading": "加载中...",
   "extensionId": "扩展 ID",
@@ -50,6 +52,7 @@
   "authRequired": "需要登录",
   "authRequiredDescription": "请登录后再上传扩展",
   "dragDrop": "点击或拖放 .nep 文件到此处",
+  "dropToUpload": "松开鼠标即可上传扩展包",
   "dragDropDescription": "支持包含二进制文件和前端组件的 .nep 扩展包",
   "selectFile": "选择文件",
   "uploading": "上传中...",
@@ -135,7 +138,9 @@
   "commands": {
     "noCommands": "暂无指令",
     "executing": "执行中",
-    "execute": "执行"
+    "execute": "执行",
+    "resultSuccess": "执行成功",
+    "resultFailed": "执行失败"
   },
   "commandsLabel": "命令",
   "metricsLabel": "指标",
@@ -230,6 +235,7 @@
     "requirements": "要求",
     "requiresNetwork": "需要网络访问",
     "homepage": "主页",
+    "readme": "文档说明",
     "reload": "重载",
     "confirmReload": "重载扩展",
     "confirmReloadDescription": "确定要重载 \"{{name}}\" 吗？这将从源文件重新加载扩展。",
@@ -248,7 +254,13 @@
     "count": "共 {{count}} 条",
     "refresh": "刷新",
     "clear": "清除",
-    "noLogs": "暂无日志"
+    "noLogs": "暂无日志",
+    "levelAll": "全部",
+    "levelError": "错误",
+    "levelWarn": "警告",
+    "levelInfo": "信息",
+    "noMatchingLogs": "没有符合当前级别的日志",
+    "copied": "日志已复制到剪贴板"
   },
   "sections": {
     "overview": "概览",
@@ -282,7 +294,14 @@
     "noConfig": "暂无配置",
     "title": "标题",
     "configure": "配置",
-    "saveReload": "保存并重新加载"
+    "saveReload": "保存并重新加载",
+    "saved": "配置已保存",
+    "reloadedWithConfig": "扩展已使用新配置重新加载",
+    "reloadedPartial": "扩展已重新加载，但配置可能未完全生效"
+  },
+  "pageHost": {
+    "loadFailed": "扩展页面加载失败",
+    "loading": "正在加载 {{title}}…"
   },
   "extensionList": "扩展列表",
   "extensionReloaded": "扩展已重新加载",

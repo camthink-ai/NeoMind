@@ -36,7 +36,7 @@ import type { Extension } from "@/types"
 /// Pick a scannable category icon from the extension id/name keywords.
 /// Backend sends no category/icon field, so heuristics keep the grid
 /// distinguishable. Last-match wins; falls back to Code2.
-function categoryIcon(id: string, name: string): LucideIcon {
+export function categoryIcon(id: string, name: string): LucideIcon {
   const haystack = `${id} ${name}`.toLowerCase()
   const pairs: [RegExp, LucideIcon][] = [
     [/vision|yolo|object.?detect|image|analy|ocr|face/, Eye],
@@ -131,9 +131,9 @@ export function ExtensionCard({
             {/* Monochrome icon tile with status corner dot (unified across entity cards) */}
             <div className="relative hidden w-10 h-10 rounded-lg border border-border bg-muted-30 text-foreground items-center justify-center shrink-0 transition-colors md:flex">
               <CategoryIcon className="h-4 w-4" strokeWidth={1.75} />
-              {/* Status indicator dot */}
+              {/* Status indicator dot (aligned with AgentCard) */}
               <div className={cn(
-                "absolute -top-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-background",
+                "absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ring-2 ring-card",
                 hasError || hasCrashed ? "bg-error" : hasWarning ? "bg-warning" : isFailed ? "bg-muted-foreground" : "bg-success"
               )} />
             </div>
@@ -177,31 +177,19 @@ export function ExtensionCard({
           </DropdownMenu>
         </div>
 
-        {/* Description — the wrapper always reserves the two-line height
-            (min-h-10 ≈ 2 lines of text-xs/leading-relaxed) so every card in
-            the grid is equally tall whether the text is absent, one line, or
-            clamped at two; same pattern as BuiltinModelWizard's model cards.
-            The clamp needs display:-webkit-box, which a display utility on
-            the same element would override (responsive variants sort later
-            in the compiled CSS), so visibility lives on this wrapper and the
-            inner p keeps the same clamp classes as AgentCard's description. */}
+        {/* Description / Error summary — share one fixed two-line slot (min-h-10)
+            so error cards keep identical height to healthy cards in the grid. */}
         <div className="mb-3 hidden min-h-10 md:block">
-          {extension.description && (
-            <p className="line-clamp-2 text-xs leading-relaxed text-muted-foreground">
-              {extension.description}
-            </p>
-          )}
-        </div>
-
-        {/* Error summary — the card shows WHY it's red without opening
-            details; min-h-10 keeps error cards uniform among themselves. */}
-        {hasError && extension.last_error && (
-          <div className="mb-3 hidden min-h-10 md:block">
+          {hasError && extension.last_error ? (
             <p className="line-clamp-2 break-words text-xs leading-relaxed text-error">
               {extension.last_error}
             </p>
-          </div>
-        )}
+          ) : extension.description ? (
+            <p className="line-clamp-2 text-xs leading-relaxed text-muted-foreground">
+              {extension.description}
+            </p>
+          ) : null}
+        </div>
 
         {/* Footer: capabilities + (optional) AI-tools-off badge + author.
             Single line, stable height whether tools are on or off. */}
