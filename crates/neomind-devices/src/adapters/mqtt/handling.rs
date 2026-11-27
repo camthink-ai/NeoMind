@@ -673,57 +673,84 @@ impl MqttAdapter {
                 // base64 re-encode + decode round trip).
                 let mut reassembled_image: Option<chunked_image::ReassembledImage> = None;
                 if chunked_image::payload_may_be_chunked_image(&payload) {
-                    if let Ok(raw_json) = serde_json::from_slice::<serde_json::Value>(&payload) {
-                        let outcome = {
-                            let mut guard = chunked_images.lock().await;
-                            guard.ingest_json(broker_id, &topic, &raw_json)
-                        };
-                        match outcome {
-                            chunked_image::ChunkIngestOutcome::NotChunked => {}
-                            chunked_image::ChunkIngestOutcome::Pending {
-                                image_id,
-                                received_chunks,
-                                total_chunks,
-                            } => {
-                                debug!(
-                                    topic = %topic,
-                                    image_id = %image_id,
+                    // C firmware (cJSON/lwIP) occasionally appends trailing NUL bytes;
+                    // strip them so chunked headers/chunks never silently fail JSON
+                    // parsing and leak into binary auto-onboarding drafts.
+                    let json_slice = match payload.iter().rposition(|&b| b != 0) {
+                        Some(last) => &payload[..=last],
+                        None => &payload[..0],
+                    };
+                    match serde_json::from_slice::<serde_json::Value>(json_slice) {
+                        Ok(raw_json) => {
+                            let outcome = {
+                                let mut guard = chunked_images.lock().await;
+                                guard.ingest_json(broker_id, &topic, &raw_json)
+                            };
+                            match outcome {
+                                chunked_image::ChunkIngestOutcome::NotChunked => {}
+                                chunked_image::ChunkIngestOutcome::Pending {
+                                    image_id,
                                     received_chunks,
                                     total_chunks,
-                                    "Buffered MQTT image chunk"
-                                );
-                                return;
-                            }
-                            chunked_image::ChunkIngestOutcome::Duplicate { image_id } => {
-                                debug!(
-                                    topic = %topic,
-                                    image_id = %image_id,
-                                    "Ignoring duplicate MQTT image chunk or retransmit"
-                                );
-                                return;
-                            }
-                            chunked_image::ChunkIngestOutcome::Rejected { reason } => {
-                                warn!(
-                                    topic = %topic,
-                                    reason = %reason,
-                                    "Rejected invalid MQTT chunked image message"
-                                );
-                                return;
-                            }
-                            chunked_image::ChunkIngestOutcome::Completed(img) => {
-                                info!(
-                                    topic = %topic,
-                                    image_id = %img.image_id,
-                                    bytes = img.image_bytes.len(),
-                                    "Reassembled MQTT chunked image"
-                                );
-                                if let Ok(light_bytes) =
-                                    serde_json::to_vec(&img.to_discovery_sample_json())
-                                {
-                                    payload = light_bytes;
+                                } => {
+                                    if received_chunks == 0 {
+                                        info!(
+                                            topic = %topic,
+                                            image_id = %image_id,
+                                            total_chunks,
+                                            "Started MQTT chunked image session"
+                                        );
+                                    } else {
+                                        debug!(
+                                            topic = %topic,
+                                            image_id = %image_id,
+                                            received_chunks,
+                                            total_chunks,
+                                            "Buffered MQTT image chunk"
+                                        );
+                                    }
+                                    return;
                                 }
-                                reassembled_image = Some(img);
+                                chunked_image::ChunkIngestOutcome::Duplicate { image_id } => {
+                                    debug!(
+                                        topic = %topic,
+                                        image_id = %image_id,
+                                        "Ignoring duplicate MQTT image chunk or retransmit"
+                                    );
+                                    return;
+                                }
+                                chunked_image::ChunkIngestOutcome::Rejected { reason } => {
+                                    warn!(
+                                        topic = %topic,
+                                        reason = %reason,
+                                        "Rejected invalid MQTT chunked image message"
+                                    );
+                                    return;
+                                }
+                                chunked_image::ChunkIngestOutcome::Completed(img) => {
+                                    info!(
+                                        topic = %topic,
+                                        image_id = %img.image_id,
+                                        bytes = img.image_bytes.len(),
+                                        "Reassembled MQTT chunked image"
+                                    );
+                                    if let Ok(light_bytes) =
+                                        serde_json::to_vec(&img.to_discovery_sample_json())
+                                    {
+                                        payload = light_bytes;
+                                    }
+                                    reassembled_image = Some(img);
+                                }
                             }
+                        }
+                        Err(e) => {
+                            warn!(
+                                topic = %topic,
+                                payload_len = payload.len(),
+                                error = %e,
+                                "Failed to parse MQTT chunked image JSON — dropping"
+                            );
+                            return;
                         }
                     }
                 }
