@@ -149,20 +149,36 @@ export function ActionsOutputSection({
   // Flattened device commands for controlled actions + scoped command allowlist
   const deviceCommandOptions = useMemo(() => {
     const dtMap = new Map(deviceTypes.map((dt) => [dt.device_type, dt]))
-    const out: Array<{ destination: string; label: string; commandName: string }> = []
+    const out: Array<{
+      value: string
+      destination: string
+      label: string
+      commandName: string
+    }> = []
     for (const d of devices) {
       const id = d.device_id || d.id
       const dt = dtMap.get(d.device_type)
       for (const cmd of dt?.commands ?? []) {
         out.push({
-          destination: `device:${id}:${cmd.name}`,
+          value: `device:${id}:${cmd.name}`,
+          destination: `device:${id}`,
           label: `${d.name || id} · ${cmd.display_name || cmd.name}`,
-          commandName: cmd.display_name || cmd.name,
+          commandName: cmd.name,
         })
       }
     }
     return out
   }, [devices, deviceTypes])
+
+  const resolveSelectedOptionValue = (action: ControlledAction): string => {
+    const exact = deviceCommandOptions.find(
+      (o) => o.destination === action.destination && o.commandName === action.name,
+    )
+    if (exact) return exact.value
+    // Legacy 3-part destination fallback ("device:<id>:<cmd>")
+    const legacy = deviceCommandOptions.find((o) => o.value === action.destination)
+    return legacy ? legacy.value : ''
+  }
 
   const setPolicyMode = (mode: 'disabled' | 'scoped' | 'unrestricted') => {
     if (mode === 'disabled') onToolPolicyChange('disabled')
@@ -399,17 +415,15 @@ export function ActionsOutputSection({
                 {/* Quick device command picker */}
                 {deviceCommandOptions.length > 0 && (
                   <Select
-                    value={
-                      deviceCommandOptions.some((o) => o.destination === action.destination)
-                        ? action.destination
-                        : ''
-                    }
-                    onValueChange={(dest) => {
-                      const picked = deviceCommandOptions.find((o) => o.destination === dest)
-                      updateAction(idx, {
-                        destination: dest,
-                        name: action.name.trim() ? action.name : picked?.commandName || dest,
-                      })
+                    value={resolveSelectedOptionValue(action)}
+                    onValueChange={(val) => {
+                      const picked = deviceCommandOptions.find((o) => o.value === val)
+                      if (picked) {
+                        updateAction(idx, {
+                          destination: picked.destination,
+                          name: picked.commandName,
+                        })
+                      }
                     }}
                   >
                     <SelectTrigger className="h-9 text-xs">
@@ -417,7 +431,7 @@ export function ActionsOutputSection({
                     </SelectTrigger>
                     <SelectContent>
                       {deviceCommandOptions.map((opt) => (
-                        <SelectItem key={opt.destination} value={opt.destination}>
+                        <SelectItem key={opt.value} value={opt.value}>
                           {opt.label}
                         </SelectItem>
                       ))}

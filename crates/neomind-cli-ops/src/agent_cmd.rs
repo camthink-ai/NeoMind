@@ -770,9 +770,11 @@ pub async fn create_agent(
                             let field = parts.next().unwrap_or("value");
                             json!({ "kind": "device_metric", "device_id": device_id, "field": field })
                         }
-                        "extension_metric" | "ExtensionMetric" | "extension_tool"
-                        | "ExtensionTool" => {
-                            json!({ "kind": "extension_instance", "id": rid })
+                        "extension" | "Extension" | "extension_metric" | "ExtensionMetric"
+                        | "extension_tool" | "ExtensionTool" => {
+                            let clean = rid.strip_prefix("extension:").unwrap_or(rid);
+                            let id = clean.split(':').next().unwrap_or(clean);
+                            json!({ "kind": "extension_instance", "id": id })
                         }
                         _ => json!({ "kind": "whole_device", "device_id": rid }),
                     };
@@ -1072,10 +1074,10 @@ pub fn notify_to_policy(parsed: serde_json::Value) -> serde_json::Value {
         "judgment" => json!({
             "channels": channels,
             "on_complete": false,
-            "on_alert": true,
+            "on_alert": false,
             "alert_depends_on": [],
             "on_failure": false,
-            "pending_confirmation": false,
+            "pending_confirmation": true,
         }),
         _ => json!({
             "channels": channels,
@@ -1324,11 +1326,23 @@ pub async fn update_agent(
         return Ok(resp);
     }
     if let Some(ids) = device_ids {
-        let id_list: Vec<&str> = ids
-            .split(',')
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .collect();
+        let trimmed = ids.trim();
+        let id_list: Vec<String> = if trimmed.starts_with('[') {
+            serde_json::from_str::<Vec<String>>(trimmed).unwrap_or_else(|_| {
+                trimmed
+                    .trim_matches(|c| c == '[' || c == ']')
+                    .split(',')
+                    .map(|s| s.trim().trim_matches(|c| c == '"' || c == '\'').to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
+        } else {
+            trimmed
+                .split(',')
+                .map(|s| s.trim().trim_matches(|c| c == '"' || c == '\'').to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        };
         body["device_ids"] = json!(id_list);
     }
     if let Some(res_str) = resources {
@@ -1375,8 +1389,20 @@ pub async fn update_agent(
     if let Some(v) = body.get("user_prompt") {
         patch["user_prompt"] = v.clone();
     }
+    if let Some(sys) = body.get("system_prompt").and_then(|v| v.as_str()) {
+        if !sys.trim().is_empty() {
+            if let Some(up) = patch.get("user_prompt").and_then(|v| v.as_str()) {
+                patch["user_prompt"] = json!(format!("{sys}\n\n{up}"));
+            } else {
+                patch["user_prompt"] = json!(sys);
+            }
+        }
+    }
     if let Some(v) = body.get("llm_backend_id") {
         patch["llm_backend_id"] = v.clone();
+    }
+    if let Some(v) = body.get("controlled_actions") {
+        patch["controlled_actions"] = v.clone();
     }
     if let Some(v) = body.get("tool_policy") {
         patch["tool_policy"] = v.clone();
@@ -1478,8 +1504,11 @@ pub async fn update_agent(
                         let field = parts.next().unwrap_or("value");
                         json!({ "kind": "device_metric", "device_id": device_id, "field": field })
                     }
-                    "extension_metric" | "ExtensionMetric" | "extension_tool" | "ExtensionTool" => {
-                        json!({ "kind": "extension_instance", "id": rid })
+                    "extension" | "Extension" | "extension_metric" | "ExtensionMetric"
+                    | "extension_tool" | "ExtensionTool" => {
+                        let clean = rid.strip_prefix("extension:").unwrap_or(rid);
+                        let ext_id = clean.split(':').next().unwrap_or(clean);
+                        json!({ "kind": "extension_instance", "id": ext_id })
                     }
                     _ => json!({ "kind": "whole_device", "device_id": rid }),
                 };
@@ -1519,15 +1548,11 @@ pub async fn update_agent(
         };
         patch["trigger"] = trigger;
     }
-    if let Some(schema) = body.get("output_schema").and_then(|v| v.as_array()) {
-        let fields: Vec<_> = schema
-            .iter()
-            .filter_map(|f| {
-                let name = f.get("name")?.as_str()?;
-                Some(json!({ "name": name, "depends_on": [], "description": f.get("description") }))
-            })
-            .collect();
-        patch["output"] = json!({ "fields": fields, "publish": body.get("execution_mode") == Some(&json!("structured")) });
+    if let Some(mut out_obj) = body.get("output").cloned() {
+        if body.get("execution_mode") == Some(&json!("structured")) {
+            out_obj["publish"] = json!(true);
+        }
+        patch["output"] = out_obj;
     }
 
     let data = client.put(&format!("/agents/{}", id), &patch).await?;

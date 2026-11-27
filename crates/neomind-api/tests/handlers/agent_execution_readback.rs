@@ -99,7 +99,11 @@ async fn latest_execution_conclusion_is_readable_via_cli_read_path() {
     let state = crate::common::create_test_server_state().await;
     let (agent_id, _) = seed_executed_agent(&state).await;
 
-    let resp = get_agent_executions(State(state), Path(agent_id))
+    let resp = get_agent_executions(
+        State(state),
+        Path(agent_id),
+        axum::extract::Query(Default::default()),
+    )
         .await
         .expect("executions readable");
     let body = resp.0.data.expect("success payload carries data");
@@ -124,7 +128,11 @@ async fn v2_list_card_modal_agree_on_trigger_and_input_summary() {
     let (agent_id, exec_id) = seed_executed_agent(&state).await;
 
     // List
-    let list_resp = get_agent_executions(State(state.clone()), Path(agent_id.clone()))
+    let list_resp = get_agent_executions(
+        State(state.clone()),
+        Path(agent_id.clone()),
+        axum::extract::Query(Default::default()),
+    )
         .await
         .expect("list");
     let list_body = list_resp.0.data.expect("list data");
@@ -249,7 +257,11 @@ async fn v2_list_falls_back_to_agent_trigger_when_source_missing() {
         AgentRecordStore::from_arc(state.agents.agent_store.db()).expect("record store");
     record_store.save_execution(&execution).expect("seed");
 
-    let resp = get_agent_executions(State(state), Path(agent_id))
+    let resp = get_agent_executions(
+        State(state),
+        Path(agent_id),
+        axum::extract::Query(Default::default()),
+    )
         .await
         .expect("list");
     let body = resp.0.data.expect("data");
@@ -321,7 +333,11 @@ async fn v2_user_messages_and_memory_endpoints_work_under_schema_v2() {
     .await
     .expect("add msg 2");
 
-    let list = get_user_messages(State(state.clone()), Path(agent_id.clone()))
+    let list = get_user_messages(
+        State(state.clone()),
+        Path(agent_id.clone()),
+        axum::extract::Query(Default::default()),
+    )
         .await
         .expect("list msgs")
         .0

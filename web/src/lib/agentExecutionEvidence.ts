@@ -5,7 +5,7 @@
  * `unknown` — never invent timestamps, outputs, action results, or failure
  * nodes from status color alone.
  */
-import type { AgentExecutionDetail } from '@/types/agent'
+import type { ActionDeliveryRecord, AgentExecutionDetail, ToolCallTrace } from '@/types/agent'
 
 export type EvidencePresence = 'known' | 'unknown' | 'empty'
 
@@ -79,6 +79,46 @@ function pickOutput(detail: AgentExecutionDetail): {
   return { text: null, presence: 'unknown' }
 }
 
+function mapDeliveryToAction(d: ActionDeliveryRecord): ActionEvidenceRow {
+  const st = d.state
+  const success = st.state === 'accepted' || st.state === 'confirmed'
+  let result: string | null = st.state
+  let resultState: 'known' | 'unknown' = 'known'
+  if (st.state === 'rejected') {
+    result = st.reason ? `rejected: ${st.reason}` : 'rejected'
+  } else if (st.state === 'outcome_unknown') {
+    result = st.reason ? `outcome_unknown: ${st.reason}` : null
+    resultState = st.reason ? 'known' : 'unknown'
+  }
+  return {
+    description: d.action_fingerprint || 'delivery',
+    target: d.destination || '—',
+    success,
+    result,
+    resultState,
+  }
+}
+
+function mapToolCallToAction(tc: ToolCallTrace): ActionEvidenceRow {
+  const err = tc.error?.trim()
+  const preview = tc.result_preview?.trim()
+  const result = err || preview || (tc.success ? 'ok' : null)
+  const target =
+    tc.arguments &&
+    typeof tc.arguments === 'object' &&
+    'command' in tc.arguments &&
+    typeof (tc.arguments as Record<string, unknown>).command === 'string'
+      ? ((tc.arguments as Record<string, unknown>).command as string)
+      : 'tool'
+  return {
+    description: tc.round ? `#${tc.round} ${tc.name}` : tc.name || 'tool',
+    target,
+    success: Boolean(tc.success),
+    result,
+    resultState: result ? 'known' : 'unknown',
+  }
+}
+
 function deriveFailure(detail: AgentExecutionDetail): FailureEvidence {
   if (detail.error?.trim()) {
     return { kind: 'error', detail: detail.error.trim(), state: 'known' }
@@ -91,6 +131,23 @@ function deriveFailure(detail: AgentExecutionDetail): FailureEvidence {
     return {
       kind: 'failed_action',
       detail: detailText || first.target || null,
+      state: 'known',
+    }
+  }
+
+  const rejectedDelivery = (detail.deliveries ?? []).find(
+    (d) => d.state.state === 'rejected' || d.state.state === 'outcome_unknown',
+  )
+  if (rejectedDelivery) {
+    const st = rejectedDelivery.state
+    const reason =
+      st.state === 'rejected' || st.state === 'outcome_unknown' ? st.reason : ''
+    const detailText = [rejectedDelivery.action_fingerprint, reason]
+      .filter(Boolean)
+      .join(' — ')
+    return {
+      kind: 'failed_action',
+      detail: detailText || rejectedDelivery.destination || null,
       state: 'known',
     }
   }
@@ -174,6 +231,11 @@ export function deriveAgentExecutionEvidence(
         resultState: result ? 'known' : 'unknown',
       }
     })
+    actionsPresence = actions.length > 0 ? 'known' : 'empty'
+  } else if (Array.isArray(detail.deliveries) || Array.isArray(detail.tool_calls)) {
+    const deliveryActions = (detail.deliveries ?? []).map(mapDeliveryToAction)
+    const toolActions = (detail.tool_calls ?? []).map(mapToolCallToAction)
+    actions = [...deliveryActions, ...toolActions]
     actionsPresence = actions.length > 0 ? 'known' : 'empty'
   }
 

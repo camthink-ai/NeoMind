@@ -28,7 +28,17 @@ pub fn load_from_store(
         .map_err(|e| AgentError::Other(e.to_string()))?;
     let mut n = 0;
     for rec in specs {
-        let spec = record_to_spec(&rec).map_err(AgentError::Other)?;
+        let spec = match record_to_spec(&rec) {
+            Ok(spec) => spec,
+            Err(e) => {
+                tracing::warn!(
+                    agent_id = %rec.id,
+                    error = %e,
+                    "skipping unreadable agent spec row during startup"
+                );
+                continue;
+            }
+        };
         let id = spec.id.clone();
         mem.save_spec(spec, now_ms)?;
         if let Ok(Some(rt)) = store.get_runtime(&id) {
@@ -122,7 +132,11 @@ pub fn persist_execution(store: &AgentRecordStore, exec: &AgentExecutionRecord) 
         conclusion: exec.conclusion.clone(),
         structured_result: exec.structured_result.clone(),
         error: exec.error.clone(),
-        alert_verdict: exec.alert_verdict.as_ref().map(|v| format!("{v:?}")),
+        alert_verdict: exec
+            .alert_verdict
+            .as_ref()
+            .and_then(|v| serde_json::to_value(v).ok())
+            .and_then(|v| v.as_str().map(str::to_string)),
     };
     store
         .save_execution(&row)
@@ -363,5 +377,49 @@ mod tests {
         let record_store_b = AgentRecordStore::from_arc(reopened.db()).unwrap();
         assert!(record_store_b.get_spec("gone").unwrap().is_none());
         assert!(record_store_b.get_runtime("gone").unwrap().is_none());
+    }
+
+    #[test]
+    fn persist_execution_uses_snake_case_alert_verdict_and_load_skips_bad_row() {
+        let agent_store = AgentStore::memory().unwrap();
+        let record_store = AgentRecordStore::from_arc(agent_store.db()).unwrap();
+
+        // Insert one valid spec and one corrupt spec JSON row.
+        let valid = sample_spec("good");
+        record_store.save_spec(&spec_to_record(&valid)).unwrap();
+        let mut bad = spec_to_record(&sample_spec("corrupt"));
+        bad.input.requirements = vec![serde_json::json!("not-a-valid-requirement")];
+        record_store.save_spec(&bad).unwrap();
+
+        let mem = InMemoryAgentStore::new();
+        let loaded = load_from_store(&record_store, &mem, 3000).unwrap();
+        assert_eq!(loaded, 1);
+        assert!(mem.get_spec("good").is_ok());
+        assert!(mem.get_spec("corrupt").is_err());
+
+        let exec = AgentExecutionRecord {
+            id: "exec_v1".into(),
+            agent_id: "good".into(),
+            config_version: 1,
+            status: ExecutionStatus::Completed,
+            started_at: 100,
+            finished_at: 200,
+            is_probe: false,
+            dry_run: false,
+            trigger_source: Some("manual".into()),
+            stale_config: None,
+            evidence: crate::model::EvidenceReport::default(),
+            deliveries: vec![],
+            tool_calls: vec![],
+            brief_text: None,
+            conclusion: Some("alert!".into()),
+            structured_result: None,
+            error: None,
+            alert_verdict: Some(crate::model::AlertVerdict::CriteriaMet),
+        };
+        persist_execution(&record_store, &exec).unwrap();
+        let rows = record_store.list_formal_executions("good").unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].alert_verdict.as_deref(), Some("criteria_met"));
     }
 }

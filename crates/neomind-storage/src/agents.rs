@@ -1081,14 +1081,17 @@ impl AgentStore {
     }
 
     fn from_db(db: Database) -> Result<Arc<Self>, Error> {
+        // Check/stamp schema version BEFORE mutating any tables so rollback guard
+        // refuses newer databases without touching rows.
+        crate::schema::check_or_stamp_version(&db, crate::schema::AGENTS_SCHEMA_VERSION)
+            .map_err(|e| Error::Storage(format!("schema version: {e}")))?;
+
         // Automatically migrate any residual legacy `agents` table into the
         // five-table layout and delete the legacy table in the same write txn.
         if crate::agent_store::has_legacy_agents_table(&db).unwrap_or(false) {
             crate::agent_migration::migrate_legacy_agents_table(&db)
                 .map_err(|e| Error::Storage(format!("legacy agents migration: {e}")))?;
         }
-        crate::schema::check_or_stamp_version(&db, crate::schema::AGENTS_SCHEMA_VERSION)
-            .map_err(|e| Error::Storage(format!("schema version: {e}")))?;
         let db = Arc::new(db);
         crate::agent_store::ensure_agent_tables(&db)?;
 
@@ -1205,7 +1208,11 @@ impl AgentStore {
     /// Get an execution record by ID.
     pub async fn get_execution(&self, id: &str) -> Result<Option<AgentExecutionRecord>, Error> {
         let read_txn = self.db.begin_read()?;
-        let table = read_txn.open_table(AGENT_EXECUTIONS_TABLE)?;
+        let table = match read_txn.open_table(AGENT_EXECUTIONS_TABLE) {
+            Ok(t) => t,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
 
         match table.get(id)? {
             Some(bytes) => {
@@ -1238,7 +1245,11 @@ impl AgentStore {
         filter: ExecutionFilter,
     ) -> Result<Vec<AgentExecutionRecord>, Error> {
         let read_txn = self.db.begin_read()?;
-        let table = read_txn.open_table(AGENT_EXECUTIONS_TABLE)?;
+        let table = match read_txn.open_table(AGENT_EXECUTIONS_TABLE) {
+            Ok(t) => t,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
+            Err(e) => return Err(e.into()),
+        };
 
         let mut executions = Vec::new();
 
@@ -1299,7 +1310,11 @@ impl AgentStore {
         };
 
         let read_txn = self.db.begin_read()?;
-        let table = read_txn.open_table(AGENT_EXECUTIONS_TABLE)?;
+        let table = match read_txn.open_table(AGENT_EXECUTIONS_TABLE) {
+            Ok(t) => t,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(0),
+            Err(e) => return Err(e.into()),
+        };
 
         let mut to_remove: Vec<String> = Vec::new();
         for item in table.iter()? {

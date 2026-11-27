@@ -52,13 +52,14 @@ pub struct HostedAiAgentRuntime {
 }
 
 /// Schedules ticks through [`HostedAiAgentRuntime::submit`] so Cron/Interval
-/// share `mirror_after_run` with manual/event/rule paths.
-struct HostedSubmit(Arc<HostedAiAgentRuntime>);
+/// share `mirror_after_run` with manual/event/rule paths without creating an `Arc` cycle.
+struct HostedSubmit(std::sync::Weak<HostedAiAgentRuntime>);
 
 #[async_trait]
 impl AgentSubmitPort for HostedSubmit {
     async fn submit(&self, agent_id: &str, source: SubmitSource) -> AgentResult<RunResponse> {
-        self.0.submit(agent_id, source).await
+        let rt = self.0.upgrade().ok_or(AgentError::Cancelled)?;
+        rt.submit(agent_id, source).await
     }
 }
 
@@ -80,10 +81,14 @@ impl HostedAiAgentRuntime {
             deps.device_service.clone(),
             deps.extension_registry.clone(),
         ));
-        let llm = Arc::new(match deps.session_manager.clone() {
+        let mut llm_port = match deps.session_manager.clone() {
             Some(sm) => HostLlmPort::with_session_manager(sm),
             None => HostLlmPort::new(),
-        });
+        };
+        if let Some(ref ms) = memory_store {
+            llm_port = llm_port.with_memory_store(ms.clone());
+        }
+        let llm = Arc::new(llm_port);
 
         let input = InputPipeline::new(sources.clone() as Arc<dyn SourceReadPort>, clock.clone());
         let runner = Arc::new(SinglePassRunner::new(llm.clone()));
@@ -136,7 +141,7 @@ impl HostedAiAgentRuntime {
         if self.started.swap(true, std::sync::atomic::Ordering::SeqCst) {
             return;
         }
-        let submit: Arc<dyn AgentSubmitPort> = Arc::new(HostedSubmit(self.clone()));
+        let submit: Arc<dyn AgentSubmitPort> = Arc::new(HostedSubmit(Arc::downgrade(self)));
         let scheduler = Arc::new(AgentScheduler::new(
             submit,
             self.durable.mem.clone(),
@@ -145,6 +150,15 @@ impl HostedAiAgentRuntime {
         *self.scheduler.lock().expect("scheduler") = Some(scheduler.clone());
         scheduler.start();
         tracing::info!("AgentScheduler started");
+    }
+
+    /// Stop the Cron/Interval scheduler if running. Idempotent.
+    pub fn stop(&self) {
+        if let Some(scheduler) = self.scheduler.lock().expect("scheduler").take() {
+            scheduler.stop();
+        }
+        self.started
+            .store(false, std::sync::atomic::Ordering::SeqCst);
     }
 
     pub fn has_agent(&self, id: &str) -> bool {
@@ -162,11 +176,10 @@ impl HostedAiAgentRuntime {
         self.durable.reload_from_store(id, self.clock.now_ms())
     }
 
-    /// Update hot-set + durable runtime status (Active/Paused/…).
+    /// Update hot-set + durable runtime status (Active/Paused/…), cancelling any
+    /// in-flight run when transitioning to `Paused` or `Stopped`.
     pub fn set_agent_status(&self, id: &str, status: AgentStatus) -> AgentResult<()> {
-        let mut rt = self.durable.mem.get_runtime(id)?;
-        rt.status = status;
-        rt.updated_at = self.clock.now_ms();
+        let rt = self.service.set_status(id, status)?;
         self.durable.mirror_runtime(&rt)
     }
 
@@ -199,7 +212,11 @@ impl HostedAiAgentRuntime {
                 "successful_runs": rt.stats.successful_runs,
                 "failed_runs": rt.stats.failed_runs,
                 "partial_runs": rt.stats.partial_runs,
+                "skipped_daily_limit": rt.stats.skipped_daily_limit,
+                "skipped_permit_timeout": rt.stats.skipped_permit_timeout,
                 "consecutive_failures": rt.stats.consecutive_failures,
+                "runs_today": rt.stats.runs_today,
+                "quota_day": rt.stats.quota_day,
                 "last_execution_at": rt.stats.last_execution_at,
                 "last_execution_id": rt.stats.last_execution_id,
                 "avg_duration_ms": rt.stats.avg_duration_ms,
@@ -221,6 +238,7 @@ impl HostedAiAgentRuntime {
     }
 
     pub fn delete(&self, id: &str) -> AgentResult<()> {
+        self.coordinator.state.cancel(id);
         self.durable.delete_spec(id)
     }
 
@@ -239,6 +257,12 @@ impl HostedAiAgentRuntime {
 
     pub async fn dry_run(&self, id: &str) -> AgentResult<RunResponse> {
         self.dry_run_with_caller(id, None).await
+    }
+
+    /// Ephemeral read-only dry-run directly on an unpersisted [`AgentSpec`]
+    /// without creating or writing anything to `agents.redb` or `InMemoryAgentStore`.
+    pub async fn dry_run_ephemeral(&self, spec: AgentSpec) -> AgentResult<RunResponse> {
+        self.service.dry_run_spec(spec, RunOptions::default()).await
     }
 
     /// Authorized read-only dry-run with optional this-turn caller text / structured payload.
@@ -1496,7 +1520,7 @@ mod tests {
         let mut draft = local_brief_draft("sched-persist");
         draft.trigger = TriggerSpec::Interval { every_secs: 1 };
         let (spec, _) = runtime.create(draft).unwrap();
-        let submit: Arc<dyn AgentSubmitPort> = Arc::new(HostedSubmit(runtime.clone()));
+        let submit: Arc<dyn AgentSubmitPort> = Arc::new(HostedSubmit(Arc::downgrade(&runtime)));
         let scheduler = AgentScheduler::new(submit, runtime.durable.mem.clone(), clock.clone());
         scheduler.tick_once().await;
         for _ in 0..50 {
@@ -2044,5 +2068,53 @@ mod tests {
         let _ = runtime.invoke(&spec.id).await.unwrap();
         let (reloaded, _) = runtime.get(&spec.id).unwrap();
         assert_eq!(reloaded.user_prompt, original_prompt);
+    }
+
+    #[tokio::test]
+    async fn dry_run_ephemeral_and_weak_scheduler_leave_zero_pollution_or_arc_cycle() {
+        let store = AgentStore::memory().unwrap();
+        let (deps, _, _) = test_deps().await;
+        let runtime = Arc::new(HostedAiAgentRuntime::build(store.clone(), deps).unwrap());
+
+        runtime.start();
+        assert_eq!(
+            Arc::strong_count(&runtime),
+            1,
+            "HostedSubmit must hold Weak<HostedAiAgentRuntime>, not strong Arc"
+        );
+        runtime.stop();
+
+        let ephemeral = AgentSpec {
+            id: String::new(),
+            name: "ephemeral-preview".into(),
+            description: None,
+            user_prompt: "preview".into(),
+            llm_backend_id: Some(LOCAL_BRIEF_BACKEND.into()),
+            preset: None,
+            trigger: TriggerSpec::Manual,
+            pacing: PacingPolicy::default(),
+            input: InputContract::default(),
+            tool_policy: ToolPolicy::Disabled,
+            output: OutputContract::default(),
+            notify: NotifyPolicy::default(),
+            controlled_actions: vec![],
+            config_version: 1,
+            created_at: 0,
+            updated_at: 0,
+        };
+        let resp = runtime.dry_run_ephemeral(ephemeral).await.unwrap();
+        assert!(resp.dry_run);
+        assert!(runtime.list().is_empty());
+
+        let record_store = AgentRecordStore::from_arc(store.db()).unwrap();
+        assert!(record_store.list_specs().unwrap().is_empty());
+
+        let (persisted, _) = runtime.create(local_brief_draft("stats-fields")).unwrap();
+        let _ = runtime.invoke(&persisted.id).await.unwrap();
+        let stats = runtime.runtime_stats_json(&persisted.id);
+        assert_eq!(stats["runs_today"], 1);
+        assert!(stats.get("quota_day").is_some());
+        assert_eq!(stats["skipped_daily_limit"], 0);
+        assert_eq!(stats["skipped_permit_timeout"], 0);
     }
 }

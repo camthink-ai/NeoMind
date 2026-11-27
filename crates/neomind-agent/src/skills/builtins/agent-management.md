@@ -139,6 +139,7 @@ and data-push bind to it like any device metric.
 ```bash
 neomind agent create --name '冷库巡检' --prompt '判断冷库状态' \
   --execution-mode structured --every 15m \
+  --device-ids cold_room_01 \
   --output-schema '[{"name":"status","field_type":{"type":"enum","values":["正常","异常"]},"description":"整体状态"},{"name":"score","field_type":{"type":"number"},"unit":"分"}]'
 ```
 
@@ -320,7 +321,8 @@ neomind agent send-message <ID> 'Directive' --message-type instruction
 neomind agent create \
   --name 'Battery Monitor' \
   --prompt 'Check all devices battery levels. List devices below 20%. Send warning if any found.' \
-  --every 5m
+  --every 5m \
+  --execution-mode free
 
 # 2. Check results after a few minutes
 neomind agent latest-execution <AGENT_ID>
@@ -334,16 +336,20 @@ neomind agent create \
   --name 'Morning Report' \
   --prompt 'Summarize all device statuses. Count online/offline. Report anomalies from last 24 hours.' \
   --schedule-type cron \
-  --schedule-config '0 9 * * *'
+  --schedule-config '0 9 * * *' \
+  --timezone 'Asia/Shanghai' \
+  --execution-mode free
 ```
 
 ### On-Demand Analysis Agent
 
 ```bash
-# No schedule — runs when invoked
+# Manual trigger — runs only when invoked
 neomind agent create \
   --name 'Device Analyzer' \
-  --prompt 'Analyze the provided input and generate a detailed report.'
+  --prompt 'Analyze the provided input and generate a detailed report.' \
+  --schedule-type manual \
+  --execution-mode free
 
 # Run whenever needed
 neomind agent invoke <AGENT_ID> 'Analyze temperature trends for sensor-001'
@@ -354,17 +360,19 @@ neomind agent invoke <AGENT_ID> 'Analyze temperature trends for sensor-001'
 Event agents execute automatically when device data arrives. Use `--event-filter` with a JSON string to limit which data sources trigger execution.
 
 ```bash
-# Runs when ANY device data arrives (no filter = all bound resources)
+# Runs when bound device data arrives
 neomind agent create \
   --name 'Data Logger' \
   --prompt 'Log incoming device data and check for anomalies.' \
-  --schedule-type event
+  --schedule-type event \
+  --device-ids sensor-001
 
 # Runs only when specific devices report (with filter)
 neomind agent create \
   --name 'Temp Guardian' \
   --prompt 'Analyze temperature readings. Alert if any sensor reports above 40°C.' \
   --schedule-type event \
+  --device-ids sensor-001,sensor-002 \
   --event-filter '{"sources":[{"type":"device","id":"sensor-001"},{"type":"device","id":"sensor-002"}]}'
 
 # Trigger on ANY device of a type (use "all" for id)
@@ -447,6 +455,6 @@ neomind agent delete <ID>   # required when the user asked to remove it — do n
 | Agent not running on schedule | Status is `paused` or wrong schedule config | Run `agent get <ID>` to check status and schedule, then `agent control <ID> active` if paused |
 | Control fails | Invalid status value | Only `active` and `paused` are valid |
 | Focused mode error | No resources bound (default mode) | Add `--device-ids` / `--resources`, **or** `--execution-mode free` |
-| `unexpected argument '--input'` / `'--prompt'` on invoke | Input is positional | `neomind agent invoke <ID> "your prompt"` — not `--input` / `--prompt` (those flags are create/update only) |
+| `unexpected argument '--prompt'` on invoke | `--prompt` is create/update only | Pass run-local text positionally (`neomind agent invoke <ID> "your prompt"`) or via `--input` (`--data` for JSON) |
 | Execution shows error | LLM or tool failure | Check `agent conversation <ID>` for details |
 | Bad LLM responses | Wrong model/backend | Run `neomind llm list` for available backends, update with `agent update <ID> --llm-backend <backend>` |

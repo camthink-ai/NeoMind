@@ -98,7 +98,24 @@ impl AgentApplicationService {
     }
 
     pub fn delete(&self, id: &str) -> Result<()> {
+        self.store.runtime_state().cancel(id);
         self.store.delete_spec(id)
+    }
+
+    pub fn cancel(&self, id: &str) {
+        self.store.runtime_state().cancel(id);
+    }
+
+    /// Update runtime status in memory, cancelling any in-flight run when Paused/Stopped.
+    pub fn set_status(&self, id: &str, status: AgentStatus) -> Result<AgentRuntimeRecord> {
+        let mut rt = self.store.get_runtime(id)?;
+        if matches!(status, AgentStatus::Paused | AgentStatus::Stopped) {
+            self.store.runtime_state().cancel(id);
+        }
+        rt.status = status;
+        rt.updated_at = self.clock.now_ms();
+        self.store.set_runtime(rt.clone())?;
+        Ok(rt)
     }
 
     pub fn update(&self, id: &str, patch: AgentSpecPatch) -> Result<(AgentSpec, EffectivePlan)> {
@@ -161,6 +178,156 @@ impl AgentApplicationService {
     /// Authorized read-only dry-run with run-local options (operator notes / memory context).
     pub async fn dry_run_with_options(&self, id: &str, options: RunOptions) -> Result<RunResponse> {
         self.execute_inner(id, true, false, None, options).await
+    }
+
+    /// Ephemeral read-only dry-run directly on an `AgentSpec` without persisting
+    /// anything to `InMemoryAgentStore` or `agents.redb`.
+    pub async fn dry_run_spec(&self, mut spec: AgentSpec, options: RunOptions) -> Result<RunResponse> {
+        if spec.id.trim().is_empty() {
+            spec.id = format!("ephemeral_{}", &Uuid::new_v4().to_string()[..8]);
+        }
+        validate_spec(&spec)?;
+
+        let mut requirements = spec.input.requirements.clone();
+        if let Some(ref c) = options.caller {
+            if let Some(ref data) = c.data {
+                let ev_report_id = data.get("report_id").and_then(|v| v.as_str());
+                let ev_ts = data.get("report_timestamp").and_then(|v| v.as_i64());
+                for req in &mut requirements {
+                    if matches!(req.freshness, crate::model::FreshnessPolicy::SameReport) {
+                        if let Some(obj) = req.params.as_object_mut() {
+                            if !obj.contains_key("report_id") {
+                                if let Some(rid) = ev_report_id {
+                                    obj.insert(
+                                        "report_id".into(),
+                                        serde_json::Value::String(rid.to_string()),
+                                    );
+                                }
+                            }
+                            if !obj.contains_key("anchor_ts") {
+                                if let Some(ts) = ev_ts {
+                                    obj.insert("anchor_ts".into(), serde_json::json!(ts));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let (mut evidence, read_counts) = self.input.collect(&requirements).await?;
+        let now = self.clock.now_ms();
+        if let Some(ref c) = options.caller {
+            merge_caller_into_evidence(&mut evidence, &spec, c, now);
+        }
+        let execution_id = options
+            .execution_id
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| format!("exec_{}", &Uuid::new_v4().to_string()[..8]));
+        let started = now;
+        let plan = plan_from_spec(&spec);
+
+        if let Some(skip_reason) = evidence.skip_reason.clone() {
+            let exec = crate::model::AgentExecutionRecord {
+                id: execution_id,
+                agent_id: spec.id.clone(),
+                config_version: spec.config_version,
+                status: crate::model::ExecutionStatus::Skipped,
+                started_at: started,
+                finished_at: self.clock.now_ms(),
+                is_probe: false,
+                dry_run: true,
+                trigger_source: None,
+                stale_config: None,
+                evidence,
+                deliveries: vec![],
+                tool_calls: vec![],
+                brief_text: None,
+                conclusion: Some(format!("Skipped: {skip_reason}")),
+                structured_result: None,
+                alert_verdict: None,
+                error: Some(skip_reason),
+            };
+            return Ok(RunResponse {
+                dry_run: true,
+                execution: Some(exec),
+                effective_plan: Some(plan),
+                external_read_counts: read_counts,
+                receiver_counts: ReceiverCounts::default(),
+            });
+        }
+
+        let mut run_spec = spec.clone();
+        if !options.memory_context.is_empty() {
+            run_spec.user_prompt =
+                prompt_with_memory_context(&run_spec.user_prompt, &options.memory_context);
+        }
+        if !options.operator_notes.is_empty() {
+            run_spec.user_prompt =
+                prompt_with_operator_notes(&run_spec.user_prompt, &options.operator_notes);
+        }
+        if let Some(ref c) = options.caller {
+            if !c.is_empty() {
+                run_spec.user_prompt = prompt_with_caller_input(&run_spec.user_prompt, c);
+            }
+        }
+
+        let run_result = self
+            .runner
+            .run_with_history(
+                &run_spec,
+                &evidence,
+                &execution_id,
+                &options.memory_context.prior_turns,
+                true,
+                CancellationToken::new(),
+            )
+            .await;
+
+        let mut exec = crate::model::AgentExecutionRecord {
+            id: execution_id,
+            agent_id: spec.id.clone(),
+            config_version: spec.config_version,
+            status: crate::model::ExecutionStatus::Completed,
+            started_at: started,
+            finished_at: self.clock.now_ms(),
+            is_probe: false,
+            dry_run: true,
+            trigger_source: None,
+            stale_config: None,
+            evidence,
+            deliveries: vec![],
+            tool_calls: vec![],
+            brief_text: None,
+            conclusion: None,
+            structured_result: None,
+            error: None,
+            alert_verdict: None,
+        };
+
+        match run_result {
+            Ok(outcome) => {
+                exec = apply_outcome(exec, outcome);
+            }
+            Err(AgentError::Cancelled) => return Err(AgentError::Cancelled),
+            Err(e) => {
+                exec.status = crate::model::ExecutionStatus::Failed;
+                exec.error = Some(e.to_string());
+                exec.conclusion = None;
+                exec.brief_text = None;
+                exec.structured_result = None;
+                exec.alert_verdict = Some(crate::model::AlertVerdict::InsufficientEvidence);
+            }
+        }
+        exec.finished_at = self.clock.now_ms();
+        let exec = self.side_effects.settle(&spec, exec, true).await?;
+
+        Ok(RunResponse {
+            dry_run: true,
+            execution: Some(exec),
+            effective_plan: Some(plan),
+            external_read_counts: read_counts,
+            receiver_counts: ReceiverCounts::default(),
+        })
     }
 
     /// Formal invoke — writes history and may notify (manual submit provenance).
@@ -242,6 +409,8 @@ impl AgentApplicationService {
         if matches!(runtime.status, AgentStatus::Paused | AgentStatus::Stopped) && !dry_run {
             return Err(AgentError::NotRunnable(format!("{:?}", runtime.status)));
         }
+        let cancel_guard = self.store.runtime_state().track_run(id);
+        let cancel = cancel_guard.token();
 
         let mut requirements = spec.input.requirements.clone();
         if let Some(ref c) = options.caller {
@@ -269,7 +438,16 @@ impl AgentApplicationService {
                 }
             }
         }
-        let (mut evidence, read_counts) = self.input.collect(&requirements).await?;
+        let (mut evidence, read_counts) = tokio::select! {
+            _ = cancel.cancelled() => return Err(AgentError::Cancelled),
+            res = self.input.collect(&requirements) => res?,
+        };
+        if !dry_run && self.store.get_spec(id).is_err() {
+            return Err(AgentError::NotFound(id.into()));
+        }
+        if cancel.is_cancelled() {
+            return Err(AgentError::Cancelled);
+        }
         let now = self.clock.now_ms();
         if let Some(ref c) = options.caller {
             merge_caller_into_evidence(&mut evidence, &spec, c, now);
@@ -343,9 +521,17 @@ impl AgentApplicationService {
                 &execution_id,
                 &options.memory_context.prior_turns,
                 dry_run,
-                CancellationToken::new(),
+                cancel.clone(),
             )
             .await;
+
+        let spec_now = self.store.get_spec(id);
+        if !dry_run && spec_now.is_err() {
+            return Err(AgentError::NotFound(id.into()));
+        }
+        if cancel.is_cancelled() || matches!(run_result, Err(AgentError::Cancelled)) {
+            return Err(AgentError::Cancelled);
+        }
 
         let mut exec = crate::model::AgentExecutionRecord {
             id: execution_id.clone(),
@@ -372,6 +558,7 @@ impl AgentApplicationService {
             Ok(outcome) => {
                 exec = apply_outcome(exec, outcome);
             }
+            Err(AgentError::Cancelled) => return Err(AgentError::Cancelled),
             Err(e) => {
                 // Inference / runner failure settles as Failed — never invent a
                 // successful local brief when the configured backend failed.
@@ -394,8 +581,16 @@ impl AgentApplicationService {
         let exec = self.side_effects.settle(&spec, exec, dry_run).await?;
 
         if !dry_run {
+            if self.store.get_spec(id).is_err() {
+                return Err(AgentError::NotFound(id.into()));
+            }
+            if cancel.is_cancelled() {
+                return Err(AgentError::Cancelled);
+            }
+            let rt_now = self.store.get_runtime(id)?;
             self.store.save_execution(exec.clone())?;
-            let mut rt = self.store.get_runtime(id)?;
+            let mut rt = rt_now;
+            let keep_operator_halt = matches!(rt.status, AgentStatus::Paused | AgentStatus::Stopped);
             let tz = crate::coordinator::quota::quota_timezone(&spec.pacing, &spec.trigger);
             crate::coordinator::quota::roll_quota_day(&mut rt.stats, self.clock.now_ms(), &tz);
             rt.stats.total_runs += 1;
@@ -431,12 +626,15 @@ impl AgentApplicationService {
             if matches!(exec.status, crate::model::ExecutionStatus::Failed) {
                 rt.error_message = exec.error.clone();
                 let threshold = spec.pacing.failure_threshold.max(1);
-                if rt.stats.consecutive_failures >= threshold {
+                if rt.stats.consecutive_failures >= threshold && !keep_operator_halt {
                     rt.status = AgentStatus::Error;
                     let over = rt.stats.consecutive_failures.saturating_sub(threshold).min(4);
                     let backoff_ms = (300_000i64 << over).min(3_600_000);
                     rt.next_probe_at = Some(self.clock.now_ms().saturating_add(backoff_ms));
                 }
+            } else if keep_operator_halt {
+                rt.error_message = None;
+                rt.next_probe_at = None;
             } else if matches!(spec.trigger, TriggerSpec::Manual) {
                 rt.status = AgentStatus::Completed;
                 rt.error_message = None;
@@ -825,5 +1023,135 @@ fn merge_caller_into_evidence(
                 detail: Some(detail.clone()),
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::harness::build_harness;
+    use crate::model::{
+        InputContract, NotifyPolicy, OutputContract, PacingPolicy, ToolPolicy, TriggerSpec,
+    };
+    use crate::runner::{AgentRunner, RunOutcome, LOCAL_BRIEF_BACKEND};
+
+    struct SlowCancelableRunner {
+        started: tokio::sync::Notify,
+    }
+
+    #[async_trait::async_trait]
+    impl AgentRunner for SlowCancelableRunner {
+        async fn run(
+            &self,
+            _spec: &AgentSpec,
+            _evidence: &EvidenceReport,
+            _execution_id: &str,
+            cancel: CancellationToken,
+        ) -> Result<RunOutcome> {
+            self.started.notify_waiters();
+            tokio::select! {
+                _ = cancel.cancelled() => Err(AgentError::Cancelled),
+                _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => Ok(RunOutcome {
+                    brief_text: Some("done".into()),
+                    conclusion: Some("done".into()),
+                    structured_result: None,
+                    alert_criteria_met: false,
+                    status_hint: None,
+                    tool_calls: vec![],
+                }),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn dry_run_spec_leaves_zero_store_pollution() {
+        let h = build_harness(1_000);
+        let spec = AgentSpec {
+            id: String::new(),
+            name: "preview-only".into(),
+            description: None,
+            user_prompt: "summarize".into(),
+            llm_backend_id: Some(LOCAL_BRIEF_BACKEND.into()),
+            preset: None,
+            trigger: TriggerSpec::Manual,
+            pacing: PacingPolicy::default(),
+            input: InputContract::default(),
+            tool_policy: ToolPolicy::Disabled,
+            output: OutputContract::default(),
+            notify: NotifyPolicy {
+                channels: vec!["ops".into()],
+                on_complete: true,
+                ..Default::default()
+            },
+            controlled_actions: vec![],
+            config_version: 1,
+            created_at: 1_000,
+            updated_at: 1_000,
+        };
+        let resp = h
+            .service
+            .dry_run_spec(spec, RunOptions::default())
+            .await
+            .unwrap();
+        assert!(resp.dry_run);
+        assert!(resp.execution.is_some());
+        assert!(h.store.list_specs().is_empty());
+        assert_eq!(h.notify.count(), 0);
+    }
+
+    #[tokio::test]
+    async fn pause_cancels_inflight_run_without_revival_or_settle() {
+        let h = build_harness(2_000);
+        let runner = Arc::new(SlowCancelableRunner {
+            started: tokio::sync::Notify::new(),
+        });
+        let svc = Arc::new(AgentApplicationService {
+            store: h.store.clone(),
+            clock: h.clock.clone(),
+            input: InputPipeline::new(h.sources.clone(), h.clock.clone()),
+            runner: runner.clone(),
+            side_effects: SideEffectBoundary {
+                store: h.store.clone(),
+                notifier: crate::side_effects::Notifier::new(h.notify.clone()),
+                side_effects: h.writes.clone(),
+                clock: h.clock.clone(),
+            },
+            notify_counter: h.notify.clone(),
+            write_counter: h.writes.clone(),
+        });
+        let (spec, _) = svc
+            .create(AgentSpecDraft {
+                name: "cancel-me".into(),
+                description: None,
+                user_prompt: "run".into(),
+                llm_backend_id: None,
+                preset: None,
+                trigger: TriggerSpec::Interval { every_secs: 60 },
+                pacing: PacingPolicy::default(),
+                input: InputContract::default(),
+                tool_policy: ToolPolicy::Disabled,
+                output: OutputContract::default(),
+                notify: NotifyPolicy {
+                    channels: vec!["ops".into()],
+                    on_complete: true,
+                    ..Default::default()
+                },
+                controlled_actions: vec![],
+            })
+            .unwrap();
+
+        let waited = runner.started.notified();
+        let svc_run = svc.clone();
+        let id = spec.id.clone();
+        let handle = tokio::spawn(async move { svc_run.invoke(&id).await });
+
+        waited.await;
+        svc.set_status(&spec.id, AgentStatus::Paused).unwrap();
+
+        let res = handle.await.unwrap();
+        assert!(matches!(res, Err(AgentError::Cancelled)));
+        assert_eq!(svc.formal_history_len(&spec.id), 0);
+        assert_eq!(h.notify.count(), 0);
+        assert_eq!(svc.runtime(&spec.id).unwrap().status, AgentStatus::Paused);
     }
 }

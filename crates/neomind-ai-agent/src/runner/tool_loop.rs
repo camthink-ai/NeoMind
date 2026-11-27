@@ -68,6 +68,7 @@ impl AgentRunner for ToolLoopRunner {
                 .llm
                 .complete(
                     LlmRequest {
+                        agent_id: Some(spec.id.clone()),
                         backend_id: spec.llm_backend_id.clone(),
                         system: format!("Managed agent round {round}. Prefer finishing."),
                         user: transcript.clone(),

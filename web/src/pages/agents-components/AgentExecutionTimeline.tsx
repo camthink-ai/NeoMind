@@ -219,6 +219,14 @@ export function AgentExecutionTimeline({
         return { icon: AlertCircle, color: 'text-warning', bg: 'bg-warning-light border-warning', label: t('agents:executionStatus.partial') }
       case 'Cancelled':
         return { icon: XCircle, color: 'text-muted-foreground', bg: 'bg-muted border-border', label: t('agents:executionStatus.cancelled') }
+      case 'Skipped':
+      case 'skipped':
+        return {
+          icon: Clock,
+          color: 'text-muted-foreground',
+          bg: 'bg-muted border-border',
+          label: t('agents:executionStatus.skipped', { defaultValue: 'Skipped' }),
+        }
       default:
         return { icon: AlertCircle, color: 'text-muted-foreground', bg: 'bg-muted border-border', label: status }
     }

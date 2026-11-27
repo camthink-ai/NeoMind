@@ -68,9 +68,10 @@ impl ExecutionCoordinator {
         store: InMemoryAgentStore,
         clock: Arc<dyn ClockPort>,
     ) -> Self {
+        let state = store.runtime_state().clone();
         Self {
             service,
-            state: AgentRuntimeState::new(),
+            state,
             store,
             clock,
         }

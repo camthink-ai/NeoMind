@@ -3,9 +3,10 @@
 //! Five logical tables mirror the planned redb layout without activating
 //! `CURRENT_SCHEMA_VERSION = 2`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
+use crate::coordinator::AgentRuntimeState;
 use crate::error::{AgentError, Result};
 use crate::model::{
     ActionDeliveryRecord, AgentExecutionRecord, AgentRuntimeRecord, AgentSpec, AgentStats,
@@ -21,6 +22,7 @@ pub type ExecutionPersistFn = Arc<dyn Fn(&AgentExecutionRecord) -> Result<()> + 
 #[derive(Clone, Default)]
 pub struct InMemoryAgentStore {
     inner: Arc<Mutex<StoreInner>>,
+    runtime_state: AgentRuntimeState,
 }
 
 #[derive(Default)]
@@ -46,6 +48,11 @@ fn delivery_key(execution_id: &str, destination: &str, fingerprint: &str) -> Str
 impl InMemoryAgentStore {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Shared in-flight and per-agent cancellation registry.
+    pub fn runtime_state(&self) -> &AgentRuntimeState {
+        &self.runtime_state
     }
 
     /// Install a durable mirror for `save_execution` (shared across clones).
@@ -96,12 +103,29 @@ impl InMemoryAgentStore {
             return Err(AgentError::NotFound(id.into()));
         }
         g.runtime.remove(id);
-        if let Some(exec_ids) = g.formal_history.remove(id) {
-            for exec_id in exec_ids {
-                g.executions.remove(&exec_id);
-            }
+        let mut removed_exec_ids: HashSet<String> = g
+            .formal_history
+            .remove(id)
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+        for exec_id in &removed_exec_ids {
+            g.executions.remove(exec_id);
         }
-        g.executions.retain(|_, exec| exec.agent_id != id);
+        g.executions.retain(|exec_id, exec| {
+            if exec.agent_id == id {
+                removed_exec_ids.insert(exec_id.clone());
+                false
+            } else {
+                true
+            }
+        });
+        if !removed_exec_ids.is_empty() {
+            g.deliveries
+                .retain(|_, rec| !removed_exec_ids.contains(&rec.execution_id));
+        }
+        g.knowledge.remove(id);
+        g.user_messages.remove(id);
         Ok(())
     }
 
@@ -142,8 +166,14 @@ impl InMemoryAgentStore {
                 } else {
                     Vec::new()
                 };
-                for old_id in evicted {
-                    g.executions.remove(&old_id);
+                if !evicted.is_empty() {
+                    let evicted_set: HashSet<&str> =
+                        evicted.iter().map(String::as_str).collect();
+                    g.deliveries
+                        .retain(|_, rec| !evicted_set.contains(rec.execution_id.as_str()));
+                    for old_id in evicted {
+                        g.executions.remove(&old_id);
+                    }
                 }
             }
             g.execution_persist.clone()
@@ -258,5 +288,84 @@ impl InMemoryAgentStore {
             .knowledge
             .get(agent_id)
             .cloned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{EvidenceReport, ExecutionStatus, InputContract, NotifyPolicy, OutputContract, PacingPolicy, ToolPolicy, TriggerSpec};
+
+    fn sample_spec(id: &str) -> AgentSpec {
+        AgentSpec {
+            id: id.into(),
+            name: id.into(),
+            description: None,
+            user_prompt: "ping".into(),
+            llm_backend_id: None,
+            preset: None,
+            trigger: TriggerSpec::Manual,
+            pacing: PacingPolicy::default(),
+            input: InputContract::default(),
+            tool_policy: ToolPolicy::Disabled,
+            output: OutputContract::default(),
+            notify: NotifyPolicy::default(),
+            controlled_actions: vec![],
+            config_version: 1,
+            created_at: 1,
+            updated_at: 1,
+        }
+    }
+
+    fn sample_exec(id: &str, agent_id: &str) -> AgentExecutionRecord {
+        AgentExecutionRecord {
+            id: id.into(),
+            agent_id: agent_id.into(),
+            config_version: 1,
+            status: ExecutionStatus::Completed,
+            started_at: 10,
+            finished_at: 20,
+            is_probe: false,
+            dry_run: false,
+            trigger_source: Some("manual".into()),
+            stale_config: None,
+            evidence: EvidenceReport::default(),
+            deliveries: vec![],
+            tool_calls: vec![],
+            brief_text: None,
+            conclusion: Some("ok".into()),
+            structured_result: None,
+            error: None,
+            alert_verdict: None,
+        }
+    }
+
+    #[test]
+    fn formal_history_eviction_and_delete_spec_prune_deliveries() {
+        let store = InMemoryAgentStore::new();
+        store.save_spec(sample_spec("agt_1"), 1).unwrap();
+
+        for i in 0..55 {
+            let exec_id = format!("exec_{i}");
+            store
+                .try_claim_delivery(ActionDeliveryRecord {
+                    execution_id: exec_id.clone(),
+                    destination: "ops".into(),
+                    action_fingerprint: format!("on_complete:{exec_id}"),
+                    depends_on: vec![],
+                    idempotent: true,
+                    state: DeliveryState::Accepted,
+                })
+                .unwrap();
+            store.save_execution(sample_exec(&exec_id, "agt_1")).unwrap();
+        }
+
+        // First 5 executions were evicted (cap = 50), so their deliveries must be pruned.
+        assert!(store.get_delivery("exec_0", "ops", "on_complete:exec_0").is_none());
+        assert!(store.get_delivery("exec_4", "ops", "on_complete:exec_4").is_none());
+        assert!(store.get_delivery("exec_54", "ops", "on_complete:exec_54").is_some());
+
+        store.delete_spec("agt_1").unwrap();
+        assert!(store.get_delivery("exec_54", "ops", "on_complete:exec_54").is_none());
     }
 }

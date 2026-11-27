@@ -16,6 +16,42 @@ use super::types::MAX_REQUEST_BODY_SIZE;
 use crate::auth::hybrid_auth_middleware;
 use crate::auth_users::jwt_auth_middleware;
 
+/// Block `UserRole::Viewer` from mutating or actuating AI Agents (`POST` create/invoke/execute/status,
+/// `PUT` update, `DELETE` delete/clear). Read-only `POST` endpoints (`plan-preview`, `test-preview`,
+/// `dry-run`, `executions/details`, `validate-*`) remain permitted for viewers.
+async fn reject_viewer_agent_mutation(
+    req: axum::extract::Request,
+    next: middleware::Next,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let is_viewer = req
+        .extensions()
+        .get::<crate::auth_users::SessionInfo>()
+        .is_some_and(|u| u.role == crate::auth_users::UserRole::Viewer);
+    if is_viewer {
+        let method = req.method();
+        let path = req.uri().path();
+        let is_read_only_post = method == axum::http::Method::POST
+            && (path.ends_with("/plan-preview")
+                || path.ends_with("/test-preview")
+                || path.ends_with("/dry-run")
+                || path.ends_with("/executions/details")
+                || path.ends_with("/validate-cron")
+                || path.ends_with("/validate-llm"));
+        let is_mutation = matches!(
+            *method,
+            axum::http::Method::PUT | axum::http::Method::DELETE | axum::http::Method::PATCH
+        ) || (*method == axum::http::Method::POST && !is_read_only_post);
+        if is_mutation {
+            return crate::models::ErrorResponse::forbidden(
+                "Viewer accounts have read-only access to AI Agents",
+            )
+            .into_response();
+        }
+    }
+    next.run(req).await
+}
+
 /// Create the application router.
 pub async fn create_router() -> Router {
     create_router_with_state(ServerState::new().await)
@@ -908,67 +944,71 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             get(automations::get_transform_data_source_handler),
         )
         // AI Agents API - User-defined automation agents
-        .route("/api/agents", get(agents::list_agents))
-        .route("/api/agents", post(agents::create_agent))
-        // Static routes MUST be declared before `/api/agents/:id` so Axum does
-        // not treat `tools`, `schema`, `plan-preview`, or `test-preview` as an id.
-        .route("/api/agents/tools", get(agents::list_agent_tools))
-        .route("/api/agents/schema", get(agents::agent_schema))
-        .route("/api/agents/plan-preview", post(agents::plan_preview))
-        .route("/api/agents/test-preview", post(agents::test_agent_preview))
-        .route("/api/agents/:id", get(agents::get_agent))
-        .route("/api/agents/:id", put(agents::update_agent))
-        .route("/api/agents/:id", delete(agents::delete_agent))
-        .route("/api/agents/:id/execute", post(agents::execute_agent))
-        .route("/api/agents/:id/invoke", post(agents::invoke_agent))
-        .route("/api/agents/:id/dry-run", post(agents::dry_run_agent))
-        .route(
-            "/api/agents/:id/explain-last",
-            get(agents::explain_last_agent),
-        )
-        .route(
-            "/api/agents/:id/latest-execution",
-            get(agents::latest_execution_agent),
-        )
-        .route("/api/agents/:id/test", post(agents::test_agent))
-        .route("/api/agents/:id/status", post(agents::set_agent_status))
-        .route(
-            "/api/agents/:id/executions",
-            get(agents::get_agent_executions),
-        )
-        .route(
-            "/api/agents/:id/executions/:execution_id",
-            get(agents::get_execution),
-        )
-        .route(
-            "/api/agents/:id/executions/details",
-            post(agents::batch_get_executions),
-        )
-        .route("/api/agents/:id/memory", get(agents::get_agent_memory))
-        .route("/api/agents/:id/memory", delete(agents::clear_agent_memory))
-        .route("/api/agents/:id/stats", get(agents::get_agent_stats))
-        .route(
-            "/api/agents/:id/available-resources",
-            get(agents::get_available_resources),
-        )
-        .route(
-            "/api/agents/validate-cron",
-            post(agents::validate_cron_expression),
-        )
-        .route(
-            "/api/agents/validate-llm",
-            post(agents::validate_llm_backend),
-        )
-        // User messages API
-        .route("/api/agents/:id/messages", get(agents::get_user_messages))
-        .route("/api/agents/:id/messages", post(agents::add_user_message))
-        .route(
-            "/api/agents/:id/messages",
-            delete(agents::clear_user_messages),
-        )
-        .route(
-            "/api/agents/:id/messages/:message_id",
-            delete(agents::delete_user_message),
+        .merge(
+            Router::new()
+                .route("/api/agents", get(agents::list_agents))
+                .route("/api/agents", post(agents::create_agent))
+                // Static routes MUST be declared before `/api/agents/:id` so Axum does
+                // not treat `tools`, `schema`, `plan-preview`, or `test-preview` as an id.
+                .route("/api/agents/tools", get(agents::list_agent_tools))
+                .route("/api/agents/schema", get(agents::agent_schema))
+                .route("/api/agents/plan-preview", post(agents::plan_preview))
+                .route("/api/agents/test-preview", post(agents::test_agent_preview))
+                .route("/api/agents/:id", get(agents::get_agent))
+                .route("/api/agents/:id", put(agents::update_agent))
+                .route("/api/agents/:id", delete(agents::delete_agent))
+                .route("/api/agents/:id/execute", post(agents::execute_agent))
+                .route("/api/agents/:id/invoke", post(agents::invoke_agent))
+                .route("/api/agents/:id/dry-run", post(agents::dry_run_agent))
+                .route(
+                    "/api/agents/:id/explain-last",
+                    get(agents::explain_last_agent),
+                )
+                .route(
+                    "/api/agents/:id/latest-execution",
+                    get(agents::latest_execution_agent),
+                )
+                .route("/api/agents/:id/test", post(agents::test_agent))
+                .route("/api/agents/:id/status", post(agents::set_agent_status))
+                .route(
+                    "/api/agents/:id/executions",
+                    get(agents::get_agent_executions),
+                )
+                .route(
+                    "/api/agents/:id/executions/:execution_id",
+                    get(agents::get_execution),
+                )
+                .route(
+                    "/api/agents/:id/executions/details",
+                    post(agents::batch_get_executions),
+                )
+                .route("/api/agents/:id/memory", get(agents::get_agent_memory))
+                .route("/api/agents/:id/memory", delete(agents::clear_agent_memory))
+                .route("/api/agents/:id/stats", get(agents::get_agent_stats))
+                .route(
+                    "/api/agents/:id/available-resources",
+                    get(agents::get_available_resources),
+                )
+                .route(
+                    "/api/agents/validate-cron",
+                    post(agents::validate_cron_expression),
+                )
+                .route(
+                    "/api/agents/validate-llm",
+                    post(agents::validate_llm_backend),
+                )
+                // User messages API
+                .route("/api/agents/:id/messages", get(agents::get_user_messages))
+                .route("/api/agents/:id/messages", post(agents::add_user_message))
+                .route(
+                    "/api/agents/:id/messages",
+                    delete(agents::clear_user_messages),
+                )
+                .route(
+                    "/api/agents/:id/messages/:message_id",
+                    delete(agents::delete_user_message),
+                )
+                .layer(middleware::from_fn(reject_viewer_agent_mutation)),
         )
         // System Memory API (Markdown-based)
         .route("/api/memory", get(memory::get_all_memory))

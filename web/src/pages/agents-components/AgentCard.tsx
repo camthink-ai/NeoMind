@@ -128,7 +128,7 @@ export function AgentCard({
           </p>
         </div>
         <Switch
-          checked={agent.status === 'Active'}
+          checked={agent.status === 'Active' || agent.status === 'Executing'}
           onCheckedChange={handleToggleStatus}
           onClick={(e) => e.stopPropagation()}
           aria-label={t('agents:card.toggleStatus', { name: agent.name })}
@@ -259,7 +259,7 @@ export function AgentCard({
         </div>
 
         <Switch
-          checked={agent.status === 'Active'}
+          checked={agent.status === 'Active' || agent.status === 'Executing'}
           onCheckedChange={handleToggleStatus}
           onClick={(e) => e.stopPropagation()}
           aria-label={t('agents:card.toggleStatus', { name: agent.name })}

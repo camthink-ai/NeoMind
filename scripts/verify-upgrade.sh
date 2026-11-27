@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# T3.2 / Gate G6 — in-place upgrade acceptance: v1.3.3 binary → tip (1.3.4 RC).
+# T3.2 / Gate G6 — in-place upgrade acceptance: v1.3.3 binary → tip (1.4.0 RC).
 #
 # Lives under scripts/ (tracked) rather than gitignored work/ so Gate G6 cannot
 # silently drift. Pass binaries via env — no hard-coded stage artifact paths.
 #
 # Required:
 #   NEOMIND_BIN_133  path to a 1.3.3 neomind binary
-#   NEOMIND_BIN_134  path to the 1.3.4 RC neomind binary under test
+#   NEOMIND_BIN_140  path to the 1.4.0 RC neomind binary under test
 # Compatibility aliases (still accepted):
-#   NEOMIND_BIN_132 → treated as the seed/from binary (prefer NEOMIND_BIN_133)
-#   NEOMIND_BIN_133 → when NEOMIND_BIN_134 is set, tip is 134; else tip is 133
+#   NEOMIND_BIN_134 → when NEOMIND_BIN_140 is unset, treated as tip; else seed fallback
+#   NEOMIND_BIN_132 → treated as seed/from binary fallback (prefer NEOMIND_BIN_133)
 #   NEOMIND_BIN_131 → older seed alias still accepted
 #
 # Optional:
@@ -17,7 +17,7 @@
 #   NEOMIND_UPGRADE_OUT       default /tmp/neomind-upgrade-verify
 #   NEOMIND_UPGRADE_HTTP_PORT default 19400
 #   NEOMIND_UPGRADE_MQTT_PORT default 19500
-#   NEOMIND_EXPECT_VERSION    default 1.3.4
+#   NEOMIND_EXPECT_VERSION    default 1.4.0
 #
 # Isolated: STRICT_DATA_DIR + private ports. Never touches :29375 / :29385 / :18788.
 # If the chosen HTTP/MQTT port is already listening, exit non-zero (no takeover).
@@ -32,8 +32,11 @@ set -euo pipefail
 
 DATA_ROOT="${NEOMIND_UPGRADE_DATA_DIR:-/tmp/neomind-upgrade-test}"
 OUT_DIR="${NEOMIND_UPGRADE_OUT:-/tmp/neomind-upgrade-verify}"
-# Prefer 1.3.3 → 1.3.4; fall back to legacy 132/133 (and 131) env names.
-if [[ -n "${NEOMIND_BIN_134:-}" ]]; then
+# Prefer 1.3.3 → 1.4.0; fall back to legacy 134/133/132/131 env names.
+if [[ -n "${NEOMIND_BIN_140:-}" ]]; then
+  BIN_FROM="${NEOMIND_BIN_133:-${NEOMIND_BIN_134:-${NEOMIND_BIN_132:-${NEOMIND_BIN_131:-}}}}"
+  BIN_TIP="${NEOMIND_BIN_140}"
+elif [[ -n "${NEOMIND_BIN_134:-}" ]]; then
   BIN_FROM="${NEOMIND_BIN_133:-${NEOMIND_BIN_132:-${NEOMIND_BIN_131:-}}}"
   BIN_TIP="${NEOMIND_BIN_134}"
 elif [[ -n "${NEOMIND_BIN_133:-}" ]]; then
@@ -64,13 +67,13 @@ echo "BIN131=$BIN131"
 echo "BIN132=$BIN132"
 
 if [[ -z "$BIN131" || ! -x "$BIN131" ]]; then
-  echo "missing executable seed binary (NEOMIND_BIN_133 / NEOMIND_BIN_132 / NEOMIND_BIN_131)"; exit 2
+  echo "missing executable seed binary (NEOMIND_BIN_133 / NEOMIND_BIN_134 / NEOMIND_BIN_132 / NEOMIND_BIN_131)"; exit 2
 fi
 if [[ -z "$BIN132" || ! -x "$BIN132" ]]; then
-  echo "missing executable tip binary (NEOMIND_BIN_134 / NEOMIND_BIN_133 / NEOMIND_BIN_132)"; exit 2
+  echo "missing executable tip binary (NEOMIND_BIN_140 / NEOMIND_BIN_134 / NEOMIND_BIN_133 / NEOMIND_BIN_132)"; exit 2
 fi
 if [[ "$BIN131" == "$BIN132" ]]; then
-  echo "seed and tip binaries resolve to the same path — set NEOMIND_BIN_133 + NEOMIND_BIN_134"; exit 2
+  echo "seed and tip binaries resolve to the same path — set NEOMIND_BIN_133 + NEOMIND_BIN_140"; exit 2
 fi
 
 port_listening() {
@@ -123,7 +126,9 @@ stop_serve() {
 
 cleanup() {
   stop_serve 131 || true
+  stop_serve 131-rb || true
   stop_serve 132 || true
+  stop_serve 132-re || true
   # The only directory this script removes is the private one it made for
   # the key, and only when it is that one.
   case "${SECRETS_DIR:-}" in
@@ -282,7 +287,7 @@ seed_v131() {
     "resources": [
       {
         "resource_id": "device:upgrade-sensor-001:values.battery",
-        "resource_type": "device_metric",
+        "resource_type": "metric",
         "name": "battery"
       }
     ],
@@ -368,15 +373,24 @@ PY
 verify_after_upgrade() {
   echo "=== verify after tip binary ==="
   FAIL=0
-  srv_log="$OUT_DIR/serve-132.log"
+  local srv_log="$OUT_DIR/serve-132.log"
+  if [[ -n "${1:-}" && -f "$OUT_DIR/serve-${1}.log" ]]; then
+    srv_log="$OUT_DIR/serve-${1}.log"
+  elif [[ -f "$PID_DIR/serve-132-re.pid" && -f "$OUT_DIR/serve-132-re.log" ]]; then
+    srv_log="$OUT_DIR/serve-132-re.log"
+  elif [[ ! -f "$srv_log" && -f "$OUT_DIR/serve-132-re.log" ]]; then
+    srv_log="$OUT_DIR/serve-132-re.log"
+  fi
+  local srv_log_name
+  srv_log_name="$(basename "$srv_log")"
 
   if grep -q "DATA-DIR SPLIT" "$srv_log"; then
-    echo "FAIL: DATA-DIR SPLIT in serve-132.log"; FAIL=1
+    echo "FAIL: DATA-DIR SPLIT in $srv_log_name"; FAIL=1
   else
     echo "OK: no DATA-DIR SPLIT"
   fi
   if grep -qiE "decrypt(ion)? failed|failed to decrypt|panic" "$srv_log"; then
-    echo "FAIL: decrypt/panic in serve-132.log"; FAIL=1
+    echo "FAIL: decrypt/panic in $srv_log_name"; FAIL=1
   else
     echo "OK: no decrypt/panic"
   fi
@@ -596,7 +610,7 @@ PY
   # Simulate crash: remove pid cleanly then restart tip on same DATA_DIR.
   sleep 1
   start_serve "$BIN132" 132-re
-  verify_after_upgrade
+  verify_after_upgrade 132-re
   echo "OK: interrupt/restart recovered" | tee "$OUT_DIR/interrupt-recovered.txt"
   stop_serve 132-re
 }

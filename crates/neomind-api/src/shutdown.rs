@@ -73,10 +73,8 @@ pub async fn cleanup_resources(state: &ServerState) {
     // 0. Stop the clean-slate Cron/Interval ticker (in-flight submits finish
     // under their own timeout; there is no separate event-task abort map).
     if let Some(rt) = state.agents.clean_slate.read().await.as_ref() {
-        // Scheduler stop is best-effort — HostedAiAgentRuntime::start is
-        // idempotent; dropping the Arc at process exit cancels the token.
-        let _ = rt;
-        tracing::info!("Clean-slate agent runtime present at shutdown");
+        rt.stop();
+        tracing::info!("Stopped clean-slate agent scheduler at shutdown");
     }
 
     // 1. Stop the builtin llama-server children EXPLICITLY. kill_on_drop

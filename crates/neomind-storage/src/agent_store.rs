@@ -275,6 +275,122 @@ fn delivery_matches(rec: &ActionDeliveryRecord, destination: &str, fingerprint: 
     rec.destination == destination && rec.action_fingerprint == fingerprint
 }
 
+/// Fallback converter from legacy `v1.3.3` [`crate::agents::AgentExecutionRecord`] JSON
+/// into [`AgentExecutionRow`] when `AGENT_EXECUTIONS_TABLE` contains pre-upgrade rows.
+pub fn legacy_execution_to_row(bytes: &[u8]) -> Option<AgentExecutionRow> {
+    let legacy: crate::agents::AgentExecutionRecord = serde_json::from_slice(bytes).ok()?;
+    let started_at = if legacy.timestamp > 0 && legacy.timestamp < 1_000_000_000_000 {
+        legacy.timestamp.saturating_mul(1000)
+    } else {
+        legacy.timestamp
+    };
+    let duration_i64 = i64::try_from(legacy.duration_ms).unwrap_or(i64::MAX);
+    let finished_at = started_at.saturating_add(duration_i64);
+
+    let skip_reason = legacy
+        .input_summary
+        .as_ref()
+        .and_then(|s| s.skip_reason.as_deref())
+        .filter(|r| !r.is_empty())
+        .map(str::to_string);
+
+    let status = match legacy.status {
+        crate::agents::ExecutionStatus::Completed if skip_reason.is_some() => {
+            AgentExecutionStatus::Skipped
+        }
+        crate::agents::ExecutionStatus::Completed => AgentExecutionStatus::Completed,
+        crate::agents::ExecutionStatus::Partial => AgentExecutionStatus::Partial,
+        crate::agents::ExecutionStatus::Failed => AgentExecutionStatus::Failed,
+        crate::agents::ExecutionStatus::Running => AgentExecutionStatus::Skipped,
+    };
+
+    let trigger_source = {
+        let trimmed = legacy.trigger_type.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    };
+
+    let conclusion = if !legacy.decision_process.conclusion.is_empty() {
+        Some(legacy.decision_process.conclusion)
+    } else {
+        legacy
+            .result
+            .as_ref()
+            .map(|r| r.summary.clone())
+            .filter(|s| !s.is_empty())
+    };
+
+    let brief_text = if legacy.decision_process.situation_analysis.is_empty() {
+        None
+    } else {
+        Some(legacy.decision_process.situation_analysis)
+    };
+
+    let structured_result = legacy
+        .decision_process
+        .confidence
+        .map(|c| serde_json::json!({ "confidence": c }));
+
+    let items: Vec<serde_json::Value> = legacy
+        .decision_process
+        .data_collected
+        .into_iter()
+        .map(|d| {
+            let obs_ms = if d.timestamp > 0 && d.timestamp < 1_000_000_000_000 {
+                d.timestamp.saturating_mul(1000)
+            } else {
+                d.timestamp
+            };
+            serde_json::json!({
+                "key": d.source,
+                "source_id": d.source,
+                "observed_at": obs_ms,
+                "detail": {
+                    "kind": "structured",
+                    "value": d.values,
+                },
+            })
+        })
+        .collect();
+
+    let evidence = if items.is_empty() && skip_reason.is_none() {
+        serde_json::json!({})
+    } else {
+        let mut obj = serde_json::Map::new();
+        if !items.is_empty() {
+            obj.insert("items".into(), serde_json::Value::Array(items));
+        }
+        if let Some(reason) = skip_reason {
+            obj.insert("skip_reason".into(), serde_json::Value::String(reason));
+        }
+        serde_json::Value::Object(obj)
+    };
+
+    Some(AgentExecutionRow {
+        id: legacy.id,
+        agent_id: legacy.agent_id,
+        config_version: 1,
+        status,
+        started_at,
+        finished_at,
+        is_probe: false,
+        dry_run: false,
+        trigger_source,
+        stale_config: None,
+        evidence,
+        deliveries: Vec::new(),
+        tool_calls: Vec::new(),
+        brief_text,
+        conclusion,
+        structured_result,
+        error: legacy.error,
+        alert_verdict: None,
+    })
+}
+
 // ── Store ───────────────────────────────────────────────────────────────────
 
 /// Create the five agent tables if missing.
@@ -295,9 +411,12 @@ pub struct AgentRecordStore {
 }
 
 impl AgentRecordStore {
-    /// Open or create a store at `path`, ensuring the five agent tables exist.
+    /// Open or create a store at `path`, checking/stamping schema version and ensuring tables.
     pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Arc<Self>> {
-        Self::from_db(Database::create(path)?)
+        let db = Database::create(path)?;
+        crate::schema::check_or_stamp_version(&db, crate::schema::AGENTS_SCHEMA_VERSION)
+            .map_err(|e| Error::Storage(format!("schema version: {e}")))?;
+        Self::from_db(db)
     }
 
     /// In-memory store (tests).
@@ -309,14 +428,16 @@ impl AgentRecordStore {
         )
     }
 
-    /// Take ownership of a [`Database`] and ensure tables.
+    /// Take ownership of a [`Database`], check/stamp schema version, and ensure tables.
     pub fn from_db(db: Database) -> Result<Arc<Self>> {
-        Self::from_arc(Arc::new(db))
+        crate::schema::check_or_stamp_version(&db, crate::schema::AGENTS_SCHEMA_VERSION)
+            .map_err(|e| Error::Storage(format!("schema version: {e}")))?;
+        ensure_agent_tables(&db)?;
+        Ok(Arc::new(Self { db: Arc::new(db) }))
     }
 
-    /// Share an existing [`Database`].
+    /// Share an existing [`Database`] without opening a write transaction.
     pub fn from_arc(db: Arc<Database>) -> Result<Arc<Self>> {
-        ensure_agent_tables(&db)?;
         Ok(Arc::new(Self { db }))
     }
 
@@ -340,7 +461,11 @@ impl AgentRecordStore {
 
     pub fn get_spec(&self, id: &str) -> Result<Option<AgentSpecRecord>> {
         let read = self.db.begin_read()?;
-        let table = read.open_table(AGENT_SPECS_TABLE)?;
+        let table = match read.open_table(AGENT_SPECS_TABLE) {
+            Ok(t) => t,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
         match table.get(id)? {
             Some(bytes) => {
                 let spec: AgentSpecRecord = serde_json::from_slice(bytes.value())
@@ -353,7 +478,11 @@ impl AgentRecordStore {
 
     pub fn list_specs(&self) -> Result<Vec<AgentSpecRecord>> {
         let read = self.db.begin_read()?;
-        let table = read.open_table(AGENT_SPECS_TABLE)?;
+        let table = match read.open_table(AGENT_SPECS_TABLE) {
+            Ok(t) => t,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
+            Err(e) => return Err(e.into()),
+        };
         let mut out = Vec::new();
         for entry in table.iter()? {
             let (_, bytes) = entry?;
@@ -385,7 +514,7 @@ impl AgentRecordStore {
         Ok(removed)
     }
 
-    /// Drop every row for `id` (spec, runtime, memory, user messages).
+    /// Drop every row for `id` (spec, runtime, memory, user messages, executions).
     pub fn delete_agent_rows(&self, id: &str) -> Result<bool> {
         let write = self.db.begin_write()?;
         let removed = {
@@ -413,7 +542,11 @@ impl AgentRecordStore {
             let mut exec_ids = Vec::new();
             for item in executions.iter()? {
                 let (k, v) = item?;
-                if let Ok(row) = serde_json::from_slice::<AgentExecutionRow>(v.value()) {
+                let raw = v.value();
+                let row_opt = serde_json::from_slice::<AgentExecutionRow>(raw)
+                    .ok()
+                    .or_else(|| legacy_execution_to_row(raw));
+                if let Some(row) = row_opt {
                     if row.agent_id == id {
                         exec_ids.push(k.value().to_string());
                     }
@@ -431,7 +564,11 @@ impl AgentRecordStore {
 
     pub fn get_runtime(&self, agent_id: &str) -> Result<Option<AgentRuntimeRecord>> {
         let read = self.db.begin_read()?;
-        let table = read.open_table(AGENT_RUNTIME_TABLE)?;
+        let table = match read.open_table(AGENT_RUNTIME_TABLE) {
+            Ok(t) => t,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
         match table.get(agent_id)? {
             Some(bytes) => {
                 let rt: AgentRuntimeRecord = serde_json::from_slice(bytes.value())
@@ -561,12 +698,21 @@ impl AgentRecordStore {
 
     pub fn get_execution(&self, id: &str) -> Result<Option<AgentExecutionRow>> {
         let read = self.db.begin_read()?;
-        let table = read.open_table(AGENT_EXECUTIONS_TABLE)?;
+        let table = match read.open_table(AGENT_EXECUTIONS_TABLE) {
+            Ok(t) => t,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
         match table.get(id)? {
             Some(bytes) => {
-                let exec: AgentExecutionRow = serde_json::from_slice(bytes.value())
-                    .map_err(|e| Error::Serialization(e.to_string()))?;
-                Ok(Some(exec))
+                let raw = bytes.value();
+                match serde_json::from_slice::<AgentExecutionRow>(raw) {
+                    Ok(exec) => Ok(Some(exec)),
+                    Err(e) => match legacy_execution_to_row(raw) {
+                        Some(legacy_row) => Ok(Some(legacy_row)),
+                        None => Err(Error::Serialization(e.to_string())),
+                    },
+                }
             }
             None => Ok(None),
         }
@@ -575,16 +721,24 @@ impl AgentRecordStore {
     /// Formal (non-`dry_run`) executions for `agent_id`, newest `finished_at` first.
     pub fn list_formal_executions(&self, agent_id: &str) -> Result<Vec<AgentExecutionRow>> {
         let read = self.db.begin_read()?;
-        let table = read.open_table(AGENT_EXECUTIONS_TABLE)?;
+        let table = match read.open_table(AGENT_EXECUTIONS_TABLE) {
+            Ok(t) => t,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
+            Err(e) => return Err(e.into()),
+        };
         let mut out = Vec::new();
         for entry in table.iter()? {
             let (_, bytes) = entry?;
-            let exec: AgentExecutionRow = match serde_json::from_slice(bytes.value()) {
+            let raw = bytes.value();
+            let exec: AgentExecutionRow = match serde_json::from_slice(raw) {
                 Ok(e) => e,
-                Err(e) => {
-                    tracing::warn!("skip corrupt agent_executions row: {e}");
-                    continue;
-                }
+                Err(e) => match legacy_execution_to_row(raw) {
+                    Some(legacy_row) => legacy_row,
+                    None => {
+                        tracing::warn!("skip corrupt agent_executions row: {e}");
+                        continue;
+                    }
+                },
             };
             if exec.agent_id == agent_id && !exec.dry_run {
                 out.push(exec);
@@ -691,6 +845,10 @@ impl AgentRecordStore {
                 let mut exec: AgentExecutionRow = match serde_json::from_slice(&existing) {
                     Ok(e) => e,
                     Err(e) => {
+                        if legacy_execution_to_row(&existing).is_some() {
+                            // Legacy v1.3.3 execution record — already settled, no V2 delivery intents.
+                            continue;
+                        }
                         tracing::warn!("skip corrupt agent_executions row on recover: {e}");
                         continue;
                     }
@@ -797,7 +955,11 @@ impl AgentRecordStore {
 
     pub fn get_memory(&self, agent_id: &str) -> Result<Option<AgentMemory>> {
         let read = self.db.begin_read()?;
-        let table = read.open_table(AGENT_MEMORY_TABLE)?;
+        let table = match read.open_table(AGENT_MEMORY_TABLE) {
+            Ok(t) => t,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
         match table.get(agent_id)? {
             Some(bytes) => {
                 let mem: AgentMemory = serde_json::from_slice(bytes.value())
@@ -822,7 +984,11 @@ impl AgentRecordStore {
 
     pub fn get_user_messages(&self, agent_id: &str) -> Result<Option<Vec<UserMessage>>> {
         let read = self.db.begin_read()?;
-        let table = read.open_table(AGENT_USER_MESSAGES_TABLE)?;
+        let table = match read.open_table(AGENT_USER_MESSAGES_TABLE) {
+            Ok(t) => t,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
         match table.get(agent_id)? {
             Some(bytes) => {
                 let msgs: Vec<UserMessage> = serde_json::from_slice(bytes.value())
@@ -881,11 +1047,21 @@ impl AgentRecordStore {
         limit: Option<usize>,
     ) -> Result<Vec<UserMessage>> {
         let read = self.db.begin_read()?;
-        let specs = read.open_table(AGENT_SPECS_TABLE)?;
+        let specs = match read.open_table(AGENT_SPECS_TABLE) {
+            Ok(t) => t,
+            Err(redb::TableError::TableDoesNotExist(_)) => {
+                return Err(Error::NotFound(format!("Agent {} not found", agent_id)));
+            }
+            Err(e) => return Err(e.into()),
+        };
         if specs.get(agent_id)?.is_none() {
             return Err(Error::NotFound(format!("Agent {} not found", agent_id)));
         }
-        let table = read.open_table(AGENT_USER_MESSAGES_TABLE)?;
+        let table = match read.open_table(AGENT_USER_MESSAGES_TABLE) {
+            Ok(t) => t,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
+            Err(e) => return Err(e.into()),
+        };
         let msgs: Vec<UserMessage> = match table.get(agent_id)? {
             Some(bytes) => serde_json::from_slice(bytes.value())
                 .map_err(|e| Error::Serialization(e.to_string()))?,
@@ -1060,13 +1236,13 @@ mod tests {
     }
 
     #[test]
-    fn non_empty_allowlist_maps_to_scoped_with_commands() {
+    fn non_empty_allowlist_maps_to_scoped_without_iot_commands_in_shell_allowlist() {
         let cfg = Some(AgentToolConfig {
             enabled: true,
             allowed_tools: vec!["shell".into()],
         });
         let resources = vec![
-            bare_resource(ResourceType::Command, "cam.snapshot"),
+            bare_resource(ResourceType::Command, "device:relay1:on"),
             bare_resource(ResourceType::Device, "dev-1"),
         ];
         match map_tool_policy(ExecutionMode::Focused, &cfg, &resources) {
@@ -1075,7 +1251,10 @@ mod tests {
                 allowed_commands,
             } => {
                 assert_eq!(allowed_tools, vec!["shell".to_string()]);
-                assert_eq!(allowed_commands, vec!["cam.snapshot".to_string()]);
+                assert!(
+                    allowed_commands.is_empty(),
+                    "IoT ResourceType::Command must never leak into POSIX shell allowed_commands"
+                );
             }
             other => panic!("expected Scoped, got {other:?}"),
         }
@@ -1417,5 +1596,182 @@ mod tests {
         assert!(store.delete_agent_rows("u1").unwrap());
         assert!(!store.append_journal_entry("u1", rec).unwrap());
         assert!(store.get_memory("u1").unwrap().is_none());
+    }
+
+    #[test]
+    fn legacy_execution_records_are_listed_and_deleted_without_orphans() {
+        use crate::agents::{
+            AgentExecutionRecord, DataCollected, DecisionProcess, ExecutionInputSummary,
+            ExecutionStatus,
+        };
+
+        let store = AgentRecordStore::memory().unwrap();
+        store.save_spec(&sample_spec("agt-legacy")).unwrap();
+        store.save_spec(&sample_spec("agt-other")).unwrap();
+
+        let mk_legacy = |id: &str, agent_id: &str, ts_secs: i64| AgentExecutionRecord {
+            id: id.into(),
+            agent_id: agent_id.into(),
+            timestamp: ts_secs,
+            trigger_type: "event".into(),
+            status: ExecutionStatus::Completed,
+            decision_process: DecisionProcess {
+                situation_analysis: "sensor spiked".into(),
+                data_collected: vec![DataCollected {
+                    source: "sensor1".into(),
+                    data_type: "metric".into(),
+                    values: serde_json::json!({ "temp": 38.5 }),
+                    timestamp: ts_secs,
+                }],
+                reasoning_steps: vec![],
+                decisions: vec![],
+                conclusion: "Turned fan on".into(),
+                confidence: Some(0.9),
+                stop_reason: "completed".into(),
+                tokens_used: 120,
+            },
+            result: None,
+            duration_ms: 450,
+            error: None,
+            input_summary: Some(ExecutionInputSummary {
+                metrics_collected: 1,
+                image_extracted: None,
+                image_source_field: None,
+                vision_path: None,
+                skip_reason: None,
+            }),
+        };
+
+        // Write raw v1.3.3 AgentExecutionRecord JSON directly into AGENT_EXECUTIONS_TABLE.
+        {
+            let write = store.db().begin_write().unwrap();
+            {
+                let mut table = write.open_table(AGENT_EXECUTIONS_TABLE).unwrap();
+                let b1 = serde_json::to_vec(&mk_legacy("leg-1", "agt-legacy", 1_700_000_010)).unwrap();
+                let b2 = serde_json::to_vec(&mk_legacy("leg-2", "agt-other", 1_700_000_020)).unwrap();
+                table.insert("leg-1", b1.as_slice()).unwrap();
+                table.insert("leg-2", b2.as_slice()).unwrap();
+            }
+            write.commit().unwrap();
+        }
+
+        // Also save one V2 formal row for agt-legacy to verify mixed listing order.
+        store
+            .save_execution(&AgentExecutionRow {
+                id: "v2-1".into(),
+                agent_id: "agt-legacy".into(),
+                config_version: 1,
+                status: AgentExecutionStatus::Completed,
+                started_at: 1_700_000_030_000,
+                finished_at: 1_700_000_030_500,
+                is_probe: false,
+                dry_run: false,
+                trigger_source: Some("schedule".into()),
+                stale_config: None,
+                evidence: serde_json::json!({}),
+                deliveries: Vec::new(),
+                tool_calls: Vec::new(),
+                brief_text: None,
+                conclusion: Some("V2 ok".into()),
+                structured_result: None,
+                error: None,
+                alert_verdict: None,
+            })
+            .unwrap();
+
+        let listed = store.list_formal_executions("agt-legacy").unwrap();
+        assert_eq!(listed.len(), 2);
+        assert_eq!(listed[0].id, "v2-1");
+        assert_eq!(listed[1].id, "leg-1");
+        assert_eq!(listed[1].status, AgentExecutionStatus::Completed);
+        assert_eq!(listed[1].started_at, 1_700_000_010_000);
+        assert_eq!(listed[1].finished_at, 1_700_000_010_450);
+        assert_eq!(listed[1].trigger_source.as_deref(), Some("event"));
+        assert_eq!(listed[1].conclusion.as_deref(), Some("Turned fan on"));
+
+        let got = store.get_execution("leg-1").unwrap().expect("legacy get_execution");
+        assert_eq!(got.conclusion.as_deref(), Some("Turned fan on"));
+
+        // recover_stale_intents quietly ignores legacy rows without touching them.
+        assert!(store.recover_stale_intents().unwrap().is_empty());
+
+        // Deleting agt-legacy must remove both v2-1 and leg-1 while leaving leg-2 intact.
+        assert!(store.delete_agent_rows("agt-legacy").unwrap());
+        assert!(store.list_formal_executions("agt-legacy").unwrap().is_empty());
+        assert!(store.get_execution("leg-1").unwrap().is_none());
+        assert!(store.get_execution("v2-1").unwrap().is_none());
+        assert!(store.get_execution("leg-2").unwrap().is_some());
+    }
+
+    #[test]
+    fn from_arc_does_not_create_tables_and_reads_handle_missing_tables() {
+        let db = Arc::new(
+            Database::builder()
+                .create_with_backend(redb::backends::InMemoryBackend::new())
+                .unwrap(),
+        );
+        let store = AgentRecordStore::from_arc(db.clone()).unwrap();
+
+        // No write transaction should have created tables yet.
+        {
+            let read = db.begin_read().unwrap();
+            assert!(read.open_table(AGENT_SPECS_TABLE).is_err());
+            assert!(read.open_table(AGENT_EXECUTIONS_TABLE).is_err());
+        }
+
+        // Every read method treats TableDoesNotExist as empty/not-found.
+        assert!(store.get_spec("a1").unwrap().is_none());
+        assert!(store.list_specs().unwrap().is_empty());
+        assert!(store.get_runtime("a1").unwrap().is_none());
+        assert!(store.get_execution("e1").unwrap().is_none());
+        assert!(store.list_formal_executions("a1").unwrap().is_empty());
+        assert!(store.get_memory("a1").unwrap().is_none());
+        assert!(store.get_user_messages("a1").unwrap().is_none());
+        assert!(matches!(
+            store.get_user_messages_checked("a1", None),
+            Err(Error::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn rollback_guard_rejects_newer_schema_before_mutating_legacy_tables() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("newer_agents.redb");
+        let meta_def: TableDefinition<&str, u64> = TableDefinition::new("schema_meta");
+
+        {
+            let db = Database::create(&path).unwrap();
+            let write = db.begin_write().unwrap();
+            {
+                let mut meta = write.open_table(meta_def).unwrap();
+                meta.insert("version", crate::schema::AGENTS_SCHEMA_VERSION + 1)
+                    .unwrap();
+                let mut legacy = write.open_table(LEGACY_AGENTS_TABLE).unwrap();
+                let agent = fixture_agent();
+                let bytes = serde_json::to_vec(&agent).unwrap();
+                legacy.insert("a1", bytes.as_slice()).unwrap();
+            }
+            write.commit().unwrap();
+        }
+
+        // AgentStore::open must reject BEFORE migrating/deleting LEGACY_AGENTS_TABLE.
+        let err = match crate::agents::AgentStore::open(&path) {
+            Ok(_) => panic!("expected newer schema rejection"),
+            Err(e) => e.to_string(),
+        };
+        assert!(err.contains("NEWER"), "unexpected error: {err}");
+
+        // AgentRecordStore::open must also reject newer schema.
+        let err2 = match AgentRecordStore::open(&path) {
+            Ok(_) => panic!("expected newer schema rejection"),
+            Err(e) => e.to_string(),
+        };
+        assert!(err2.contains("NEWER"), "unexpected error: {err2}");
+
+        // Verify LEGACY_AGENTS_TABLE was NOT deleted or migrated!
+        let db = Database::open(&path).unwrap();
+        assert!(has_legacy_agents_table(&db).unwrap());
+        let read = db.begin_read().unwrap();
+        assert!(read.open_table(AGENT_SPECS_TABLE).is_err());
     }
 }

@@ -1205,7 +1205,26 @@ impl AgentCapabilityProvider {
             .and_then(|v| v.as_str())
             .ok_or_else(|| CapabilityError::InvalidParameters("Missing agent_id".to_string()))?;
 
-        let _input = params.get("input").cloned().unwrap_or(json!({}));
+        let caller = match params.get("input") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(s)) => {
+                if s.trim().is_empty() {
+                    None
+                } else {
+                    Some(neomind_ai_agent::CallerInput {
+                        content: Some(s.clone()),
+                        data: None,
+                        source: Some("extension".into()),
+                    })
+                }
+            }
+            Some(Value::Object(map)) if map.is_empty() => None,
+            Some(other) => Some(neomind_ai_agent::CallerInput {
+                content: None,
+                data: Some(other.clone()),
+                source: Some("extension".into()),
+            }),
+        };
 
         let guard = self.clean_slate.read().await;
         let Some(rt) = guard.as_ref() else {
@@ -1223,7 +1242,7 @@ impl AgentCapabilityProvider {
             }));
         }
         match rt
-            .submit(agent_id, neomind_ai_agent::SubmitSource::Extension)
+            .submit_with_caller(agent_id, neomind_ai_agent::SubmitSource::Extension, caller)
             .await
         {
             Ok(resp) => Ok(json!({

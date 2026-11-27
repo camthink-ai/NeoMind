@@ -49,6 +49,8 @@ pub struct ConversationTurn {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LlmRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
     pub backend_id: Option<String>,
     pub system: String,
     pub user: String,

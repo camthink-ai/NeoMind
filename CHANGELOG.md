@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.4.0] - 2026-11-27 — Clean-slate AI Agent V2 contract, rebuilt editor, chat entity attachments
+
+Clean-slate AI Agent V2 architecture across storage, runtime, editor, and CLI, paired with structured Chat reply attachments and lossless `v1.3.3` → `v1.4.0` upgrade verification. Product version **1.4.0** across Cargo/Web/Tauri/locks. Extension SDK stays **0.8.1** (unchanged).
+
+### Upgrade notes
+- **Lossless v1.3.3 → v1.4.0 migration (schema v2 preserved)**: `agents.redb` stays at `CURRENT_SCHEMA_VERSION = 2` so upgrading from `v1.3.3` / `v1.3.4` migrates legacy `agents` rows into the five-table contract (`agent_specs`, `agent_runtime`, `agent_executions`, `agent_memory`, `agent_user_messages`) without triggering rollback-guard lockouts; `scripts/verify-upgrade.sh` defaults `NEOMIND_EXPECT_VERSION=1.4.0` and accepts `NEOMIND_BIN_140` (with `134`/`133`/`132` fallbacks).
+- **Explicit AgentSpec V2 contract**: managed agents are governed by explicit `TriggerSpec`, `InputContract`, `OutputContract`, `ToolPolicy`, `NotifyPolicy`, `PacingPolicy`, and `ControlledAction` contracts; side-effect device actions target `device:<device_id>` with raw command names (`ControlledAction.name`) gated by `SideEffectBoundary` and `depends_on` input freshness.
+
+### Added
+- **Rebuilt Agent Editor & two-zone Detail Panel**: unified three-step `BuilderShell` editor (Mission & Data Sources with `SourcePickerDialog`, Actions & Output with `ToolPolicy` / `ControlledAction` / `OutputContract` publishing, Schedule & three-way `NotifyPolicy`), live `EffectivePlanPreview`, pre-save dry-run preview, and rebuilt `AgentDetailPanel` overview and execution timeline.
+- **Authorized multi-round tool loop & dry-run safety hooks**: 12-round compacted tool loop with Chat-style recent task history continuity, persisted `ToolCallTrace` records, `json_mode` finalization for structured `OutputContract` fields, caller `--input` / `--data` passthrough on `invoke` and `dry-run`, and pre-tool safety hooks blocking unauthorized writes or shell mutations during dry-runs and scoped policies.
+- **Chat structured reply attachments & CLI ergonomics**: assistant turns surface interactive entity attachment cards/chips with a split-pane desktop `EntityInspectorPane` and one-click `@` reference insertion (capped to protocol limits), alongside hardened `neomind` CLI / `ShellTool` JSON flags, shorthand agent creation/update flags, and `agent invoke` payload handling.
+
+### Fixed — agent / runtime / web
+- **Controlled action picker & dependency hygiene**: `ActionsOutputSection` maps device command picks to `destination: "device:<id>"` + raw command `name`, preserves readback highlighting on edit, and `SourcePickerDialog` prunes orphaned `depends_on` keys across `output`, `controlled_actions`, and `notify.alert_depends_on`.
+- **Execution evidence & live status controls**: `deriveAgentExecutionEvidence` projects V2 `deliveries` and `tool_calls` into action evidence instead of reporting `Unknown`, `AgentExecutionTimeline` renders `Skipped` runs with localized badges, and `AgentCard` / `agents.tsx` support pausing an agent while `Executing`.
+- **Panel chat i18n & inline reference label caps**: `PanelChatView` resolves `chat:connection.*` keys cleanly on disconnect/auth errors, and reply-attachment `@` insertions cap `labelSnapshot` to 128 chars across both main chat and panel views.
+
+### Test
+- **Live business & upgrade suites**: 55-scenario live business matrix, 5-archetype Chat→Agent E2E suite, 11-scenario alert/telemetry/network stress suite, `MessageAttachments` vitest suite, and Gate G6 `scripts/verify-upgrade.sh` (`happy` / `interrupt` / `rollback`).
+- `python3 scripts/extract_changelog.py --version 1.4.0 --check` gates this section.
+
 ## [1.3.4] - 2026-11-25 — Agent runtime/Partial, creation gating, chat context, frontend budget
 
 Post-`v1.3.3`: whole-device event snapshots + vision `Partial`, Chat agent create/tool gating, chat truncation/receipt honesty, frontend auth + first-paint budget, then post-merge HIGH/MEDIUM closures (#33/#34). Product version **1.3.4** across Cargo/Web/Tauri/locks. Extension SDK stays **0.8.1** (unchanged).

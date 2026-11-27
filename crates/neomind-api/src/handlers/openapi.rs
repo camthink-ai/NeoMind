@@ -21,7 +21,7 @@ use utoipa::OpenApi;
 #[openapi(
     info(
         title = "NeoMind API",
-        version = "0.9.24",
+        version = "1.4.0",
         description = "Edge AI/IoT platform API. All responses use the \
 {success, data|error:{code,message}} envelope. Timestamps are Unix seconds \
 unless a field is documented otherwise. Interactive docs: /api/docs; full \

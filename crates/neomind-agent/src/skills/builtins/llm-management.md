@@ -169,11 +169,13 @@ curl -X PATCH http://localhost:9375/api/llm-backends/<ID>/capabilities \
 
 ```bash
 # Use system default backend (set via `llm activate`)
-neomind agent create --name 'Temp Monitor' --prompt 'Check temperatures'
+neomind agent create --name 'Temp Monitor' --prompt 'Check temperatures' --every 5m --device-ids sensor-001
 
 # Bind a specific backend (e.g., a vision model for a camera agent)
 neomind agent create --name 'Camera Watch' \
   --prompt 'Analyze camera frames for anomalies' \
+  --schedule-type event \
+  --device-ids cam-001 \
   --llm-backend <VISION_BACKEND_ID>
 ```
 
@@ -203,7 +205,7 @@ neomind llm delete <OLD_ID>
 Models that support thinking/reasoning consume extra tokens. For non-chat LLM calls (memory extraction, context compression), the platform auto-sets `thinking_enabled: false`. To force-disable thinking on a cloud OpenAI-compatible backend (DashScope), the request includes `enable_thinking: false`. This is handled automatically — no CLI flag needed.
 
 If a thinking model causes gateway timeouts on long responses, consider:
-1. Setting a smaller `max_rounds` on the agent
+1. Using `focused` mode with pre-bound `--device-ids` / `--metrics` instead of multi-round tool loops
 2. Switching to a non-thinking variant for that workload
 
 ## CLI Command Reference

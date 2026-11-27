@@ -116,6 +116,7 @@ impl AgentRunner for SinglePassRunner {
             .llm
             .complete(
                 LlmRequest {
+                    agent_id: Some(spec.id.clone()),
                     backend_id: spec.llm_backend_id.clone(),
                     system,
                     user,

@@ -383,7 +383,8 @@ export function AgentsPage() {
 
   const handleToggleStatus = async (agent: AiAgent) => {
     try {
-      const newStatus = agent.status === 'Active' ? 'paused' : 'active'
+      const isRunningOrActive = agent.status === 'Active' || agent.status === 'Executing'
+      const newStatus = isRunningOrActive ? 'paused' : 'active'
       await api.setAgentStatus(agent.id, newStatus)
       await loadItems()
     } catch (error) {

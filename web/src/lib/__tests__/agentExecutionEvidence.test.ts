@@ -154,4 +154,55 @@ describe('deriveAgentExecutionEvidence', () => {
     expect(e.inputsPresence).toBe('empty')
     expect(e.actionsPresence).toBe('empty')
   })
+
+  it('derives actions from V2 deliveries and tool_calls when result is absent', () => {
+    const emptyV2 = deriveAgentExecutionEvidence(
+      base({
+        deliveries: [],
+        tool_calls: [],
+      }),
+    )
+    expect(emptyV2.actionsPresence).toBe('empty')
+    expect(emptyV2.actions).toHaveLength(0)
+
+    const populatedV2 = deriveAgentExecutionEvidence(
+      base({
+        deliveries: [
+          {
+            execution_id: 'e1',
+            destination: 'device:fan-01',
+            action_fingerprint: 'restart',
+            idempotent: true,
+            state: { state: 'confirmed' },
+          },
+        ],
+        tool_calls: [
+          {
+            round: 1,
+            name: 'shell',
+            arguments: { command: 'neomind device list' },
+            success: true,
+            result_preview: '2 devices',
+            duration_ms: 42,
+          },
+        ],
+      }),
+    )
+    expect(populatedV2.actionsPresence).toBe('known')
+    expect(populatedV2.actions).toHaveLength(2)
+    expect(populatedV2.actions[0]).toMatchObject({
+      description: 'restart',
+      target: 'device:fan-01',
+      success: true,
+      result: 'confirmed',
+      resultState: 'known',
+    })
+    expect(populatedV2.actions[1]).toMatchObject({
+      description: '#1 shell',
+      target: 'neomind device list',
+      success: true,
+      result: '2 devices',
+      resultState: 'known',
+    })
+  })
 })

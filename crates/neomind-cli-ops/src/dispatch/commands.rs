@@ -1660,8 +1660,8 @@ pub enum AgentCommand {
     ///     `agent invoke`, idles as Completed)
     ///
     /// Workflow:
-    ///   1. `agent create --name "Monitor" --prompt "Check sensors" --schedule-type interval --schedule-config "300"`
-    ///   2. `agent control <ID> active` — start the agent
+    ///   1. `agent create --name "Monitor" --prompt "Check sensors" --schedule-type interval --schedule-config "300" --execution-mode free`
+    ///   2. `agent invoke <ID>` — optional immediate run (already created active)
     ///   3. `agent latest-execution <ID>` — check results
     Create {
         /// Agent name (1-100 chars).

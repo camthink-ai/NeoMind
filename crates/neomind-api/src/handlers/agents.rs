@@ -654,6 +654,57 @@ fn detail_dto_from_execution_row(
             confidence: None,
         })
         .collect();
+    let mut actions_executed = Vec::new();
+    let mut notifications_sent = Vec::new();
+    for del in &record.deliveries {
+        let dest = del.destination.as_str();
+        let fp = del.action_fingerprint.as_str();
+        let (success, state_desc) = match &del.state {
+            neomind_storage::agent_store::DeliveryState::Accepted => (true, "Accepted".to_string()),
+            neomind_storage::agent_store::DeliveryState::Confirmed => {
+                (true, "Confirmed".to_string())
+            }
+            neomind_storage::agent_store::DeliveryState::Rejected { reason } => {
+                (false, format!("Rejected: {reason}"))
+            }
+            neomind_storage::agent_store::DeliveryState::OutcomeUnknown { reason } => {
+                (false, format!("OutcomeUnknown: {reason}"))
+            }
+            neomind_storage::agent_store::DeliveryState::IntentPending => {
+                (false, "IntentPending".to_string())
+            }
+        };
+        if dest.starts_with("device:") || dest.starts_with("extension:") {
+            actions_executed.push(ActionExecutedDto {
+                action_type: if dest.starts_with("device:") {
+                    "device_command".into()
+                } else {
+                    "extension_command".into()
+                },
+                target: dest.into(),
+                description: fp.into(),
+                success,
+                parameters: None,
+                result: Some(state_desc),
+            });
+        } else {
+            notifications_sent.push(NotificationSentDto {
+                channel: dest.into(),
+                recipient: dest.into(),
+                message: conclusion.clone(),
+                sent_at: record.finished_at / 1000,
+                success,
+            });
+        }
+    }
+    let total_ops = actions_executed.len() + notifications_sent.len();
+    let ok_ops = actions_executed.iter().filter(|a| a.success).count()
+        + notifications_sent.iter().filter(|n| n.success).count();
+    let success_rate = if total_ops == 0 {
+        1.0
+    } else {
+        ok_ops as f32 / total_ops as f32
+    };
     let trigger_type = execution_row_trigger_type(&record, agent_trigger);
     AgentExecutionDetailDto {
         id: record.id,
@@ -669,12 +720,18 @@ fn detail_dto_from_execution_row(
             data_collected,
             reasoning_steps,
             decisions: Vec::new(),
-            conclusion,
+            conclusion: conclusion.clone(),
             confidence,
             stop_reason: String::new(),
             tokens_used: 0,
         }),
-        result: None,
+        result: Some(ExecutionResultDto {
+            actions_executed,
+            report: record.brief_text,
+            notifications_sent,
+            summary: conclusion,
+            success_rate,
+        }),
     }
 }
 
@@ -1496,10 +1553,14 @@ pub async fn test_agent_preview(
                     let field = parts.next().unwrap_or("value").to_string();
                     InputSourceRef::DeviceMetric { device_id, field }
                 }
-                "extension_metric" | "ExtensionMetric" | "extension_tool" | "ExtensionTool" => {
-                    InputSourceRef::ExtensionInstance {
-                        id: r.resource_id.clone(),
-                    }
+                "extension" | "Extension" | "extension_metric" | "ExtensionMetric"
+                | "extension_tool" | "ExtensionTool" => {
+                    let clean = r
+                        .resource_id
+                        .strip_prefix("extension:")
+                        .unwrap_or(&r.resource_id);
+                    let id = clean.split(':').next().unwrap_or(clean).to_string();
+                    InputSourceRef::ExtensionInstance { id }
                 }
                 _ => InputSourceRef::WholeDevice {
                     device_id: r.resource_id.clone(),
@@ -1560,12 +1621,30 @@ pub async fn test_agent_preview(
     };
 
     let rt = state.require_clean_slate().await?;
-    let (spec, _) = rt.create(draft).map_err(map_agent_error)?;
-    let preview_id = spec.id.clone();
-    let dry_run_res = rt.dry_run(&preview_id).await;
-    // Always delete the transient preview agent even when dry_run returns an error.
-    let _ = rt.delete(&preview_id);
-    let resp = dry_run_res.map_err(map_agent_error)?;
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let preview_id = format!("preview_{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
+    let preview_spec = neomind_ai_agent::AgentSpec {
+        id: preview_id.clone(),
+        name: draft.name,
+        description: draft.description,
+        user_prompt: draft.user_prompt,
+        llm_backend_id: draft.llm_backend_id,
+        preset: draft.preset,
+        trigger: TriggerSpec::Manual,
+        pacing: draft.pacing,
+        input: draft.input,
+        tool_policy: draft.tool_policy,
+        output: draft.output,
+        notify: draft.notify,
+        controlled_actions: draft.controlled_actions,
+        config_version: 1,
+        created_at: now_ms,
+        updated_at: now_ms,
+    };
+    let resp = rt
+        .dry_run_ephemeral(preview_spec)
+        .await
+        .map_err(map_agent_error)?;
 
     ok(serde_json::to_value(resp).unwrap_or_else(|_| {
         json!({
@@ -1675,6 +1754,12 @@ pub async fn invoke_agent(
     }
 }
 
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct PaginationQuery {
+    pub limit: Option<usize>,
+    pub offset: Option<usize>,
+}
+
 /// Get execution history for an agent.
 #[utoipa::path(
     get,
@@ -1691,8 +1776,11 @@ pub async fn invoke_agent(
 pub async fn get_agent_executions(
     State(state): State<ServerState>,
     Path(id): Path<String>,
+    axum::extract::Query(q): axum::extract::Query<PaginationQuery>,
 ) -> HandlerResult<Value> {
     let _rt = require_agent(&state, &id).await?;
+    let limit = q.limit.unwrap_or(50).clamp(1, 200);
+    let offset = q.offset.unwrap_or(0);
 
     let dtos: Vec<AgentExecutionDto> =
         match AgentRecordStore::from_arc(state.agents.agent_store.db()) {
@@ -1701,7 +1789,8 @@ pub async fn get_agent_executions(
                 match store.list_formal_executions(&id) {
                     Ok(rows) => rows
                         .into_iter()
-                        .take(50)
+                        .skip(offset)
+                        .take(limit)
                         .map(|row| dto_from_execution_row(row, agent_trigger.as_ref()))
                         .collect(),
                     Err(e) => {
@@ -1803,6 +1892,11 @@ pub async fn get_execution(
         .ok_or_else(|| {
             ErrorResponse::not_found(format!("Execution not found: {}", execution_id))
         })?;
+    if execution.agent_id != id {
+        return Err(ErrorResponse::not_found(format!(
+            "Execution {execution_id} not found for agent {id}"
+        )));
+    }
 
     let dto = AgentExecutionDetailDto::from(execution);
 
@@ -1861,8 +1955,35 @@ pub async fn batch_get_executions(
         if let Some(store) = record_store.as_ref() {
             match store.get_execution(exec_id) {
                 Ok(Some(row)) => {
-                    let dto = detail_dto_from_execution_row(row, agent_trigger.as_ref());
-                    details.insert(exec_id.clone(), json!(dto));
+                    if row.agent_id != id {
+                        continue;
+                    }
+                    let structured = row.structured_result.clone();
+                    let deliveries = row.deliveries.clone();
+                    let tool_calls = row.tool_calls.clone();
+                    let alert_verdict = row.alert_verdict.clone();
+                    let config_version = row.config_version;
+                    let dry_run = row.dry_run;
+                    let stale_config = row.stale_config;
+                    let brief_text = row.brief_text.clone();
+                    let list = dto_from_execution_row(row.clone(), agent_trigger.as_ref());
+                    let detail = detail_dto_from_execution_row(row, agent_trigger.as_ref());
+                    let mut payload = json!(detail);
+                    if let Some(obj) = payload.as_object_mut() {
+                        obj.insert("config_version".into(), json!(config_version));
+                        obj.insert("dry_run".into(), json!(dry_run));
+                        obj.insert("stale_config".into(), json!(stale_config));
+                        obj.insert("conclusion".into(), json!(list.conclusion));
+                        obj.insert("structured_result".into(), json!(structured));
+                        obj.insert("alert_verdict".into(), json!(alert_verdict));
+                        obj.insert("deliveries".into(), json!(deliveries));
+                        obj.insert("tool_calls".into(), json!(tool_calls));
+                        obj.insert("confidence".into(), json!(list.confidence));
+                        if let Some(bt) = brief_text {
+                            obj.insert("brief_text".into(), json!(bt));
+                        }
+                    }
+                    details.insert(exec_id.clone(), payload);
                     continue;
                 }
                 Ok(None) => {}
@@ -1895,6 +2016,9 @@ pub async fn batch_get_executions(
         for (exec_id, result) in results {
             match result {
                 Ok(Some(record)) => {
+                    if record.agent_id != id {
+                        continue;
+                    }
                     let dto = AgentExecutionDetailDto::from(record);
                     details.insert(exec_id, json!(dto));
                 }
@@ -2195,11 +2319,13 @@ pub async fn add_user_message(
 pub async fn get_user_messages(
     State(state): State<ServerState>,
     Path(id): Path<String>,
+    axum::extract::Query(q): axum::extract::Query<PaginationQuery>,
 ) -> HandlerResult<Value> {
     let store = &state.agents.agent_store;
+    let limit = q.limit.unwrap_or(50).clamp(1, 200);
 
     let messages = store
-        .get_user_messages(&id, Some(50))
+        .get_user_messages(&id, Some(limit))
         .await
         .map_err(|e| store_error_to_response("Failed to get messages", e))?;
 

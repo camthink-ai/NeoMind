@@ -1586,6 +1586,7 @@ pub async fn share_proxy_handler(
     //    write inside the allowlist prefixes". PUT/DELETE stay blocked for
     //    both modes — interactive means actuating devices, never editing
     //    configuration.
+    // 4a. Method gate.
     if !is_allowed_share_method(path_str, &method, allow_interactive) {
         let reason = if allow_interactive {
             "This action is not available through a shared link"
@@ -1593,6 +1594,53 @@ pub async fn share_proxy_handler(
             "This share link is read-only"
         };
         return ErrorResponse::new("FORBIDDEN", reason, StatusCode::FORBIDDEN).into_response();
+    }
+
+    // 4b. Agent share-proxy scope isolation:
+    //     - Block listing all agents (`agents`), tools/resource inventories, and private
+    //       subpaths (`memory`, `messages`, `conversation`, `available-resources`, `explain-last`).
+    //     - Only permit reading/invoking an `:id` explicitly referenced by a component on
+    //       the shared dashboard, and redact private prompts from `GET agents/:id`.
+    let mut redact_shared_agent_detail = false;
+    if path_str == "agents" || path_str.starts_with("agents/") {
+        let segs: Vec<&str> = path_str.split('/').filter(|s| !s.is_empty()).collect();
+        let allowed_agent_subpath = match segs.as_slice() {
+            ["agents", id]
+                if !matches!(*id, "tools" | "plan-preview" | "test-preview" | "presets") =>
+            {
+                redact_shared_agent_detail = method == Method::GET;
+                Some(*id)
+            }
+            ["agents", id, "executions"]
+            | ["agents", id, "executions", "details"]
+            | ["agents", id, "executions", _]
+            | ["agents", id, "latest-execution"]
+            | ["agents", id, "invoke"] => Some(*id),
+            _ => None,
+        };
+        let Some(target_agent_id) = allowed_agent_subpath else {
+            return ErrorResponse::new(
+                "FORBIDDEN",
+                "This agent endpoint is not accessible via share proxy",
+                StatusCode::FORBIDDEN,
+            )
+            .into_response();
+        };
+        let bound_to_dashboard = state
+            .dashboard_store
+            .load(&share.dashboard_id)
+            .ok()
+            .flatten()
+            .and_then(|dash| serde_json::to_string(&dash).ok())
+            .is_some_and(|raw| raw.contains(target_agent_id));
+        if !bound_to_dashboard {
+            return ErrorResponse::new(
+                "FORBIDDEN",
+                "Agent is not bound to this shared dashboard",
+                StatusCode::FORBIDDEN,
+            )
+            .into_response();
+        }
     }
 
     // 5. Build query string
@@ -1657,7 +1705,19 @@ pub async fn share_proxy_handler(
                 .and_then(|v| v.to_str().ok())
                 .unwrap_or("application/json")
                 .to_string();
-            let body_bytes = resp.bytes().await.unwrap_or_default();
+            let mut body_bytes = resp.bytes().await.unwrap_or_default();
+            if redact_shared_agent_detail {
+                if let Ok(mut json_val) = serde_json::from_slice::<serde_json::Value>(&body_bytes) {
+                    if let Some(data_obj) = json_val.get_mut("data").and_then(|d| d.as_object_mut())
+                    {
+                        data_obj.remove("user_prompt");
+                        data_obj.remove("system_prompt");
+                    }
+                    if let Ok(redacted) = serde_json::to_vec(&json_val) {
+                        body_bytes = redacted.into();
+                    }
+                }
+            }
 
             Response::builder()
                 .status(status)

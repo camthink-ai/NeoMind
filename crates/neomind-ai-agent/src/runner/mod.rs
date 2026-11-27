@@ -91,7 +91,6 @@ pub fn apply_outcome(mut exec: AgentExecutionRecord, outcome: RunOutcome) -> Age
     {
         exec.status = crate::model::ExecutionStatus::Partial;
     } else {
-        exec.status = crate::model::ExecutionStatus::Failed;
         let details: Vec<String> = exec
             .evidence
             .items
@@ -118,6 +117,108 @@ pub fn apply_outcome(mut exec: AgentExecutionRecord, outcome: RunOutcome) -> Age
         } else {
             format!("all sources missing ({})", details.join("; "))
         });
+        let tool_recovered = exec.tool_calls.iter().any(|t| t.success)
+            && exec
+                .conclusion
+                .as_deref()
+                .is_some_and(|s| !s.trim().is_empty());
+        exec.status = if tool_recovered {
+            crate::model::ExecutionStatus::Partial
+        } else {
+            crate::model::ExecutionStatus::Failed
+        };
     }
     exec
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{
+        AgentExecutionRecord, EvidenceItem, EvidenceQuality, EvidenceReport, ExecutionStatus,
+        InputModality, ToolCallTrace,
+    };
+
+    fn missing_exec_skeleton() -> AgentExecutionRecord {
+        AgentExecutionRecord {
+            id: "exec_1".into(),
+            agent_id: "agt_1".into(),
+            config_version: 1,
+            status: ExecutionStatus::Completed,
+            started_at: 1000,
+            finished_at: 2000,
+            is_probe: false,
+            dry_run: false,
+            trigger_source: Some("manual".into()),
+            stale_config: None,
+            evidence: EvidenceReport {
+                items: vec![EvidenceItem {
+                    key: "sensor".into(),
+                    source_id: "device:s1".into(),
+                    result_type: InputModality::Metric,
+                    observed_at: None,
+                    valid_window: None,
+                    fetched_at: 1000,
+                    quality: EvidenceQuality::Missing,
+                    binding_proof: "no data".into(),
+                    detail: None,
+                }],
+                missing_keys: vec!["sensor".into()],
+                skip_reason: None,
+            },
+            deliveries: vec![],
+            tool_calls: vec![],
+            brief_text: None,
+            conclusion: None,
+            structured_result: None,
+            error: None,
+            alert_verdict: None,
+        }
+    }
+
+    #[test]
+    fn apply_outcome_marks_partial_when_tools_recover_from_missing_sources() {
+        let exec = missing_exec_skeleton();
+        let outcome = RunOutcome {
+            brief_text: Some("Fetched live reading via shell tool: 24.5C".into()),
+            conclusion: Some("Fetched live reading via shell tool: 24.5C".into()),
+            structured_result: None,
+            alert_criteria_met: false,
+            status_hint: None,
+            tool_calls: vec![ToolCallTrace {
+                round: 0,
+                name: "shell".into(),
+                arguments: serde_json::json!({"command": "neomind device latest s1"}),
+                success: true,
+                result_preview: "24.5".into(),
+                error: None,
+                duration_ms: 12,
+            }],
+        };
+        let out = apply_outcome(exec, outcome);
+        assert_eq!(out.status, ExecutionStatus::Partial);
+        assert!(out
+            .error
+            .as_deref()
+            .is_some_and(|e| e.contains("all sources missing")));
+    }
+
+    #[test]
+    fn apply_outcome_keeps_failed_when_zero_tools_and_all_sources_missing() {
+        let exec = missing_exec_skeleton();
+        let outcome = RunOutcome {
+            brief_text: Some("No data available".into()),
+            conclusion: Some("No data available".into()),
+            structured_result: None,
+            alert_criteria_met: false,
+            status_hint: None,
+            tool_calls: vec![],
+        };
+        let out = apply_outcome(exec, outcome);
+        assert_eq!(out.status, ExecutionStatus::Failed);
+        assert!(out
+            .error
+            .as_deref()
+            .is_some_and(|e| e.contains("all sources missing")));
+    }
 }

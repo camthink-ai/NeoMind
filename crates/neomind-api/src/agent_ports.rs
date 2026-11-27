@@ -100,6 +100,7 @@ pub struct HostLlmPort {
     /// Test hook: next `complete` fails like a backend 5xx (no local-brief fake).
     pub force_fail_next: AtomicBool,
     session_manager: Option<Arc<neomind_agent::SessionManager>>,
+    memory_store: Option<Arc<neomind_storage::MarkdownMemoryStore>>,
     /// Per-backend concurrency cap (max 2 concurrent agent runs per backend)
     /// to prevent scheduled/event bursts from starving local single-slot servers.
     backend_semaphores: std::sync::Mutex<HashMap<String, Arc<tokio::sync::Semaphore>>>,
@@ -111,6 +112,7 @@ impl HostLlmPort {
             request_count: AtomicU64::new(0),
             force_fail_next: AtomicBool::new(false),
             session_manager: None,
+            memory_store: None,
             backend_semaphores: std::sync::Mutex::new(HashMap::new()),
         }
     }
@@ -120,8 +122,17 @@ impl HostLlmPort {
             request_count: AtomicU64::new(0),
             force_fail_next: AtomicBool::new(false),
             session_manager: Some(session_manager),
+            memory_store: None,
             backend_semaphores: std::sync::Mutex::new(HashMap::new()),
         }
+    }
+
+    pub fn with_memory_store(
+        mut self,
+        memory_store: Arc<neomind_storage::MarkdownMemoryStore>,
+    ) -> Self {
+        self.memory_store = Some(memory_store);
+        self
     }
 
     fn backend_semaphore(&self, backend_key: &str) -> Arc<tokio::sync::Semaphore> {
@@ -338,6 +349,11 @@ impl HostLlmPort {
             neomind_ai_agent::model::ToolPolicy::Unrestricted
         };
         let safety_hooks = neomind_ai_agent::runner::hooks::default_hooks();
+        let isolated_memory_tool = build_isolated_agent_memory_tool(
+            request.agent_id.as_deref(),
+            registry_opt.as_deref(),
+            self.memory_store.as_ref(),
+        );
 
         for round in 0..max_rounds {
             if round >= 2 {
@@ -490,14 +506,20 @@ impl HostLlmPort {
                 break;
             };
 
-            let mut call_summaries = Vec::with_capacity(calls.len());
+            let mut assistant_tool_blocks = Vec::with_capacity(calls.len());
             let mut tool_results = Vec::with_capacity(calls.len());
             let mut round_any_succeeded = false;
 
             for (orig_name, args) in calls {
                 let call_key = format!("{orig_name}:{args}");
                 let trace_args = sanitize_trace_arguments(&args);
-                call_summaries.push(format!("{orig_name}({trace_args})"));
+                assistant_tool_blocks.push(format!(
+                    "<tool_call>{}</tool_call>",
+                    serde_json::json!({
+                        "name": orig_name,
+                        "arguments": trace_args,
+                    })
+                ));
 
                 // Guard against stuck duplicate tool-call loops.
                 if let Some(&(count, last_failed)) = seen_tool_calls.get(&call_key) {
@@ -614,11 +636,19 @@ impl HostLlmPort {
                 }
 
                 let started = Instant::now();
+                let exec_fut = async {
+                    if orig_name == "memory" && !registry.is_disabled("memory") {
+                        if let Some(ref mem_tool) = isolated_memory_tool {
+                            return mem_tool.execute(args.clone()).await;
+                        }
+                    }
+                    registry.execute(&orig_name, args.clone()).await
+                };
                 let exec_res = tokio::select! {
                     _ = cancel.cancelled() => return Err(AgentError::Cancelled),
                     res = tokio::time::timeout(
                         Duration::from_secs(30),
-                        registry.execute(&orig_name, args.clone()),
+                        exec_fut,
                     ) => res,
                 };
                 let elapsed_ms = started.elapsed().as_millis() as u64;
@@ -694,10 +724,7 @@ impl HostLlmPort {
                 consecutive_rejected_rounds += 1;
             }
 
-            messages.push(Message::assistant(format!(
-                "Calling tools: {}",
-                call_summaries.join(", ")
-            )));
+            messages.push(Message::assistant(assistant_tool_blocks.join("\n")));
             let follow_up = if round + 2 >= max_rounds {
                 format!(
                     "## Tool Results\n{}\n\nYou have reached the final round. Synthesize your final answer now without calling more tools.",
@@ -887,6 +914,41 @@ fn compact_tool_loop_messages(messages: &mut Vec<Message>, max_ctx_tokens: usize
     }
 }
 
+/// Build an isolated [`neomind_agent::toolkit::MemoryTool`] scoped to `agent_id`
+/// so background agent runs write `custom:{name}` under `agents/{agent_id}/custom/`
+/// without mutating shared Chat `MemoryTool` handles.
+pub(crate) fn build_isolated_agent_memory_tool(
+    agent_id: Option<&str>,
+    registry: Option<&neomind_agent::toolkit::ToolRegistry>,
+    memory_store: Option<&Arc<neomind_storage::MarkdownMemoryStore>>,
+) -> Option<Arc<dyn neomind_agent::toolkit::Tool>> {
+    let aid = agent_id?.trim();
+    if aid.is_empty() {
+        return None;
+    }
+    if let Some(reg) = registry {
+        if let Some(base_mem) = reg.get("memory") {
+            if let Some(isolated) = base_mem.clone_for_chat_session(&format!("agent:{aid}")) {
+                let _ = isolated.swap_agent_context(aid.to_string(), Vec::new());
+                return Some(isolated);
+            }
+        }
+    }
+    let ms = memory_store?;
+    let store = Arc::new(tokio::sync::RwLock::new((**ms).clone()));
+    let session_handle = Arc::new(tokio::sync::RwLock::new(Some(format!("agent:{aid}"))));
+    let agent_handle = Arc::new(tokio::sync::RwLock::new(Some(aid.to_string())));
+    let kf_handle = Arc::new(tokio::sync::RwLock::new(Vec::new()));
+    Some(Arc::new(
+        neomind_agent::toolkit::MemoryTool::with_shared_handles(
+            store,
+            session_handle,
+            agent_handle,
+            kf_handle,
+        ),
+    ))
+}
+
 fn select_authorized_tools(
     registry: &neomind_agent::toolkit::ToolRegistry,
     allowed_tools: Option<&[String]>,
@@ -902,6 +964,10 @@ fn select_authorized_tools(
             if allow.is_empty() || !allow.iter().any(|a| a.eq_ignore_ascii_case(&def.name)) {
                 continue;
             }
+        } else if def.name.eq_ignore_ascii_case("skill") {
+            // Exclude Chat-only interactive `skill` tool by default in Unrestricted
+            // background AI Agent runs so agents don't waste rounds loading UI skills.
+            continue;
         }
         let sanitized = sanitize_tool_name(&def.name);
         name_map.insert(def.name.clone(), def.name.clone());
@@ -915,8 +981,22 @@ fn select_authorized_tools(
     (defs, name_map)
 }
 
+fn resolve_authorized_tool_name<'a>(
+    raw_name: &str,
+    name_map: &'a HashMap<String, String>,
+) -> Option<&'a String> {
+    let trimmed = raw_name.trim();
+    if let Some(orig) = name_map.get(trimmed) {
+        return Some(orig);
+    }
+    name_map
+        .iter()
+        .find_map(|(k, v)| k.eq_ignore_ascii_case(trimmed).then_some(v))
+}
+
 /// Extract tool calls from native `LlmOutput.tool_calls` or text-protocol fallbacks
-/// (`<tool_call>...</tool_call>` / JSON array), filtering strictly to authorized tool names.
+/// (`<tool_call>...</tool_call>`, `neomind-llm-loop` XML/Hermes/Qwen/Pythonic, fenced JSON,
+/// JSON array/object, or legacy `Calling tools: name({...})`), filtering strictly to authorized tool names.
 fn extract_authorized_tool_calls(
     output: &neomind_core::llm::LlmOutput,
     name_map: &HashMap<String, String>,
@@ -926,9 +1006,10 @@ fn extract_authorized_tool_calls(
     if let Some(ref native) = output.tool_calls {
         for tc in native {
             if let Some(name) = tc.get("name").and_then(|v| v.as_str()) {
-                if let Some(orig) = name_map.get(name) {
+                if let Some(orig) = resolve_authorized_tool_name(name, name_map) {
                     let args = tc
                         .get("arguments")
+                        .or_else(|| tc.get("parameters"))
                         .cloned()
                         .unwrap_or_else(|| serde_json::json!({}));
                     let args = match args {
@@ -972,7 +1053,47 @@ fn extract_authorized_tool_calls(
         return calls;
     }
 
-    // 2) JSON array [{"name": "...", "arguments": {...}}] or single {"name": "...", "arguments": {...}}
+    // 2) Shared neomind-llm-loop text-protocol parser (JSON, XML <tool_calls>,
+    //    <tool_call><function=...>, Hermes <function name=...>, Pythonic [tool(k="v")]).
+    if let Ok((_, parsed_calls)) = neomind_agent::agent::tool_parser::parse_tool_calls(text) {
+        for tc in parsed_calls {
+            if let Some(orig) = resolve_authorized_tool_name(&tc.name, name_map) {
+                let args = match tc.arguments {
+                    serde_json::Value::String(s) => {
+                        serde_json::from_str(&s).unwrap_or_else(|_| serde_json::json!({}))
+                    }
+                    other => other,
+                };
+                calls.push((orig.clone(), args));
+            }
+        }
+    }
+    if !calls.is_empty() {
+        return calls;
+    }
+
+    // 3) Markdown fenced ```json ... ``` or ``` ... ``` blocks preceded by prose.
+    let mut fence_scan = text;
+    while let Some(open) = fence_scan.find("```") {
+        let after_open = &fence_scan[open + 3..];
+        let body_start = after_open.find('\n').map(|i| i + 1).unwrap_or(0);
+        let rest = &after_open[body_start..];
+        let Some(close) = rest.find("```") else {
+            break;
+        };
+        let fenced_body = rest[..close].trim();
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(fenced_body) {
+            collect_calls_from_json(&val, name_map, &mut calls);
+        } else if let Some(val) = parse_first_json_value(fenced_body) {
+            collect_calls_from_json(&val, name_map, &mut calls);
+        }
+        fence_scan = &rest[close + 3..];
+    }
+    if !calls.is_empty() {
+        return calls;
+    }
+
+    // 4) JSON array [{"name": "...", "arguments": {...}}] or single {"name": "...", "arguments": {...}}
     if let Ok(val) = serde_json::from_str::<serde_json::Value>(text) {
         collect_calls_from_json(&val, name_map, &mut calls);
     } else if let Some(i) = text.find('[') {
@@ -984,7 +1105,73 @@ fn extract_authorized_tool_calls(
             }
         }
     }
+    if !calls.is_empty() {
+        return calls;
+    }
+
+    // 5) Legacy plain-text fallback: `Calling tools: name({...}), ...`
+    parse_calling_tools_fallback(text, name_map, &mut calls);
     calls
+}
+
+fn parse_calling_tools_fallback(
+    text: &str,
+    name_map: &HashMap<String, String>,
+    out: &mut Vec<(String, serde_json::Value)>,
+) {
+    let Some(pos) = text.find("Calling tools:") else {
+        return;
+    };
+    let mut rest = text[pos + "Calling tools:".len()..].trim();
+    while !rest.is_empty() {
+        let Some(paren_open) = rest.find('(') else {
+            break;
+        };
+        let raw_name = rest[..paren_open].trim().trim_start_matches(',').trim();
+        let after_paren = &rest[paren_open + 1..];
+        if let Some(json_val) = parse_first_json_value(after_paren) {
+            if let Some(brace_start) = after_paren.find('{') {
+                // Advance past balanced JSON object and closing ')'
+                let mut depth = 0usize;
+                let mut in_str = false;
+                let mut esc = false;
+                let mut end_idx = None;
+                for (idx, b) in after_paren.as_bytes().iter().enumerate().skip(brace_start) {
+                    if in_str {
+                        if esc {
+                            esc = false;
+                        } else if *b == b'\\' {
+                            esc = true;
+                        } else if *b == b'"' {
+                            in_str = false;
+                        }
+                    } else {
+                        match *b {
+                            b'"' => in_str = true,
+                            b'{' => depth += 1,
+                            b'}' => {
+                                depth = depth.saturating_sub(1);
+                                if depth == 0 {
+                                    end_idx = Some(idx);
+                                    break;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                if let Some(orig) = resolve_authorized_tool_name(raw_name, name_map) {
+                    out.push((orig.clone(), json_val));
+                }
+                if let Some(e) = end_idx {
+                    let tail = after_paren[e + 1..].trim_start();
+                    rest = tail.strip_prefix(')').unwrap_or(tail).trim_start();
+                    continue;
+                }
+            }
+        }
+        break;
+    }
 }
 
 fn parse_first_json_value(s: &str) -> Option<serde_json::Value> {
@@ -1034,11 +1221,17 @@ fn collect_calls_from_json(
             }
         }
         serde_json::Value::Object(obj) => {
-            if let Some(name) = obj.get("name").and_then(|v| v.as_str()) {
-                if let Some(orig) = name_map.get(name) {
+            if let Some(name) = obj
+                .get("name")
+                .or_else(|| obj.get("tool"))
+                .or_else(|| obj.get("function"))
+                .and_then(|v| v.as_str())
+            {
+                if let Some(orig) = resolve_authorized_tool_name(name, name_map) {
                     let args = obj
                         .get("arguments")
                         .or_else(|| obj.get("parameters"))
+                        .or_else(|| obj.get("params"))
                         .cloned()
                         .unwrap_or_else(|| serde_json::json!({}));
                     let args = match args {
@@ -1859,5 +2052,127 @@ mod tests {
         assert_eq!(clean["api_key"], "[REDACTED]");
         assert_eq!(clean["nested"]["Authorization"], "[REDACTED]");
         assert!(clean["nested"]["query"].as_str().unwrap().len() < 600);
+    }
+
+    #[test]
+    fn extract_authorized_tool_calls_parses_pythonic_qwen_fenced_and_calling_tools() {
+        let mut name_map = HashMap::new();
+        name_map.insert("shell".to_string(), "shell".to_string());
+
+        // Pythonic [shell(command="uname -a")]
+        let py = LlmOutput {
+            text: r#"[shell(command="uname -a")]"#.into(),
+            finish_reason: FinishReason::Stop,
+            usage: None,
+            thinking: None,
+            tool_calls: None,
+        };
+        let calls = extract_authorized_tool_calls(&py, &name_map);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "shell");
+        assert_eq!(calls[0].1["command"], "uname -a");
+
+        // Qwen / LFM3 <tool_call><function=shell><parameter=command>...
+        let qwen = LlmOutput {
+            text: "<tool_call>\n<function=shell>\n<parameter=command>\nuname\n</parameter>\n</function>\n</tool_call>".into(),
+            finish_reason: FinishReason::Stop,
+            usage: None,
+            thinking: None,
+            tool_calls: None,
+        };
+        let calls = extract_authorized_tool_calls(&qwen, &name_map);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].1["command"], "uname");
+
+        // Prose + markdown fenced ```json
+        let fenced = LlmOutput {
+            text: "Let me check:\n```json\n{\"name\":\"shell\",\"arguments\":{\"command\":\"uptime\"}}\n```".into(),
+            finish_reason: FinishReason::Stop,
+            usage: None,
+            thinking: None,
+            tool_calls: None,
+        };
+        let calls = extract_authorized_tool_calls(&fenced, &name_map);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].1["command"], "uptime");
+
+        // Legacy Calling tools: shell({...})
+        let legacy = LlmOutput {
+            text: r#"Calling tools: shell({"command":"whoami"})"#.into(),
+            finish_reason: FinishReason::Stop,
+            usage: None,
+            thinking: None,
+            tool_calls: None,
+        };
+        let calls = extract_authorized_tool_calls(&legacy, &name_map);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].1["command"], "whoami");
+    }
+
+    #[tokio::test]
+    async fn skill_filtered_in_unrestricted_and_memory_tool_isolated_per_agent() {
+        let dir = tempfile::tempdir().unwrap();
+        let mem_store = Arc::new(neomind_storage::MarkdownMemoryStore::new(dir.path()));
+        mem_store.init().unwrap();
+
+        let shared_mem = Arc::new(neomind_agent::toolkit::MemoryTool::new(Arc::new(
+            tokio::sync::RwLock::new((*mem_store).clone()),
+        )));
+        let mut reg = neomind_agent::toolkit::ToolRegistry::new();
+        reg.register(shared_mem.clone());
+        reg.register(Arc::new(neomind_agent::toolkit::skill_tool::SkillTool::new(
+            Arc::new(tokio::sync::RwLock::new(
+                neomind_agent::skills::SkillRegistry::new(),
+            )),
+        )));
+
+        // Unrestricted (None) excludes `skill`, keeps `memory`.
+        let (defs_unres, map_unres) = select_authorized_tools(&reg, None);
+        assert!(!defs_unres.iter().any(|d| d.name == "skill"));
+        assert!(!map_unres.contains_key("skill"));
+        assert!(map_unres.contains_key("memory"));
+
+        // Scoped explicitly listing `skill` includes it.
+        let scoped = vec!["skill".to_string()];
+        let (defs_scoped, _) = select_authorized_tools(&reg, Some(&scoped));
+        assert_eq!(defs_scoped.len(), 1);
+        assert_eq!(defs_scoped[0].name, "skill");
+
+        // Per-agent MemoryTool isolation: agent A and agent B write to isolated custom files
+        // and leave the shared Chat MemoryTool in global scope (agent_id = None).
+        let tool_a = build_isolated_agent_memory_tool(Some("agt_alpha"), Some(&reg), Some(&mem_store))
+            .expect("isolated tool A");
+        let tool_b = build_isolated_agent_memory_tool(Some("agt_beta"), Some(&reg), Some(&mem_store))
+            .expect("isolated tool B");
+
+        tool_a
+            .execute(serde_json::json!({
+                "action": "create",
+                "target": "custom:notes",
+                "content": "# Alpha\nalpha-only"
+            }))
+            .await
+            .unwrap();
+        tool_b
+            .execute(serde_json::json!({
+                "action": "create",
+                "target": "custom:notes",
+                "content": "# Beta\nbeta-only"
+            }))
+            .await
+            .unwrap();
+
+        assert!(mem_store
+            .read_agent_custom_file("agt_alpha", "notes")
+            .unwrap()
+            .contains("alpha-only"));
+        assert!(mem_store
+            .read_agent_custom_file("agt_beta", "notes")
+            .unwrap()
+            .contains("beta-only"));
+        assert!(
+            shared_mem.agent_id_handle().read().await.is_none(),
+            "shared chat MemoryTool must remain unscoped"
+        );
     }
 }
