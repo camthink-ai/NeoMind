@@ -1027,6 +1027,7 @@ mod handling_path {
             &adapter.outbound_echoes,
             &adapter.uncollectable,
             data_dir.as_ref(),
+            &adapter.chunked_images,
         )
         .await;
     }
@@ -3519,4 +3520,389 @@ async fn uplink_is_stored_before_any_metric_is_announced() {
         announced.push(metric);
     }
     assert_eq!(announced, vec!["battery", "frame"]);
+}
+
+#[tokio::test]
+async fn chunked_image_reassembly_registered_ne301_saves_binary_and_extracts_metrics() {
+    use base64::engine::general_purpose::STANDARD as BASE64;
+    use crate::mdl::MetricDataType;
+    use crate::mdl_format::MetricDefinition;
+    use crate::registry::{ConnectionConfig, DeviceConfig, DeviceTypeTemplate};
+
+    let tmp_dir = tempfile::tempdir().expect("tempdir");
+    let adapter = MqttAdapter::new(MqttAdapterConfig::new("test", "localhost:1883"));
+    *adapter.data_dir.write().await = Some(tmp_dir.path().to_path_buf());
+
+    let storage = Arc::new(TimeSeriesStorage::memory().expect("in-memory telemetry"));
+    *adapter.telemetry_storage.write().await = Some(storage.clone());
+
+    let registry = adapter.device_registry.read().await.clone();
+    let template = DeviceTypeTemplate::new("ne301_camera", "NE301 Camera")
+        .with_metric(MetricDefinition {
+            name: "metadata.image_id".to_string(),
+            display_name: "Image ID".to_string(),
+            data_type: MetricDataType::String,
+            unit: String::new(),
+            min: None,
+            max: None,
+            required: false,
+        })
+        .with_metric(MetricDefinition {
+            name: "metadata.size".to_string(),
+            display_name: "Image Size".to_string(),
+            data_type: MetricDataType::Integer,
+            unit: "bytes".to_string(),
+            min: None,
+            max: None,
+            required: false,
+        })
+        .with_metric(MetricDefinition {
+            name: "ai_result.model_name".to_string(),
+            display_name: "AI Model".to_string(),
+            data_type: MetricDataType::String,
+            unit: String::new(),
+            min: None,
+            max: None,
+            required: false,
+        })
+        .with_metric(MetricDefinition {
+            name: "image_data".to_string(),
+            display_name: "Image Data".to_string(),
+            data_type: MetricDataType::String,
+            unit: String::new(),
+            min: None,
+            max: None,
+            required: false,
+        })
+        .with_metric(MetricDefinition {
+            name: "encoding".to_string(),
+            display_name: "Encoding".to_string(),
+            data_type: MetricDataType::String,
+            unit: String::new(),
+            min: None,
+            max: None,
+            required: false,
+        });
+    registry.register_template(template).await.unwrap();
+
+    let topic = "ne301/AABBCC/upload/report";
+    let device_id = "ne301-aabbcc";
+    let dev = DeviceConfig {
+        device_id: device_id.to_string(),
+        name: "NE301 Test".to_string(),
+        device_type: "ne301_camera".to_string(),
+        adapter_type: "mqtt".to_string(),
+        connection_config: ConnectionConfig {
+            telemetry_topic: Some(topic.to_string()),
+            ..Default::default()
+        },
+        adapter_id: None,
+        last_seen: 0,
+        offline_timeout_secs: None,
+    };
+    registry.register_device(dev).await.unwrap();
+    {
+        let mut map = adapter.topic_to_device.write().await;
+        topic_map_insert(&mut map, topic, device_id);
+        let mut types = adapter.device_types.write().await;
+        types.insert(device_id.to_string(), "ne301_camera".to_string());
+    }
+
+    // Build a synthetic JPEG byte stream (SOI + body + EOI) split into 3 chunks
+    let mut jpeg_bytes = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, b'J', b'F', b'I', b'F'];
+    jpeg_bytes.extend((0..240u8).cycle().take(244));
+    jpeg_bytes.extend_from_slice(&[0xFF, 0xD9]);
+    assert_eq!(jpeg_bytes.len(), 256);
+
+    let header = serde_json::json!({
+        "type": "image_chunked_header",
+        "image_id": "img_1732680000",
+        "total_size": 256,
+        "total_chunks": 3,
+        "chunk_size": 100,
+        "metadata": {
+            "image_id": "img_1732680000",
+            "timestamp": 1732680000,
+            "format": "jpeg",
+            "width": 1920,
+            "height": 1080,
+            "size": 256,
+            "quality": 85,
+            "trigger_type": "pir"
+        },
+        "ai_result": {
+            "model_name": "yolo_v8",
+            "model_version": "1.0",
+            "inference_time_ms": 42
+        }
+    });
+    let chunk0 = serde_json::json!({
+        "type": "image_chunk",
+        "image_id": "img_1732680000",
+        "chunk_index": 0,
+        "total_chunks": 3,
+        "chunk_size": 100,
+        "data": BASE64.encode(&jpeg_bytes[0..100]),
+        "encoding": "base64"
+    });
+    let chunk1 = serde_json::json!({
+        "type": "image_chunk",
+        "image_id": "img_1732680000",
+        "chunk_index": 1,
+        "total_chunks": 3,
+        "chunk_size": 100,
+        "data": BASE64.encode(&jpeg_bytes[100..200]),
+        "encoding": "base64"
+    });
+    let chunk2 = serde_json::json!({
+        "type": "image_chunk",
+        "image_id": "img_1732680000",
+        "chunk_index": 2,
+        "total_chunks": 3,
+        "chunk_size": 56,
+        "data": BASE64.encode(&jpeg_bytes[200..256]),
+        "encoding": "base64"
+    });
+
+    let mut rx = adapter.event_tx.subscribe();
+    let send_msg = |val: &serde_json::Value| {
+        let bytes = serde_json::to_vec(val).unwrap();
+        let publish = rumqttc::Publish::new(topic, rumqttc::QoS::AtLeastOnce, bytes);
+        rumqttc::Event::Incoming(rumqttc::Packet::Publish(publish))
+    };
+
+    // Send header, chunk0, chunk2 (out-of-order) -> nothing emitted yet
+    for msg in [&header, &chunk0, &chunk2] {
+        let dir = adapter.data_dir.read().await;
+        MqttAdapter::handle_mqtt_notification(
+            send_msg(msg),
+            &adapter.config,
+            &adapter.event_tx,
+            &adapter.event_bus,
+            &adapter.device_types,
+            &adapter.metric_cache,
+            &adapter.telemetry_storage,
+            &adapter.device_registry,
+            &adapter.connection_status,
+            "embedded",
+            &adapter.extractor,
+            &adapter.topic_to_device,
+            &adapter.outbound_echoes,
+            &adapter.uncollectable,
+            dir.as_ref(),
+            &adapter.chunked_images,
+        )
+        .await;
+        assert!(
+            rx.try_recv().is_err(),
+            "incomplete chunked image must not emit events"
+        );
+    }
+
+    // Send final missing chunk1 -> completes and emits extracted metrics
+    {
+        let dir = adapter.data_dir.read().await;
+        MqttAdapter::handle_mqtt_notification(
+            send_msg(&chunk1),
+            &adapter.config,
+            &adapter.event_tx,
+            &adapter.event_bus,
+            &adapter.device_types,
+            &adapter.metric_cache,
+            &adapter.telemetry_storage,
+            &adapter.device_registry,
+            &adapter.connection_status,
+            "embedded",
+            &adapter.extractor,
+            &adapter.topic_to_device,
+            &adapter.outbound_echoes,
+            &adapter.uncollectable,
+            dir.as_ref(),
+            &adapter.chunked_images,
+        )
+        .await;
+    }
+
+    let mut received: HashMap<String, MetricValue> = HashMap::new();
+    while let Ok(DeviceEvent::Metric {
+        device_id: id,
+        metric,
+        value,
+        ..
+    }) = rx.try_recv()
+    {
+        assert_eq!(id, device_id);
+        received.insert(metric, value);
+    }
+
+    assert_eq!(
+        received.get("metadata.image_id"),
+        Some(&MetricValue::String("img_1732680000".to_string()))
+    );
+    assert_eq!(
+        received.get("metadata.size"),
+        Some(&MetricValue::Integer(256))
+    );
+    assert_eq!(
+        received.get("ai_result.model_name"),
+        Some(&MetricValue::String("yolo_v8".to_string()))
+    );
+    assert_eq!(
+        received.get("encoding"),
+        Some(&MetricValue::String("base64".to_string()))
+    );
+
+    let Some(MetricValue::String(image_url)) = received.get("image_data") else {
+        panic!("expected image_data URL metric, got {:?}", received.get("image_data"));
+    };
+    assert!(
+        image_url.starts_with("/api/images/ne301-aabbcc/image_data/")
+            && image_url.ends_with(".jpg"),
+        "unexpected image_data url: {image_url}"
+    );
+
+    // Verify exact reassembled bytes written to disk
+    let rel = image_url.trim_start_matches("/api/");
+    let disk_path = tmp_dir.path().join(rel);
+    let saved_bytes = std::fs::read(&disk_path).expect("saved image file exists");
+    assert_eq!(saved_bytes, jpeg_bytes);
+
+    // Verify stored in TimeSeriesStorage as well
+    let latest_img = storage
+        .latest(&format!("device:{}", device_id), "image_data")
+        .await
+        .unwrap()
+        .expect("image_data stored");
+    assert_eq!(latest_img.value, MetricValue::String(image_url.clone()));
+
+    // Retransmit same image_id (firmware §7.4 flush ack timeout) -> suppressed
+    for msg in [&header, &chunk0, &chunk1, &chunk2] {
+        let dir = adapter.data_dir.read().await;
+        MqttAdapter::handle_mqtt_notification(
+            send_msg(msg),
+            &adapter.config,
+            &adapter.event_tx,
+            &adapter.event_bus,
+            &adapter.device_types,
+            &adapter.metric_cache,
+            &adapter.telemetry_storage,
+            &adapter.device_registry,
+            &adapter.connection_status,
+            "embedded",
+            &adapter.extractor,
+            &adapter.topic_to_device,
+            &adapter.outbound_echoes,
+            &adapter.uncollectable,
+            dir.as_ref(),
+            &adapter.chunked_images,
+        )
+        .await;
+    }
+    assert!(
+        rx.try_recv().is_err(),
+        "retransmitted completed image_id must be deduplicated"
+    );
+}
+
+#[tokio::test]
+async fn chunked_image_unregistered_emits_single_lightweight_discovery_on_completion() {
+    use base64::engine::general_purpose::STANDARD as BASE64;
+
+    let adapter = MqttAdapter::new(MqttAdapterConfig::new("test", "localhost:1883"));
+    let topic = "ne301/DDEEFF/upload/report";
+    let raw = vec![0xABu8; 4096];
+
+    let header = serde_json::json!({
+        "type": "image_chunked_header",
+        "image_id": "img_unreg",
+        "total_size": 4096,
+        "total_chunks": 2,
+        "chunk_size": 2048,
+        "metadata": { "image_id": "img_unreg", "format": "jpeg", "size": 4096 },
+        "ai_result": null
+    });
+    let chunk0 = serde_json::json!({
+        "type": "image_chunk",
+        "image_id": "img_unreg",
+        "chunk_index": 0,
+        "total_chunks": 2,
+        "chunk_size": 2048,
+        "data": BASE64.encode(&raw[..2048]),
+        "encoding": "base64"
+    });
+    let chunk1 = serde_json::json!({
+        "type": "image_chunk",
+        "image_id": "img_unreg",
+        "chunk_index": 1,
+        "total_chunks": 2,
+        "chunk_size": 2048,
+        "data": BASE64.encode(&raw[2048..]),
+        "encoding": "base64"
+    });
+
+    let mut rx = adapter.event_tx.subscribe();
+    let send_msg = |val: &serde_json::Value| {
+        let bytes = serde_json::to_vec(val).unwrap();
+        let publish = rumqttc::Publish::new(topic, rumqttc::QoS::AtLeastOnce, bytes);
+        rumqttc::Event::Incoming(rumqttc::Packet::Publish(publish))
+    };
+
+    for msg in [&header, &chunk0] {
+        MqttAdapter::handle_mqtt_notification(
+            send_msg(msg),
+            &adapter.config,
+            &adapter.event_tx,
+            &adapter.event_bus,
+            &adapter.device_types,
+            &adapter.metric_cache,
+            &adapter.telemetry_storage,
+            &adapter.device_registry,
+            &adapter.connection_status,
+            "embedded",
+            &adapter.extractor,
+            &adapter.topic_to_device,
+            &adapter.outbound_echoes,
+            &adapter.uncollectable,
+            None,
+            &adapter.chunked_images,
+        )
+        .await;
+        assert!(
+            rx.try_recv().is_err(),
+            "incomplete chunks must not trigger discovery"
+        );
+    }
+
+    MqttAdapter::handle_mqtt_notification(
+        send_msg(&chunk1),
+        &adapter.config,
+        &adapter.event_tx,
+        &adapter.event_bus,
+        &adapter.device_types,
+        &adapter.metric_cache,
+        &adapter.telemetry_storage,
+        &adapter.device_registry,
+        &adapter.connection_status,
+        "embedded",
+        &adapter.extractor,
+        &adapter.topic_to_device,
+        &adapter.outbound_echoes,
+        &adapter.uncollectable,
+        None,
+        &adapter.chunked_images,
+    )
+    .await;
+
+    let ev = rx.try_recv().expect("expected single discovery event");
+    match ev {
+        DeviceEvent::Discovery { device } => {
+            assert_eq!(device.device_id, "DDEEFF");
+            let sample_data = &device.metadata["sample"]["data"];
+            assert_eq!(sample_data["metadata"]["image_id"], "img_unreg");
+            assert_eq!(sample_data["image_data"], "<chunked_image:4096 bytes>");
+            assert_eq!(sample_data["encoding"], "base64");
+        }
+        other => panic!("expected Discovery event, got {:?}", other),
+    }
+    assert!(rx.try_recv().is_err());
 }

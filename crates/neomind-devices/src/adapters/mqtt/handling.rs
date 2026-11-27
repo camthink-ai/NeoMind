@@ -587,11 +587,12 @@ impl MqttAdapter {
         outbound_echoes: &Arc<RwLock<OutboundEchoBuffer>>,
         uncollectable: &Arc<RwLock<HashSet<String>>>,
         data_dir: Option<&PathBuf>,
+        chunked_images: &Arc<tokio::sync::Mutex<chunked_image::ChunkedImageReassembler>>,
     ) {
         match notification {
             rumqttc::Event::Incoming(rumqttc::Packet::Publish(publish)) => {
                 let topic = publish.topic.to_string();
-                let payload = publish.payload.to_vec();
+                let mut payload = publish.payload.to_vec();
 
                 debug!(
                     "Received MQTT message on topic: {}, payload length: {}",
@@ -660,6 +661,70 @@ impl MqttAdapter {
                             topic
                         );
                         return;
+                    }
+                }
+
+                // Chunked large-image reassembly (`type = "image_chunked_header" | "image_chunk"`).
+                // Intercept BEFORE identity/telemetry/discovery routing so incomplete
+                // chunks never emit partial metrics or pollute auto-onboarding drafts.
+                // Once complete, synthesize a lightweight JSON payload for identity /
+                // discovery and save the assembled raw image directly via
+                // `save_image_binary` on the registered-device path (avoiding a multi-MB
+                // base64 re-encode + decode round trip).
+                let mut reassembled_image: Option<chunked_image::ReassembledImage> = None;
+                if chunked_image::payload_may_be_chunked_image(&payload) {
+                    if let Ok(raw_json) = serde_json::from_slice::<serde_json::Value>(&payload) {
+                        let outcome = {
+                            let mut guard = chunked_images.lock().await;
+                            guard.ingest_json(broker_id, &topic, &raw_json)
+                        };
+                        match outcome {
+                            chunked_image::ChunkIngestOutcome::NotChunked => {}
+                            chunked_image::ChunkIngestOutcome::Pending {
+                                image_id,
+                                received_chunks,
+                                total_chunks,
+                            } => {
+                                debug!(
+                                    topic = %topic,
+                                    image_id = %image_id,
+                                    received_chunks,
+                                    total_chunks,
+                                    "Buffered MQTT image chunk"
+                                );
+                                return;
+                            }
+                            chunked_image::ChunkIngestOutcome::Duplicate { image_id } => {
+                                debug!(
+                                    topic = %topic,
+                                    image_id = %image_id,
+                                    "Ignoring duplicate MQTT image chunk or retransmit"
+                                );
+                                return;
+                            }
+                            chunked_image::ChunkIngestOutcome::Rejected { reason } => {
+                                warn!(
+                                    topic = %topic,
+                                    reason = %reason,
+                                    "Rejected invalid MQTT chunked image message"
+                                );
+                                return;
+                            }
+                            chunked_image::ChunkIngestOutcome::Completed(img) => {
+                                info!(
+                                    topic = %topic,
+                                    image_id = %img.image_id,
+                                    bytes = img.image_bytes.len(),
+                                    "Reassembled MQTT chunked image"
+                                );
+                                if let Ok(light_bytes) =
+                                    serde_json::to_vec(&img.to_discovery_sample_json())
+                                {
+                                    payload = light_bytes;
+                                }
+                                reassembled_image = Some(img);
+                            }
+                        }
                     }
                 }
 
@@ -891,7 +956,44 @@ impl MqttAdapter {
                         types.insert(device_id.clone(), dt.clone());
                     }
 
-                    if let Ok(json_data) = serde_json::from_slice::<serde_json::Value>(&payload) {
+                    let json_opt = if let Some(img) = reassembled_image {
+                        let preliminary = img.to_discovery_sample_json();
+                        let client_ts = extract_client_timestamp(&preliminary);
+                        let point_ts = client_ts.unwrap_or_else(|| now.timestamp());
+                        let image_data_val = if let Some(dir) = data_dir {
+                            match save_image_binary(
+                                &device_id,
+                                "image_data",
+                                point_ts,
+                                &img.image_bytes,
+                                dir,
+                            ) {
+                                Ok(url) => {
+                                    debug!(
+                                        "Saved reassembled chunked image for {}/image_data ({} bytes) -> {}",
+                                        device_id,
+                                        img.image_bytes.len(),
+                                        url
+                                    );
+                                    url
+                                }
+                                Err(e) => {
+                                    error!(
+                                        "Failed to save reassembled chunked image for {}/image_data: {}",
+                                        device_id, e
+                                    );
+                                    BASE64.encode(&img.image_bytes)
+                                }
+                            }
+                        } else {
+                            BASE64.encode(&img.image_bytes)
+                        };
+                        Some(img.to_report_json(image_data_val))
+                    } else {
+                        serde_json::from_slice::<serde_json::Value>(&payload).ok()
+                    };
+
+                    if let Some(json_data) = json_opt {
                         let client_ts = extract_client_timestamp(&json_data);
                         let point_ts = client_ts.unwrap_or_else(|| now.timestamp());
 
@@ -936,7 +1038,10 @@ impl MqttAdapter {
                                 })
                                 .await;
                             }
-                        } else if let Ok(value) = MqttAdapter::default_parse_value(&payload) {
+                        } else if let Ok(value) = serde_json::to_vec(&json_data)
+                            .map_err(|e| e.to_string())
+                            .and_then(|bytes| MqttAdapter::default_parse_value(&bytes))
+                        {
                             let metric_name = "value";
                             let value = Self::convert_binary_to_url(
                                 &device_id,

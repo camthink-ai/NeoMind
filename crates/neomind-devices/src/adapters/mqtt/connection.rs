@@ -68,6 +68,7 @@ impl MqttAdapter {
             uncollectable: Arc::new(RwLock::new(std::collections::HashSet::new())),
             extractor,
             data_dir: Arc::new(RwLock::new(None)),
+            chunked_images: Arc::new(Mutex::new(chunked_image::ChunkedImageReassembler::new())),
         }
     }
 
@@ -139,6 +140,7 @@ impl MqttAdapter {
             uncollectable: Arc::new(RwLock::new(std::collections::HashSet::new())),
             extractor,
             data_dir: Arc::new(RwLock::new(None)),
+            chunked_images: Arc::new(Mutex::new(chunked_image::ChunkedImageReassembler::new())),
         }
     }
 
@@ -442,15 +444,17 @@ impl MqttAdapter {
         let outbound_echoes = self.outbound_echoes.clone();
         let uncollectable = self.uncollectable.clone();
         let data_dir_clone = self.data_dir.clone();
+        let chunked_images = self.chunked_images.clone();
 
         info!(
             "Starting event loop task for broker '{}', connecting to {}...",
             broker_id, broker_addr
         );
 
-        // Spawn a periodic metric_cache sweep to prevent unbounded growth from
-        // phantom auto-onboarded devices. Drops entries older than 30 min.
+        // Spawn a periodic metric_cache & chunked_images sweep to prevent unbounded
+        // growth from phantom auto-onboarded devices or abandoned chunk transfers.
         let sweep_cache = Arc::clone(&self.metric_cache);
+        let sweep_chunked = Arc::clone(&self.chunked_images);
         let sweep_running = running.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
@@ -467,8 +471,13 @@ impl MqttAdapter {
                 }
                 cache.retain(|_, metrics| !metrics.is_empty());
                 let removed = before.saturating_sub(cache.len());
+                drop(cache);
                 if removed > 0 {
-                    tracing::debug!(removed, remaining = cache.len(), "metric_cache sweep");
+                    tracing::debug!(removed, "metric_cache sweep");
+                }
+                let evicted_chunks = sweep_chunked.lock().await.evict_expired_now();
+                if evicted_chunks > 0 {
+                    tracing::debug!(evicted_chunks, "chunked_images TTL sweep");
                 }
             }
         });
@@ -529,6 +538,7 @@ impl MqttAdapter {
                                 &outbound_echoes,
                                 &uncollectable,
                                 data_dir_clone.read().await.as_ref(),
+                                &chunked_images,
                             ))
                             .catch_unwind()
                             .await
@@ -801,6 +811,7 @@ impl MqttAdapter {
         let outbound_echoes = self.outbound_echoes.clone();
         let uncollectable = self.uncollectable.clone();
         let data_dir_clone = self.data_dir.clone();
+        let chunked_images = self.chunked_images.clone();
 
         let (eventloop_tx, eventloop_rx) = async_channel::bounded(2048);
         let event_tx_clone = event_tx.clone();
@@ -826,6 +837,7 @@ impl MqttAdapter {
                                 &outbound_echoes,
                                 &uncollectable,
                                 data_dir_clone.read().await.as_ref(),
+                                &chunked_images,
                             ),
                         )
                         .catch_unwind()

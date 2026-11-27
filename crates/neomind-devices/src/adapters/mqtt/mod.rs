@@ -250,6 +250,8 @@ pub struct MqttAdapter {
     pub(crate) extractor: Arc<UnifiedExtractor>,
     /// Data directory for image storage (runtime, not config)
     pub(crate) data_dir: Arc<RwLock<Option<PathBuf>>>,
+    /// Stateful reassembler for MQTT chunked large-image uploads (`>= 1 MiB`)
+    pub(crate) chunked_images: Arc<Mutex<chunked_image::ChunkedImageReassembler>>,
 }
 
 /// Create an MQTT adapter connected to an event bus.
@@ -410,6 +412,7 @@ pub use identity::{
 
 // Domain submodules — impl blocks live across these files.
 mod adapter;
+pub(crate) mod chunked_image;
 pub(crate) mod config;
 mod connection;
 mod handling;
