@@ -1281,7 +1281,7 @@ mod tests {
         assert!(read.open_table(AGENT_MEMORY_TABLE).is_ok());
         assert!(read.open_table(AGENT_USER_MESSAGES_TABLE).is_ok());
         assert_eq!(crate::schema::AGENTS_SCHEMA_VERSION, 2);
-        assert_eq!(crate::schema::CURRENT_SCHEMA_VERSION, 1);
+        assert_eq!(crate::schema::CURRENT_SCHEMA_VERSION, 2);
     }
 
     #[test]

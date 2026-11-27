@@ -20,12 +20,11 @@
 
 use redb::{Database, TableDefinition};
 
-/// Current row-format version for general neomind-storage databases.
+/// Current row-format version for neomind-storage databases.
 ///
-/// Unchanged stores (`devices.redb`, `telemetry.redb`, `dashboards.redb`,
-/// `sessions.redb`, `messages.redb`, etc.) stay at version 1 so rolling back
-/// to v1.3.3 never fails to open them.
-pub const CURRENT_SCHEMA_VERSION: u64 = 1;
+/// Must stay monotonically non-decreasing (PR #41 stamped v2 across all stores,
+/// so lowering it back to 1 would lock out databases opened by #41).
+pub const CURRENT_SCHEMA_VERSION: u64 = 2;
 
 /// Row-format version for `agents.redb` (v2 five-table layout).
 pub const AGENTS_SCHEMA_VERSION: u64 = 2;
