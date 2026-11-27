@@ -27,11 +27,24 @@ impl SideEffectBoundary {
     pub async fn settle(
         &self,
         spec: &AgentSpec,
-        mut exec: AgentExecutionRecord,
+        exec: AgentExecutionRecord,
         dry_run: bool,
     ) -> Result<AgentExecutionRecord> {
-        if dry_run || exec.is_probe {
-            // Dry-run / probe: zero external side effects.
+        let never_cancel = tokio_util::sync::CancellationToken::new();
+        self.settle_with_cancel(spec, exec, dry_run, &never_cancel)
+            .await
+    }
+
+    pub async fn settle_with_cancel(
+        &self,
+        spec: &AgentSpec,
+        mut exec: AgentExecutionRecord,
+        dry_run: bool,
+        cancel: &tokio_util::sync::CancellationToken,
+    ) -> Result<AgentExecutionRecord> {
+        if dry_run || exec.is_probe || cancel.is_cancelled() || self.store.get_spec(&spec.id).is_err()
+        {
+            // Dry-run / probe / cancelled / deleted: zero external side effects.
             return Ok(exec);
         }
 
@@ -45,6 +58,9 @@ impl SideEffectBoundary {
             let fp = format!("on_complete:{}", exec.id);
             let subject = format!("Agent {} completed", spec.name);
             for ch in &spec.notify.channels {
+                if cancel.is_cancelled() || self.store.get_spec(&spec.id).is_err() {
+                    return Ok(exec);
+                }
                 self.settle_notify(&mut exec, ch, &fp, &subject, &body, vec![], true)
                     .await?;
             }
@@ -57,6 +73,9 @@ impl SideEffectBoundary {
             let subject = format!("Agent {} alert", spec.name);
             let deps = spec.notify.alert_depends_on.clone();
             for ch in &spec.notify.channels {
+                if cancel.is_cancelled() || self.store.get_spec(&spec.id).is_err() {
+                    return Ok(exec);
+                }
                 self.settle_notify(&mut exec, ch, &fp, &subject, &body, deps.clone(), true)
                     .await?;
             }
@@ -71,6 +90,9 @@ impl SideEffectBoundary {
             let fp = format!("on_failure:{}", exec.id);
             let subject = format!("Agent {} failed", spec.name);
             for ch in &spec.notify.channels {
+                if cancel.is_cancelled() || self.store.get_spec(&spec.id).is_err() {
+                    return Ok(exec);
+                }
                 self.settle_notify(&mut exec, ch, &fp, &subject, &body, vec![], true)
                     .await?;
             }
@@ -133,6 +155,9 @@ impl SideEffectBoundary {
                     },
                 });
                 continue;
+            }
+            if cancel.is_cancelled() || self.store.get_spec(&spec.id).is_err() {
+                return Ok(exec);
             }
             let fp = format!("{}:{}", action.name, action.destination);
             let claimed = self.store.try_claim_delivery(ActionDeliveryRecord {

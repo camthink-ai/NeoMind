@@ -578,13 +578,21 @@ impl AgentApplicationService {
             self.store.save_execution(exec.clone())?;
         }
 
-        let exec = self.side_effects.settle(&spec, exec, dry_run).await?;
+        let exec = self
+            .side_effects
+            .settle_with_cancel(&spec, exec, dry_run, &cancel)
+            .await?;
 
         if !dry_run {
             if self.store.get_spec(id).is_err() {
                 return Err(AgentError::NotFound(id.into()));
             }
             if cancel.is_cancelled() {
+                // If any external deliveries already fired before cancellation landed,
+                // persist their settled receipts so agents.redb never strands IntentPending.
+                if !exec.deliveries.is_empty() {
+                    let _ = self.store.save_execution(exec);
+                }
                 return Err(AgentError::Cancelled);
             }
             let rt_now = self.store.get_runtime(id)?;

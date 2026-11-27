@@ -826,6 +826,7 @@ pub(super) fn drive_react_stream(
                     // For subsequent rounds, we need a new LLM call with tools enabled.
                     // Use the same budget-managed context builder as the initial call.
                     let state_guard = internal_state.read().await;
+                    let mut pending_budget_note: Option<String> = None;
 
                     let history_for_llm: Vec<neomind_core::Message> = {
                         // Build context with the same budget-managed context
@@ -842,7 +843,7 @@ pub(super) fn drive_react_stream(
                                 hard_budget_degrade_note_sent = true;
                                 let note = hard_budget_degrade_note().to_string();
                                 turn_system_notes.push(note.clone());
-                                yield AgentEvent::system_note(note);
+                                pending_budget_note = Some(note);
                             }
                         }
                         compacted.iter().map(|msg| {
@@ -863,6 +864,9 @@ pub(super) fn drive_react_stream(
                     // Build context for subsequent rounds - tell LLM what happened before
                     let recently_executed: Vec<&str> = recently_executed_tools.iter().map(|s| s.as_str()).collect();
                     drop(state_guard);
+                    if let Some(note) = pending_budget_note {
+                        yield AgentEvent::system_note(note);
+                    }
 
                     // Narration-nudge bookkeeping is separate from the tool-
                     // array `[` hold-back (redirects must not pollute

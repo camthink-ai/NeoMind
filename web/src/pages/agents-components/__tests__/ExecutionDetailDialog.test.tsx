@@ -112,11 +112,11 @@ describe('ExecutionDetailDialog (new execution fields)', () => {
     expect(screen.getByText('anomaly_count')).toBeTruthy()
     expect(screen.getByText('2')).toBeTruthy()
 
-    // Delivery receipts
-    expect(screen.getByText('channel:IM')).toBeTruthy()
+    // Delivery receipts (also summarized in AgentExecutionEvidencePanel)
+    expect(screen.getAllByText('channel:IM').length).toBeGreaterThanOrEqual(1)
     expect(screen.getByText('agents:execution.deliveryState.confirmed')).toBeTruthy()
-    expect(screen.getByText('webhook:ops')).toBeTruthy()
+    expect(screen.getAllByText('webhook:ops').length).toBeGreaterThanOrEqual(1)
     expect(screen.getByText('agents:execution.deliveryState.rejected')).toBeTruthy()
-    expect(screen.getByText('Channel disabled')).toBeTruthy()
+    expect(screen.getAllByText('Channel disabled').length).toBeGreaterThanOrEqual(1)
   })
 })

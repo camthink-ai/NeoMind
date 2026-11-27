@@ -141,6 +141,9 @@ impl InMemoryAgentStore {
 
     pub fn set_runtime(&self, runtime: AgentRuntimeRecord) -> Result<()> {
         let mut g = self.inner.lock().expect("store lock");
+        if !g.specs.contains_key(&runtime.agent_id) {
+            return Err(AgentError::NotFound(runtime.agent_id));
+        }
         g.runtime.insert(runtime.agent_id.clone(), runtime);
         Ok(())
     }
@@ -151,6 +154,9 @@ impl InMemoryAgentStore {
             let agent_id = exec.agent_id.clone();
             let id = exec.id.clone();
             let dry_run = exec.dry_run;
+            if !dry_run && !g.specs.contains_key(&agent_id) {
+                return Err(AgentError::NotFound(agent_id));
+            }
             g.executions.insert(id.clone(), exec.clone());
             // Formal history is idempotent by execution ID — re-saving the same
             // row (pre-settle skeleton → post-settle receipt) must not duplicate.
