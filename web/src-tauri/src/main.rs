@@ -62,7 +62,7 @@ impl ServerState {
                             }
                         }
                         Err(poisoned) => {
-                            finished = poisoned.into_inner().0;
+                            let _ = poisoned.into_inner();
                             break;
                         }
                     }
