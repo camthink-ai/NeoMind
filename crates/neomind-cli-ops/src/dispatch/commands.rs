@@ -1913,12 +1913,19 @@ pub enum AgentCommand {
     /// or `Executing` → `agent latest-execution <ID>`.
     ///
     /// Example: `neomind agent invoke agent-001 "Check all sensor readings"`
+    /// or `neomind agent invoke agent-001 --input "Check anomalies" --data '{"zone":"A"}'`
     Invoke {
         /// Agent ID.
         #[arg(required = true)]
         id: String,
-        /// Optional extra input for this run only.
+        /// Optional extra input text for this run only (positional form).
         input: Option<String>,
+        /// Optional extra input text for this run only (named flag form).
+        #[arg(long = "input", conflicts_with = "input")]
+        input_flag: Option<String>,
+        /// Optional structured JSON payload for this run only (passed as `data`).
+        #[arg(long)]
+        data: Option<String>,
         /// Authorized dry-run: reads + analysis only; no formal history or notify.
         #[arg(long, default_value_t = false)]
         dry_run: bool,
@@ -3475,6 +3482,41 @@ mod agent_invoke_input_tests {
             } => {
                 assert!(dry_run);
                 assert!(input.is_none());
+            }
+            other => panic!("expected Invoke, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn invoke_named_input_and_data_flags_parse() {
+        let args = Args::try_parse_from([
+            "neomind",
+            "agent",
+            "invoke",
+            "agent-001",
+            "--input",
+            "focus on zone A",
+            "--data",
+            r#"{"zone":"A","limit":5}"#,
+            "--dry-run",
+        ])
+        .unwrap();
+        match args.command {
+            Command::Agent {
+                agent_cmd:
+                    AgentCommand::Invoke {
+                        id,
+                        input,
+                        input_flag,
+                        data,
+                        dry_run,
+                    },
+            } => {
+                assert_eq!(id, "agent-001");
+                assert!(input.is_none());
+                assert_eq!(input_flag.as_deref(), Some("focus on zone A"));
+                assert_eq!(data.as_deref(), Some(r#"{"zone":"A","limit":5}"#));
+                assert!(dry_run);
             }
             other => panic!("expected Invoke, got {other:?}"),
         }

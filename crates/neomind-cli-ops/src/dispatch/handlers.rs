@@ -892,8 +892,22 @@ pub async fn run_agent_cmd_with_context(
         }
         AgentCommand::Delete { id } => delete_agent(&client, &id).await?,
         AgentCommand::Control { id, status } => control_agent(&client, &id, &status).await?,
-        AgentCommand::Invoke { id, input, dry_run } => {
-            invoke_agent_with_options(&client, &id, input.as_deref(), dry_run).await?
+        AgentCommand::Invoke {
+            id,
+            input,
+            input_flag,
+            data,
+            dry_run,
+        } => {
+            let effective_input = input.or(input_flag);
+            invoke_agent_with_payload(
+                &client,
+                &id,
+                effective_input.as_deref(),
+                data.as_deref(),
+                dry_run,
+            )
+            .await?
         }
         AgentCommand::PlanPreview { draft } => plan_preview_agent(&client, &draft).await?,
         AgentCommand::Test { id } => test_agent(&client, &id).await?,

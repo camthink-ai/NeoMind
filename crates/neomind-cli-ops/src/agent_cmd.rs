@@ -1530,11 +1530,34 @@ pub async fn invoke_agent_with_options(
     input: Option<&str>,
     dry_run: bool,
 ) -> Result<CliResponse> {
+    invoke_agent_with_payload(client, id, input, None, dry_run).await
+}
+
+pub async fn invoke_agent_with_payload(
+    client: &ApiClient,
+    id: &str,
+    input: Option<&str>,
+    data_json: Option<&str>,
+    dry_run: bool,
+) -> Result<CliResponse> {
     let id = resolve_agent_id(client, id).await?;
     let mut body = match input {
         Some(text) => json!({ "input": text }),
         None => json!({}),
     };
+    if let Some(raw_data) = data_json {
+        let parsed = match crate::json_arg::parse_json_arg(raw_data) {
+            Ok(v) => v,
+            Err(e) => {
+                return Ok(CliResponse::error_with_suggestion(
+                    format!("Invalid JSON in --data: {e}"),
+                    "INVALID_JSON",
+                    "Pass a valid JSON object/value, e.g. --data '{\"zone\":\"A\"}'",
+                ));
+            }
+        };
+        body["data"] = parsed;
+    }
     if dry_run {
         body["dry_run"] = json!(true);
     }

@@ -238,6 +238,15 @@ impl HostedAiAgentRuntime {
     }
 
     pub async fn dry_run(&self, id: &str) -> AgentResult<RunResponse> {
+        self.dry_run_with_caller(id, None).await
+    }
+
+    /// Authorized read-only dry-run with optional this-turn caller text / structured payload.
+    pub async fn dry_run_with_caller(
+        &self,
+        id: &str,
+        caller: Option<CallerInput>,
+    ) -> AgentResult<RunResponse> {
         let operator_notes = self.load_operator_notes(id);
         let memory_context = self.load_memory_context(id);
         let resp = self
@@ -246,7 +255,7 @@ impl HostedAiAgentRuntime {
                 id,
                 RunOptions {
                     execution_id: None,
-                    caller: None,
+                    caller,
                     operator_notes,
                     memory_context,
                 },

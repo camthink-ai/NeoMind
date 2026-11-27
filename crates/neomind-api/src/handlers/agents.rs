@@ -1629,7 +1629,7 @@ pub async fn invoke_agent(
     // Wait up to 60s for the result; longer runs keep going in background.
     let handle = tokio::spawn(async move {
         if dry_run {
-            rt_run.dry_run(&run_agent_id).await
+            rt_run.dry_run_with_caller(&run_agent_id, caller).await
         } else {
             rt_run.invoke_with_caller(&run_agent_id, caller).await
         }
