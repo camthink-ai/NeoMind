@@ -27,4 +27,7 @@ pub mod upgrade;
 pub mod validator;
 
 // Re-export server entry points for binary crates (neomind-cli, neomind-tauri)
-pub use server::{run, start_server};
+pub use server::{
+    new_shutdown_handle, run, run_with_shutdown, start_server, start_server_with_shutdown,
+    ShutdownHandle,
+};

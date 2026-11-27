@@ -106,6 +106,36 @@ impl CryptoService {
             let key_hex = key_hex.trim();
             if let Ok(key_bytes) = hex::decode(key_hex) {
                 if key_bytes.len() >= 32 {
+                    // Heal pre-upgrade key files created with default umask (e.g. 0644)
+                    // so the master encryption key is never left world-readable.
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        if let Ok(meta) = std::fs::metadata(key_file) {
+                            let mode = meta.permissions().mode() & 0o777;
+                            if mode != 0o600 {
+                                match std::fs::set_permissions(
+                                    key_file,
+                                    std::fs::Permissions::from_mode(0o600),
+                                ) {
+                                    Ok(()) => info!(
+                                        category = "crypto",
+                                        old_mode = format!("{:04o}", mode),
+                                        "Tightened existing encryption key permissions to 0600: {}",
+                                        key_file
+                                    ),
+                                    Err(e) => warn!(
+                                        category = "crypto",
+                                        old_mode = format!("{:04o}", mode),
+                                        error = %e,
+                                        "Failed to tighten encryption key permissions to 0600: {}",
+                                        key_file
+                                    ),
+                                }
+                            }
+                        }
+                    }
+
                     info!(
                         category = "crypto",
                         "Loaded encryption key from {}", key_file
@@ -358,6 +388,47 @@ mod tests {
         assert_eq!(decrypted, "hello");
 
         // Cleanup
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[cfg(unix)]
+    #[serial_test::serial]
+    #[test]
+    fn test_existing_key_file_permissions_healed_to_0600() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = std::env::temp_dir().join(format!(
+            "neomind-crypto-heal-perms-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::env::remove_var(ENCRYPTION_KEY_ENV);
+
+        let key_bytes = [0x42u8; 32];
+        let key_file = tmp.join("encryption_key");
+        std::fs::write(&key_file, hex::encode(key_bytes)).unwrap();
+        std::fs::set_permissions(&key_file, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(
+            std::fs::metadata(&key_file).unwrap().permissions().mode() & 0o777,
+            0o644
+        );
+
+        let loaded = CryptoService::from_env_or_generate_with_data_dir(tmp.to_str().unwrap());
+
+        let healed_mode = std::fs::metadata(&key_file).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            healed_mode, 0o600,
+            "existing encryption_key file must be tightened to 0600 on load"
+        );
+
+        // Verify the loaded service uses the original key bytes (not regenerated)
+        let reference = CryptoService::new(&key_bytes).unwrap();
+        let ct = reference.encrypt_str("secret-payload").unwrap();
+        assert_eq!(loaded.decrypt_str(&ct).unwrap(), "secret-payload");
+
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }

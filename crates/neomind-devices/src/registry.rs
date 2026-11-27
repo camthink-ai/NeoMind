@@ -409,6 +409,38 @@ fn convert_connection_config_to_storage(
     }
 }
 
+/// Maximum allowed length for a device identifier.
+pub const MAX_DEVICE_ID_LEN: usize = 128;
+
+/// Validate a device identifier against length limits and path/control-char injection.
+///
+/// Allows common device ID characters such as `[A-Za-z0-9._:-]` while rejecting
+/// empty IDs, IDs longer than 128 characters, `..`, `/`, `\`, `\0`, and control characters.
+pub fn validate_device_id(device_id: &str) -> Result<(), DeviceError> {
+    if device_id.is_empty() {
+        return Err(DeviceError::InvalidParameter(
+            "device_id cannot be empty".into(),
+        ));
+    }
+    if device_id.len() > MAX_DEVICE_ID_LEN || device_id.chars().count() > MAX_DEVICE_ID_LEN {
+        return Err(DeviceError::InvalidParameter(format!(
+            "device_id exceeds maximum length of {} characters",
+            MAX_DEVICE_ID_LEN
+        )));
+    }
+    if device_id.contains("..")
+        || device_id.contains('/')
+        || device_id.contains('\\')
+        || device_id.contains('\0')
+        || device_id.chars().any(|c| c.is_control())
+    {
+        return Err(DeviceError::InvalidParameter(
+            "device_id contains forbidden characters ('..', '/', '\\', NUL, or control characters are not allowed)".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Unified Device Registry
 /// Stores both templates and device configurations with optional persistence
 pub struct DeviceRegistry {
@@ -1002,11 +1034,7 @@ impl DeviceRegistry {
         })?;
 
         // Validate device_id format
-        if config.device_id.is_empty() {
-            return Err(DeviceError::InvalidParameter(
-                "device_id cannot be empty".into(),
-            ));
-        }
+        validate_device_id(&config.device_id)?;
 
         let device_id = config.device_id.clone();
         let device_type = config.device_type.clone();
@@ -1536,6 +1564,69 @@ mod tests {
         // Try to unregister template - should fail
         let result = registry.unregister_template("test_sensor").await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_register_device_validates_device_id() {
+        let registry = DeviceRegistry::new();
+        registry
+            .register_template(DeviceTypeTemplate::new("test_sensor", "Test Sensor"))
+            .await
+            .unwrap();
+
+        // Valid device IDs (including dots, colons, dashes, underscores) must pass
+        for valid_id in [
+            "sensor-01",
+            "aa:bb:cc:dd:ee:ff",
+            "device.room_1",
+            &"a".repeat(MAX_DEVICE_ID_LEN),
+        ] {
+            let cfg = DeviceConfig {
+                device_id: valid_id.to_string(),
+                name: "Valid".to_string(),
+                device_type: "test_sensor".to_string(),
+                adapter_type: "mqtt".to_string(),
+                connection_config: ConnectionConfig::new(),
+                adapter_id: None,
+                last_seen: 0,
+                offline_timeout_secs: None,
+            };
+            assert!(
+                registry.register_device(cfg).await.is_ok(),
+                "expected valid device_id to succeed: {valid_id}"
+            );
+        }
+
+        // Invalid device IDs must fail with InvalidParameter
+        for bad_id in [
+            "",
+            &"x".repeat(MAX_DEVICE_ID_LEN + 1),
+            "../etc/passwd",
+            "foo..bar",
+            "dir/sensor",
+            "dir\\sensor",
+            "bad\0id",
+            "bad\nid",
+            "bad\x1bid",
+        ] {
+            let cfg = DeviceConfig {
+                device_id: bad_id.to_string(),
+                name: "Bad".to_string(),
+                device_type: "test_sensor".to_string(),
+                adapter_type: "mqtt".to_string(),
+                connection_config: ConnectionConfig::new(),
+                adapter_id: None,
+                last_seen: 0,
+                offline_timeout_secs: None,
+            };
+            assert!(
+                matches!(
+                    registry.register_device(cfg).await,
+                    Err(DeviceError::InvalidParameter(_))
+                ),
+                "expected invalid device_id to be rejected: {bad_id:?}"
+            );
+        }
     }
 
     /// Test that GitHub device type JSON files can be deserialized correctly

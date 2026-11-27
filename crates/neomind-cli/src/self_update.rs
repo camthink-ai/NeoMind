@@ -42,15 +42,18 @@ pub async fn run_upgrade(version: Option<String>, yes: bool) -> Result<()> {
     println!("NeoMind {APP_VERSION} — checking for updates...");
 
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
+        .connect_timeout(std::time::Duration::from_secs(30))
+        .read_timeout(std::time::Duration::from_secs(60))
         .user_agent(neomind_core::brand::user_agent())
         .build()?;
 
-    // 1. Resolve target version (explicit pin, else latest release tag).
-    let target = match &version {
-        Some(v) => v.trim_start_matches('v').to_string(),
+    // 1. Resolve and strictly validate target version (explicit pin, else latest release tag).
+    let raw_target = match &version {
+        Some(v) => v.clone(),
         None => up::github_latest_version(&client).await?,
     };
+    let target = up::validate_semver_version(&raw_target)
+        .map_err(|e| anyhow!("invalid target version: {e}"))?;
 
     // 2. Skip if already on the latest (unless an explicit --version was given).
     if version.is_none() && !up::is_newer(&target, APP_VERSION) {
@@ -78,22 +81,41 @@ pub async fn run_upgrade(version: Option<String>, yes: bool) -> Result<()> {
     }
 
     let arch = up::host_arch();
+    let server_asset = up::server_tarball_filename(arch)?;
 
-    // 3. Download + extract the server tarball into a temp dir.
-    let tmp =
-        std::env::temp_dir().join(format!("neomind-upgrade-{}-{}", std::process::id(), target));
-    if tmp.exists() {
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
-    std::fs::create_dir_all(&tmp)?;
+    // Fetch release checksums when available (HTTP 200 → strictly enforced).
+    let release_checksums = up::fetch_release_checksums_optional(&client, &target).await?;
 
-    let url = up::server_tarball_url(&target, arch);
+    // 3. Download + extract the server tarball into a private (0700) temp dir.
+    let tmp_dir = up::create_upgrade_tempdir()?;
+    let tmp = tmp_dir.path();
+
+    let url = up::server_tarball_url(&target, arch)?;
     println!("Downloading {url}");
     let tarball = tmp.join("neomind.tar.gz");
     up::download_to_file(&client, &url, &tarball, None).await?;
 
+    if let Some(checksums) = release_checksums.as_ref() {
+        match checksums.get(&server_asset) {
+            Some(expected_sha) => {
+                up::verify_file_sha256(&tarball, expected_sha)?;
+                println!("Verified SHA-256 checksum for {server_asset}");
+            }
+            None if !up::allow_unverified_upgrade() => {
+                return Err(anyhow!(
+                    "release checksums.txt does not contain an entry for {server_asset}"
+                ));
+            }
+            None => {
+                eprintln!(
+                    "⚠️ {server_asset} missing from checksums.txt (continuing due to NEOMIND_ALLOW_UNVERIFIED_UPGRADE=1)"
+                );
+            }
+        }
+    }
+
     println!("Extracting...");
-    up::extract_tar_gz(&tarball, &tmp)?;
+    up::extract_tar_gz(&tarball, tmp)?;
 
     let new_bin = tmp.join("neomind");
     let new_runner = tmp.join("neomind-extension-runner");
@@ -131,19 +153,29 @@ pub async fn run_upgrade(version: Option<String>, yes: bool) -> Result<()> {
         APP_VERSION,
     )?;
 
-    // 9. Best-effort web-frontend swap (only if the web dir + a web tarball exist).
+    // 9. Best-effort web-frontend swap (streamed to disk, never buffered in RAM).
     if up::web_dir().is_dir() {
-        let web_url = up::web_tarball_url(&target);
-        if let Ok(resp) = client.get(&web_url).send().await {
-            if resp.status().is_success() {
-                if let Ok(bytes) = resp.bytes().await {
-                    let web_tgz = tmp.join("neomind-web.tar.gz");
-                    if std::fs::write(&web_tgz, &bytes).is_ok()
-                        && up::apply_web_dir(sudo.as_deref(), &web_tgz).is_ok()
-                    {
-                        println!("Frontend updated → {}", up::web_dir().display());
+        let web_url = up::web_tarball_url(&target)?;
+        let web_tgz = tmp.join("neomind-web.tar.gz");
+        if up::download_to_file(&client, &web_url, &web_tgz, None)
+            .await
+            .is_ok()
+        {
+            let web_ok = match release_checksums
+                .as_ref()
+                .and_then(|c| c.get("neomind-web.tar.gz"))
+            {
+                Some(expected_sha) => match up::verify_file_sha256(&web_tgz, expected_sha) {
+                    Ok(()) => true,
+                    Err(e) => {
+                        eprintln!("⚠️ frontend tarball checksum verification failed: {e}");
+                        false
                     }
-                }
+                },
+                None => true,
+            };
+            if web_ok && up::apply_web_dir(sudo.as_deref(), &web_tgz).is_ok() {
+                println!("Frontend updated → {}", up::web_dir().display());
             }
         }
     }
@@ -154,8 +186,8 @@ pub async fn run_upgrade(version: Option<String>, yes: bool) -> Result<()> {
         let _ = up::run_shell(sudo.as_deref(), &["systemctl", "start", "neomind"]);
     }
 
-    // 11. Clean up temp + verify.
-    let _ = std::fs::remove_dir_all(&tmp);
+    // 11. Temp dir auto-cleaned on drop.
+    drop(tmp_dir);
 
     println!("\nVerifying...");
     if svc_active {
@@ -195,52 +227,140 @@ pub fn run_apply_staged() -> Result<()> {
     let trigger_path = staging_root.join(up::APPLY_TRIGGER_FILE);
     let trigger_content = std::fs::read_to_string(&trigger_path).ok();
     let _ = std::fs::remove_file(&trigger_path);
-    let wanted_version = trigger_content
+    let wanted_version = match trigger_content
         .as_deref()
         .and_then(|s| s.split_whitespace().next())
-        .map(str::to_string);
+    {
+        Some(raw) => Some(
+            up::validate_semver_version(raw)
+                .map_err(|e| anyhow!("invalid version in apply trigger: {e}"))?,
+        ),
+        None => None,
+    };
 
     let manifest_path = find_staged_manifest(&staging_root, wanted_version.as_deref())?;
     let manifest: up::StagingManifest =
         serde_json::from_str(&std::fs::read_to_string(&manifest_path)?)
             .context("staging manifest is not valid JSON")?;
+    let version = up::validate_semver_version(&manifest.version)
+        .map_err(|e| anyhow!("invalid version in staging manifest: {e}"))?;
+    let arch = up::validate_arch(&manifest.arch)?;
+    if arch != up::host_arch() {
+        return Err(anyhow!(
+            "staged arch {arch} does not match host arch {}",
+            up::host_arch()
+        ));
+    }
     let staging = manifest_path
         .parent()
         .ok_or_else(|| anyhow!("staging manifest has no parent dir"))?
         .to_path_buf();
     println!(
         "Applying staged upgrade v{} (staged {}s ago, arch {}{})",
-        manifest.version,
+        version,
         chrono_now_millis().saturating_sub(manifest.staged_at) / 1000,
-        manifest.arch,
+        arch,
         wanted_version
             .as_ref()
             .map(|v| format!(", requested by trigger: v{v}"))
             .unwrap_or_default()
     );
 
-    // Re-verify before touching anything — the manifest is on disk, the
-    // staging dir could have been tampered with or truncated.
-    let new_bin = staging.join(&manifest.server_binary);
-    if !new_bin.exists() {
-        return Err(anyhow!(
-            "staged binary missing: {} — aborting (service untouched)",
-            new_bin.display()
-        ));
-    }
-    let vstr = up::verify_binary_version(&new_bin, &manifest.version)?;
-    println!("Verified staged binary: {vstr}");
+    // Resolve all manifest paths strictly inside `staging`, rejecting traversal
+    // and symlinks before touching or executing anything as root.
+    let staged_bin = up::resolve_staged_file(&staging, &manifest.server_binary)?;
+    let staged_runner = match manifest.extension_runner.as_deref() {
+        Some(r) => Some(up::resolve_staged_file(&staging, r)?),
+        None => None,
+    };
+    let web_tarball = match manifest.web_tarball.as_deref() {
+        Some(w) => Some(up::resolve_staged_file(&staging, w)?),
+        None => None,
+    };
 
-    let new_runner = manifest
-        .extension_runner
-        .as_ref()
-        .map(|r| staging.join(r))
-        .filter(|p| p.exists());
-    let web_tarball = manifest
-        .web_tarball
-        .as_ref()
-        .map(|w| staging.join(w))
-        .filter(|p| p.exists());
+    // Root privilege boundary: fetch checksums.txt directly over HTTPS from the
+    // pinned GitHub release URL (never trusting unprivileged manifest.json) and
+    // verify SHA-256 BEFORE executing verify_binary_version or installing.
+    let _verified_tmp: Option<up::UpgradeTempDir>;
+    let (new_bin, new_runner, release_checksums) = if up::allow_unverified_upgrade() {
+        eprintln!(
+            "⚠️ NEOMIND_ALLOW_UNVERIFIED_UPGRADE=1 is set — skipping release SHA-256 verification"
+        );
+        _verified_tmp = None;
+        (staged_bin, staged_runner, None)
+    } else {
+        let client = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(30))
+            .read_timeout(std::time::Duration::from_secs(60))
+            .user_agent(neomind_core::brand::user_agent())
+            .build()?;
+        let checksums = block_on_async(up::fetch_release_checksums(&client, &version))
+            .with_context(|| {
+                format!(
+                    "refusing unverified root apply for v{version}: could not fetch official checksums.txt \
+                     (set NEOMIND_ALLOW_UNVERIFIED_UPGRADE=1 in root env to override)"
+                )
+            })?;
+
+        let server_asset = up::server_tarball_filename(arch)?;
+        if let Some(expected_tarball_sha) = checksums.get(&server_asset) {
+            // Verify the staged tarball against GitHub's checksums.txt and extract
+            // into a root-owned 0700 directory so an unprivileged `neomind` user
+            // cannot tamper with extracted binaries (TOCTOU protection).
+            let tarball_name = manifest.server_tarball.as_deref().unwrap_or("neomind.tar.gz");
+            let staged_tarball = up::resolve_staged_file(&staging, tarball_name)?;
+            up::verify_file_sha256(&staged_tarball, expected_tarball_sha)?;
+            println!("Verified SHA-256 checksum for {server_asset}");
+
+            let root_tmp = up::create_upgrade_tempdir()?;
+            up::extract_tar_gz(&staged_tarball, root_tmp.path())?;
+            let extracted_bin = up::resolve_staged_file(root_tmp.path(), "neomind")?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&extracted_bin, std::fs::Permissions::from_mode(0o755))?;
+            }
+            let extracted_runner = if root_tmp.path().join("neomind-extension-runner").exists() {
+                Some(up::resolve_staged_file(
+                    root_tmp.path(),
+                    "neomind-extension-runner",
+                )?)
+            } else {
+                None
+            };
+            _verified_tmp = Some(root_tmp);
+            (extracted_bin, extracted_runner, Some(checksums))
+        } else if let Some(expected_bin_sha) = checksums.get(&manifest.server_binary) {
+            up::verify_file_sha256(&staged_bin, expected_bin_sha)?;
+            if let (Some(runner_name), Some(runner_path)) =
+                (manifest.extension_runner.as_deref(), staged_runner.as_ref())
+            {
+                let expected_runner_sha = checksums.get(runner_name).ok_or_else(|| {
+                    anyhow!("checksums.txt missing entry for staged runner {runner_name:?}")
+                })?;
+                up::verify_file_sha256(runner_path, expected_runner_sha)?;
+            }
+            println!("Verified SHA-256 checksum for {}", manifest.server_binary);
+            _verified_tmp = None;
+            (staged_bin, staged_runner, Some(checksums))
+        } else {
+            return Err(anyhow!(
+                "release checksums.txt for v{version} has no entry for {server_asset} — aborting"
+            ));
+        }
+    };
+
+    // If a web tarball is staged and we are enforcing checksums, verify it too.
+    if let (Some(web_tgz), Some(checksums)) = (web_tarball.as_ref(), release_checksums.as_ref()) {
+        let expected_web_sha = checksums.get("neomind-web.tar.gz").ok_or_else(|| {
+            anyhow!("release checksums.txt for v{version} has no entry for neomind-web.tar.gz")
+        })?;
+        up::verify_file_sha256(web_tgz, expected_web_sha)?;
+        println!("Verified SHA-256 checksum for neomind-web.tar.gz");
+    }
+
+    let vstr = up::verify_binary_version(&new_bin, &version)?;
+    println!("Verified staged binary: {vstr}");
 
     let install_dir = up::install_dir_from_exe();
     let sudo = up::sudo_prefix();
@@ -273,7 +393,7 @@ pub fn run_apply_staged() -> Result<()> {
     // staged version might still be wanted for a manual rollback-by-retry).
     let _ = std::fs::remove_dir_all(&staging);
 
-    println!("✅ staged upgrade to v{} applied", manifest.version);
+    println!("✅ staged upgrade to v{} applied", version);
     print_rollback_hint(&install_dir, &outcome);
     Ok(())
 }
@@ -282,20 +402,40 @@ pub fn run_apply_staged() -> Result<()> {
 /// when the trigger carried no version, fall back to the newest `staged_at`.
 /// Stale/junk staging dirs can never hijack a named apply.
 fn find_staged_manifest(root: &std::path::Path, wanted: Option<&str>) -> Result<PathBuf> {
+    if let Some(v) = wanted {
+        up::validate_semver_version(v)
+            .map_err(|e| anyhow!("invalid requested version: {e}"))?;
+    }
     let entries = std::fs::read_dir(root)
         .with_context(|| format!("no staging dir at {} — nothing to apply", root.display()))?;
 
     let mut newest: Option<(i64, PathBuf)> = None;
     for entry in entries.flatten() {
+        // Never follow symlinks inside staging_root.
+        let Ok(ft) = entry.file_type() else {
+            continue;
+        };
+        if !ft.is_dir() {
+            continue;
+        }
         let manifest = entry.path().join("manifest.json");
+        if std::fs::symlink_metadata(&manifest)
+            .map(|m| !m.file_type().is_file())
+            .unwrap_or(true)
+        {
+            continue;
+        }
         let Ok(content) = std::fs::read_to_string(&manifest) else {
             continue;
         };
         let Ok(m) = serde_json::from_str::<up::StagingManifest>(&content) else {
             continue;
         };
+        let Ok(clean_ver) = up::validate_semver_version(&m.version) else {
+            continue;
+        };
         if let Some(v) = wanted {
-            if m.version == v {
+            if clean_ver == v {
                 return Ok(manifest);
             }
         }
@@ -388,24 +528,21 @@ pub async fn run_uninstall(purge: bool, yes: bool) -> Result<()> {
     println!("Removing binaries from {}", dir.display());
     let _ = up::run_shell(
         sudo.as_deref(),
-        &["rm", "-f", &dir.join("neomind").to_string_lossy()],
+        &["rm", "-f", "--", &dir.join("neomind").to_string_lossy()],
     );
     let _ = up::run_shell(
         sudo.as_deref(),
         &[
             "rm",
             "-f",
+            "--",
             &dir.join("neomind-extension-runner").to_string_lossy(),
         ],
     );
-    let _ = up::run_shell(
-        sudo.as_deref(),
-        &[
-            "sh",
-            "-c",
-            &format!("rm -f {}/neomind*.bak*", dir.display()),
-        ],
-    );
+    for bak in find_backup_binaries(&dir) {
+        let bak_str = bak.to_string_lossy();
+        let _ = up::run_shell(sudo.as_deref(), &["rm", "-f", "--", &bak_str]);
+    }
 
     // 4. Optional purge of data + web.
     if purge {
@@ -455,6 +592,39 @@ fn print_rollback_hint(install_dir: &std::path::Path, outcome: &up::ApplyOutcome
 
 fn chrono_now_millis() -> i64 {
     chrono::Utc::now().timestamp_millis()
+}
+
+/// Execute an async future from synchronous `run_apply_staged`, supporting both
+/// an existing multi-threaded Tokio runtime (`#[tokio::main]`) and standalone callers.
+fn block_on_async<F: std::future::Future>(fut: F) -> F::Output {
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        tokio::task::block_in_place(|| handle.block_on(fut))
+    } else {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("failed to build temporary tokio runtime")
+            .block_on(fut)
+    }
+}
+
+/// Enumerate `neomind*.bak*` files inside `dir` without invoking a shell.
+fn find_backup_binaries(dir: &std::path::Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name();
+            let name_str = name.to_str()?;
+            if name_str.starts_with("neomind") && name_str.contains(".bak") {
+                Some(entry.path())
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -513,5 +683,35 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         assert!(find_staged_manifest(&root, None).is_err());
         assert!(find_staged_manifest(&root, Some("0.9.20")).is_err());
+    }
+
+    #[test]
+    fn find_staged_manifest_rejects_invalid_version() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("upgrade");
+        std::fs::create_dir_all(&root).unwrap();
+        write_manifest(&root, "0.9.20", 1000);
+        assert!(find_staged_manifest(&root, Some("../etc")).is_err());
+        assert!(find_staged_manifest(&root, Some("0.9.20?x=1")).is_err());
+    }
+
+    #[test]
+    fn find_backup_binaries_matches_only_neomind_bak_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        std::fs::write(dir.join("neomind.1.3.0.bak"), b"").unwrap();
+        std::fs::write(dir.join("neomind-extension-runner.1.3.0.bak"), b"").unwrap();
+        std::fs::write(dir.join("neomind"), b"").unwrap();
+        std::fs::write(dir.join("other.bak"), b"").unwrap();
+
+        let mut found: Vec<String> = find_backup_binaries(dir)
+            .into_iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        found.sort();
+        assert_eq!(
+            found,
+            vec!["neomind-extension-runner.1.3.0.bak", "neomind.1.3.0.bak"]
+        );
     }
 }

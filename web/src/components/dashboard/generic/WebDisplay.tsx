@@ -18,7 +18,30 @@ import type { DataSource } from '@/types/dashboard'
 import { EmptyState } from '../shared'
 
 // Check if running in Tauri environment
-const isTauri = typeof window !== 'undefined' && '__TAURI__' in window
+const isTauri =
+  typeof window !== 'undefined' &&
+  ('__TAURI__' in window || '__TAURI_INTERNALS__' in window)
+
+const DEFAULT_SAFE_SANDBOX = 'allow-scripts allow-forms allow-popups'
+
+/**
+ * Strictly validate that a URL uses http: or https: protocol.
+ * Rejects javascript:, data:, vbscript:, file:, and malformed/relative URLs.
+ */
+export function sanitizeHttpUrl(raw: string | undefined): string | null {
+  if (!raw) return null
+  const trimmed = raw.trim()
+  if (!trimmed) return null
+  try {
+    const parsed = new URL(trimmed)
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return parsed.href
+    }
+    return null
+  } catch {
+    return null
+  }
+}
 
 export interface WebDisplayProps {
   dataSource?: DataSource
@@ -45,7 +68,9 @@ export interface WebDisplayProps {
 
 // Get sandbox policy string (browser only)
 // IMPORTANT: allow-scripts + allow-same-origin together neutralize the sandbox
-// (the iframe can remove its own sandbox attribute). We enforce mutual exclusion.
+// (the iframe can remove its own sandbox attribute). We enforce mutual exclusion
+// and always return a safe sandbox attribute (never undefined) so embedded pages
+// cannot access the parent origin.
 function getSandboxPolicy(props: {
   sandbox?: boolean
   allowScripts?: boolean
@@ -53,7 +78,7 @@ function getSandboxPolicy(props: {
   allowForms?: boolean
   allowPopups?: boolean
 }): string {
-  if (!props.sandbox) return ''
+  if (props.sandbox === false) return DEFAULT_SAFE_SANDBOX
 
   const policies: string[] = []
   // Mutual exclusion: if both are requested, prefer allow-scripts (safer default
@@ -75,7 +100,7 @@ export function WebDisplay({
   src: propSrc,
   title,
   size = 'md',
-  sandbox = false,
+  sandbox = true,
   allowFullscreen = true,
   allowScripts = true,
   allowSameOrigin = false,
@@ -113,6 +138,7 @@ export function WebDisplay({
   // State
   const [iframeLoading, setIframeLoading] = useState(true)
   const [currentUrl, setCurrentUrl] = useState(src)
+  const [activeUrl, setActiveUrl] = useState(src)
   const [isTauriEnv, setIsTauriEnv] = useState(false)
 
   // Check Tauri environment
@@ -123,8 +149,12 @@ export function WebDisplay({
   // Sync URL
   useEffect(() => {
     setCurrentUrl(src)
+    setActiveUrl(src)
     setIframeLoading(true)
   }, [src])
+
+  const safeSrc = useMemo(() => sanitizeHttpUrl(src), [src])
+  const safeActiveUrl = useMemo(() => sanitizeHttpUrl(activeUrl), [activeUrl])
 
   const sandboxPolicy = useMemo(() => getSandboxPolicy({
     sandbox,
@@ -137,36 +167,37 @@ export function WebDisplay({
   const sizeConfig = dashboardComponentSize[size]
 
   const handleRefresh = useCallback(() => {
+    if (!safeActiveUrl) return
     setIframeLoading(true)
     if (iframeRef.current) {
-      const currentSrc = iframeRef.current.src
       iframeRef.current.src = ''
       setTimeout(() => {
         if (iframeRef.current) {
-          iframeRef.current.src = currentSrc
+          iframeRef.current.src = safeActiveUrl
         }
       }, 0)
     }
-  }, [])
+  }, [safeActiveUrl])
 
   const handleUrlSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (currentUrl) {
+    setActiveUrl(currentUrl)
+    if (sanitizeHttpUrl(currentUrl)) {
       setIframeLoading(true)
     }
   }
 
   // Open in new Tauri window
   const openInNewWindow = useCallback(async () => {
-    if (!isTauriEnv || !src) return
+    if (!isTauriEnv || !safeSrc) return
 
     try {
       const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow')
       const label = `webview-${Date.now()}`
-      const windowTitle = title || src.replace(/^https?:\/\//, '').split('/')[0]
+      const windowTitle = title || safeSrc.replace(/^https?:\/\//, '').split('/')[0]
 
       new WebviewWindow(label, {
-        url: src,
+        url: safeSrc,
         title: windowTitle,
         width: 1200,
         height: 800,
@@ -175,9 +206,9 @@ export function WebDisplay({
       })
     } catch (err) {
       console.error('Failed to open window:', err)
-      window.open(src, '_blank')
+      window.open(safeSrc, '_blank', 'noopener,noreferrer')
     }
-  }, [isTauriEnv, src, title])
+  }, [isTauriEnv, safeSrc, title])
 
   // Iframe handlers
   const handleIframeLoad = useCallback(() => {
@@ -210,8 +241,22 @@ export function WebDisplay({
     )
   }
 
+  // Blocked / invalid URL protocol (e.g. javascript:, data:, vbscript:, file:)
+  if (!loading && src && !safeSrc) {
+    return (
+      <EmptyState
+        size={size}
+        className={className}
+        icon={<Lock />}
+        message={t('webDisplay.invalidUrl', 'Invalid URL')}
+        subMessage={t('webDisplay.invalidUrlHint', 'Only http:// and https:// URLs are allowed')}
+      />
+    )
+  }
+
   // Tauri: Show placeholder with open button
   if (isTauriEnv) {
+    const displayHost = (safeSrc ?? '').replace(/^https?:\/\//, '').split('/')[0]
     return (
       <div className={cn(dashboardCardBase, 'flex flex-col overflow-hidden', !borderless && 'border', className)}>
         {showHeader && (
@@ -229,13 +274,13 @@ export function WebDisplay({
           <Globe className="h-12 w-12 text-muted-foreground" />
           <div className="min-w-0 max-w-full text-center">
             <p className="mb-1 truncate text-sm text-muted-foreground">
-              {title || src.replace(/^https?:\/\//, '').split('/')[0]}
+              {title || displayHost}
             </p>
             <p className="text-xs text-muted-foreground mb-4">
               {t('webDisplay.openInWindowHint', 'Click to open in a separate window')}
             </p>
           </div>
-          <Button onClick={openInNewWindow} className="gap-2">
+          <Button onClick={openInNewWindow} disabled={!safeSrc} className="gap-2">
             <Maximize2 className="h-4 w-4" />
             {t('webDisplay.openInNewWindow', 'Open in new window')}
           </Button>
@@ -251,12 +296,12 @@ export function WebDisplay({
       {title && <span className="min-w-0 flex-1 truncate text-sm font-medium">{title}</span>}
       {sandbox && <Lock className="h-4 w-4 shrink-0 text-muted-foreground" />}
       {!title && <div className="min-w-0 flex-1" />}
-      <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0 sm:h-6 sm:w-6" onClick={handleRefresh}>
-        <RefreshCw className={cn('h-4 w-4', iframeLoading && 'animate-spin')} />
+      <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0 sm:h-6 sm:w-6" onClick={handleRefresh} disabled={!safeActiveUrl}>
+        <RefreshCw className={cn('h-4 w-4', iframeLoading && safeActiveUrl && 'animate-spin')} />
       </Button>
-      {src && (
+      {safeActiveUrl && (
         <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0 sm:h-6 sm:w-6" asChild>
-          <a href={src} target="_blank" rel="noopener noreferrer">
+          <a href={safeActiveUrl} target="_blank" rel="noopener noreferrer">
             <ExternalLink className="h-4 w-4" />
           </a>
         </Button>
@@ -275,21 +320,33 @@ export function WebDisplay({
       {showHeader && headerContent}
       {urlBarContent}
       <div className="flex-1 relative min-h-0">
-        {iframeLoading && (
-          <div className="absolute inset-0 flex items-center justify-center bg-muted z-10">
-            <Skeleton className="w-full h-full" />
-          </div>
+        {!safeActiveUrl ? (
+          <EmptyState
+            size={size}
+            className="h-full border-0"
+            icon={<Lock />}
+            message={t('webDisplay.invalidUrl', 'Invalid URL')}
+            subMessage={t('webDisplay.invalidUrlHint', 'Only http:// and https:// URLs are allowed')}
+          />
+        ) : (
+          <>
+            {iframeLoading && (
+              <div className="absolute inset-0 flex items-center justify-center bg-muted z-10">
+                <Skeleton className="w-full h-full" />
+              </div>
+            )}
+            <iframe
+              ref={iframeRef}
+              src={safeActiveUrl}
+              title={title || 'Web content'}
+              className={cn('w-full h-full border-0', transparent && 'bg-transparent', !borderless && 'bg-background')}
+              sandbox={sandboxPolicy}
+              allowFullScreen={allowFullscreen}
+              onLoad={handleIframeLoad}
+              onError={handleIframeError}
+            />
+          </>
         )}
-        <iframe
-          ref={iframeRef}
-          src={currentUrl || src}
-          title={title || 'Web content'}
-          className={cn('w-full h-full border-0', transparent && 'bg-transparent', !borderless && 'bg-background')}
-          sandbox={sandboxPolicy || undefined}
-          allowFullScreen={allowFullscreen}
-          onLoad={handleIframeLoad}
-          onError={handleIframeError}
-        />
       </div>
     </div>
   )

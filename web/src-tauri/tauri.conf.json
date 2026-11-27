@@ -109,9 +109,6 @@
     }
   },
   "plugins": {
-    "shell": {
-      "open": true
-    },
     "updater": {
       "active": true,
       "endpoints": [

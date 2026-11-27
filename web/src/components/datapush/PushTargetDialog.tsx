@@ -67,6 +67,22 @@ const SOURCE_TYPE_BADGE: Record<string, string> = {
 }
 
 // ---------------------------------------------------------------------------
+// Helper: detect masked secret placeholder values returned by the API
+// ---------------------------------------------------------------------------
+
+function isMaskedSecret(value: string | undefined | null): boolean {
+  if (!value) return false
+  const trimmed = value.trim()
+  if (!trimmed) return false
+  return (
+    trimmed === '*****' ||
+    trimmed === '****' ||
+    /^\*{3,}$/.test(trimmed) ||
+    /^\*{3,}|\*{3,}$/.test(trimmed)
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Helper: derive compact source patterns from selected IDs
 // ---------------------------------------------------------------------------
 
@@ -197,7 +213,11 @@ export function PushTargetDialog() {
           setMqttTopicError(null)
           setMqttPort(editingPushTarget.config?.port || 1883)
           setMqttUsername(editingPushTarget.config?.username || '')
-          setMqttPassword(editingPushTarget.config?.password || '')
+          setMqttPassword(
+            isMaskedSecret(editingPushTarget.config?.password)
+              ? ''
+              : (editingPushTarget.config?.password || '')
+          )
           setMqttQos(editingPushTarget.config?.qos ?? 1)
         }
 
@@ -375,6 +395,15 @@ export function PushTargetDialog() {
       ? brokers.find(b => b.id === selectedBrokerId)
       : null
 
+    // Never send a masked placeholder (e.g. "*****") as an MQTT password.
+    const safeMqttPassword = (() => {
+      if (mqttPassword && !isMaskedSecret(mqttPassword)) return mqttPassword
+      if (resolvedMqttBroker?.password && !isMaskedSecret(resolvedMqttBroker.password)) {
+        return resolvedMqttBroker.password
+      }
+      return ''
+    })()
+
     const config: Record<string, unknown> = targetType === 'webhook'
       ? {
           url: webhookUrl,
@@ -396,7 +425,7 @@ export function PushTargetDialog() {
           topic: mqttTopic,
           qos: mqttQos,
           ...(resolvedMqttBroker?.username ? { username: resolvedMqttBroker.username } : mqttUsername.trim() ? { username: mqttUsername } : {}),
-          ...(resolvedMqttBroker?.password ? { password: resolvedMqttBroker.password } : mqttPassword ? { password: mqttPassword } : {}),
+          ...(safeMqttPassword ? { password: safeMqttPassword } : {}),
         }
 
     // Typed number inputs can hold NaN (cleared field) — fall back to the
@@ -615,7 +644,7 @@ export function PushTargetDialog() {
                           setMqttBroker(b.broker)
                           setMqttPort(b.port)
                           setMqttUsername(b.username || '')
-                          setMqttPassword(b.password || '')
+                          setMqttPassword(isMaskedSecret(b.password) ? '' : (b.password || ''))
                         }
                       }}>
                         <SelectTrigger className={isMobile ? "h-12 text-base" : "h-10"}>
@@ -638,6 +667,29 @@ export function PushTargetDialog() {
                           )}
                         </SelectContent>
                       </Select>
+                      {(() => {
+                        const selectedBroker = brokers.find(br => br.id === selectedBrokerId)
+                        if (!selectedBroker || !isMaskedSecret(selectedBroker.password)) return null
+                        return (
+                          <div className="space-y-1">
+                            <PasswordInput
+                              value={mqttPassword}
+                              onChange={(e) => setMqttPassword(e.target.value)}
+                              placeholder={t(
+                                'common:dataPush.mqttBrokerPasswordPlaceholder',
+                                'Enter broker password (not pre-filled for security)'
+                              )}
+                              className={isMobile ? "h-12 text-base" : "h-10"}
+                            />
+                            <p className={cn(textMini, "text-muted-foreground")}>
+                              {t(
+                                'common:dataPush.mqttBrokerPasswordHint',
+                                'Saved broker passwords are masked by the server. Re-enter the password if this broker requires authentication.'
+                              )}
+                            </p>
+                          </div>
+                        )
+                      })()}
                     </div>
                   ) : (
                     <div className="space-y-3">

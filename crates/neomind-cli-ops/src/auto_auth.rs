@@ -79,10 +79,31 @@ fn write_credential_to_path(path: &std::path::Path, key: &str) -> anyhow::Result
             )
         })?;
     }
-    std::fs::write(path, key).map_err(|e| {
-        anyhow::anyhow!("Failed to write credential file {}: {}", path.display(), e)
-    })?;
-    set_file_mode_0600(path);
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)
+            .map_err(|e| {
+                anyhow::anyhow!("Failed to open credential file {}: {}", path.display(), e)
+            })?;
+        // Tighten permissions if the file already existed with wider mode
+        set_file_mode_0600(path);
+        file.write_all(key.as_bytes()).map_err(|e| {
+            anyhow::anyhow!("Failed to write credential file {}: {}", path.display(), e)
+        })?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, key).map_err(|e| {
+            anyhow::anyhow!("Failed to write credential file {}: {}", path.display(), e)
+        })?;
+    }
     Ok(())
 }
 
@@ -243,6 +264,15 @@ pub fn read_default_api_key_from(data_dir: &str) -> Option<String> {
                     if info.active && info.permissions.contains(&"*".to_string()) {
                         debug!("Auto-auth: using API key '{}' ({})", info.name, info.id);
                         return Some(plaintext);
+                    } else {
+                        debug!(
+                            "Auto-auth: skipping key '{}' ({}) (active={}, has_wildcard={})",
+                            info.name,
+                            info.id,
+                            info.active,
+                            info.permissions.contains(&"*".to_string())
+                        );
+                        continue;
                     }
                 }
             }
@@ -382,5 +412,112 @@ mod tests {
         assert!(read_credential_from_path(&cred_path).is_none());
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_read_default_api_key_skips_revoked_and_non_wildcard_keys() {
+        #[derive(serde::Serialize)]
+        struct TestApiKeyInfo {
+            id: String,
+            name: String,
+            created_at: i64,
+            permissions: Vec<String>,
+            active: bool,
+        }
+
+        fn encrypt_key(cipher: &Aes256Gcm, plaintext: &str, nonce_byte: u8) -> String {
+            let nonce_bytes = [nonce_byte; 12];
+            let nonce = Nonce::from_slice(&nonce_bytes);
+            let ct = cipher.encrypt(nonce, plaintext.as_bytes()).unwrap();
+            let mut combined = nonce_bytes.to_vec();
+            combined.extend_from_slice(&ct);
+            base64::engine::general_purpose::STANDARD.encode(combined)
+        }
+
+        let tmp = tempfile::tempdir().unwrap();
+        let raw_key = [0x42u8; 32];
+        std::fs::write(tmp.path().join("encryption_key"), hex::encode(raw_key)).unwrap();
+        let cipher = Aes256Gcm::new(&raw_key.into());
+
+        // Case 1: Only revoked wildcard + active read-only key -> must return None
+        let db_path = tmp.path().join("api_keys.redb");
+        {
+            let db = Database::create(&db_path).unwrap();
+            let write_txn = db.begin_write().unwrap();
+            {
+                let mut keys_tbl = write_txn.open_table(API_KEYS_TABLE).unwrap();
+                let mut hashes_tbl = write_txn.open_table(API_KEY_HASHES_TABLE).unwrap();
+
+                let revoked_enc = encrypt_key(&cipher, "nmk_revoked_admin", 1);
+                keys_tbl.insert("01_revoked", revoked_enc.as_bytes()).unwrap();
+                let revoked_info = bincode::serialize(&TestApiKeyInfo {
+                    id: "k1".into(),
+                    name: "Revoked Admin".into(),
+                    created_at: 1,
+                    permissions: vec!["*".into()],
+                    active: false,
+                })
+                .unwrap();
+                hashes_tbl
+                    .insert("01_revoked", revoked_info.as_slice())
+                    .unwrap();
+
+                let readonly_enc = encrypt_key(&cipher, "nmk_readonly_key", 2);
+                keys_tbl
+                    .insert("02_readonly", readonly_enc.as_bytes())
+                    .unwrap();
+                let readonly_info = bincode::serialize(&TestApiKeyInfo {
+                    id: "k2".into(),
+                    name: "Read Only".into(),
+                    created_at: 2,
+                    permissions: vec!["read".into()],
+                    active: true,
+                })
+                .unwrap();
+                hashes_tbl
+                    .insert("02_readonly", readonly_info.as_slice())
+                    .unwrap();
+            }
+            write_txn.commit().unwrap();
+        }
+
+        assert_eq!(
+            read_default_api_key_from(tmp.path().to_str().unwrap()),
+            None,
+            "revoked and non-wildcard keys must be skipped, not returned via fallback"
+        );
+
+        // Case 2: Add an active wildcard key after them -> must skip first two and return it
+        {
+            let db = Database::open(&db_path).unwrap();
+            let write_txn = db.begin_write().unwrap();
+            {
+                let mut keys_tbl = write_txn.open_table(API_KEYS_TABLE).unwrap();
+                let mut hashes_tbl = write_txn.open_table(API_KEY_HASHES_TABLE).unwrap();
+
+                let active_enc = encrypt_key(&cipher, "nmk_active_admin", 3);
+                keys_tbl
+                    .insert("03_active_admin", active_enc.as_bytes())
+                    .unwrap();
+                let active_info = bincode::serialize(&TestApiKeyInfo {
+                    id: "k3".into(),
+                    name: "Active Admin".into(),
+                    created_at: 3,
+                    permissions: vec!["*".into()],
+                    active: true,
+                })
+                .unwrap();
+                hashes_tbl
+                    .insert("03_active_admin", active_info.as_slice())
+                    .unwrap();
+            }
+            write_txn.commit().unwrap();
+        }
+
+        assert_eq!(
+            read_default_api_key_from(tmp.path().to_str().unwrap()),
+            Some("nmk_active_admin".to_string()),
+            "must skip revoked/non-wildcard keys and return active wildcard key"
+        );
     }
 }

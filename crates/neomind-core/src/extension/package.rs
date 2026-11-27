@@ -549,7 +549,11 @@ impl ExtensionPackage {
         format!("{:x}", hasher.finalize())
     }
 
-    /// Read a file from the ZIP archive
+    /// Maximum size (1 MiB) for small text files read into memory from a ZIP
+    /// archive (such as `manifest.json`). Prevents a crafted ZIP from causing OOM.
+    pub(crate) const MAX_ZIP_TEXT_FILE_SIZE: u64 = 1024 * 1024;
+
+    /// Read a file from the ZIP archive (bounded to 1 MiB to prevent OOM / zip-bomb).
     fn read_file_from_zip<R: Read + std::io::Seek>(
         archive: &mut ZipArchive<R>,
         path: &str,
@@ -558,9 +562,30 @@ impl ExtensionPackage {
             .by_name(path)
             .map_err(|e| PackageError::MissingFile(format!("{}: {}", path, e)))?;
 
-        let mut content = String::new();
-        file.read_to_string(&mut content)?;
-        Ok(content)
+        if file.size() > Self::MAX_ZIP_TEXT_FILE_SIZE {
+            return Err(PackageError::Zip(format!(
+                "File '{}' is {} bytes (exceeds {} byte limit)",
+                path,
+                file.size(),
+                Self::MAX_ZIP_TEXT_FILE_SIZE
+            )));
+        }
+
+        let mut buf = Vec::new();
+        std::io::Read::take(&mut file, Self::MAX_ZIP_TEXT_FILE_SIZE + 1).read_to_end(&mut buf)?;
+        if buf.len() as u64 > Self::MAX_ZIP_TEXT_FILE_SIZE {
+            return Err(PackageError::Zip(format!(
+                "File '{}' decompressed size exceeds {} byte limit",
+                path,
+                Self::MAX_ZIP_TEXT_FILE_SIZE
+            )));
+        }
+        String::from_utf8(buf).map_err(|e| {
+            PackageError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("File '{}' is not valid UTF-8: {}", path, e),
+            ))
+        })
     }
 
     /// Get the binary path for the current platform
@@ -600,16 +625,19 @@ impl ExtensionPackage {
         let file = std::fs::File::open(&path)?;
         let mut archive = ZipArchive::new(file).map_err(|e| PackageError::Zip(e.to_string()))?;
 
+        // Share a single cumulative extraction budget across every phase.
+        let mut budget = InstallBudget::new();
+
         // Extract manifest.json
         let manifest_path = ext_dir.join("manifest.json");
-        self.extract_file(&mut archive, "manifest.json", &manifest_path)
+        self.extract_file(&mut archive, "manifest.json", &manifest_path, &mut budget)
             .await?;
 
         // Extract binary for current platform
         let binary_path = if let Some(rel_path) = self.get_binary_path() {
             let binary_file =
                 ext_dir.join(PathBuf::from(&rel_path).file_name().unwrap_or_default());
-            self.extract_file(&mut archive, &rel_path, &binary_file)
+            self.extract_file(&mut archive, &rel_path, &binary_file, &mut budget)
                 .await?;
 
             // Create sidecar JSON file for all extension types (WASM and native)
@@ -630,31 +658,33 @@ impl ExtensionPackage {
         // Extract frontend directory if exists
         let frontend_dir = if self.manifest.frontend.is_some() {
             let frontend_path = ext_dir.join("frontend");
-            self.extract_directory(&mut archive, "frontend/", &frontend_path)
+            let matched = self
+                .extract_directory(&mut archive, "frontend/", &frontend_path, &mut budget)
                 .await?;
+            if !matched {
+                tokio::fs::create_dir_all(&frontend_path).await?;
+            }
             Some(frontend_path)
         } else {
             None
         };
 
-        // ✨ Extract models directory if exists (AI model files)
+        // ✨ Extract models directory if exists (AI model files) — propagate ZIP/IO errors!
         let models_path = ext_dir.join("models");
         let models_dir = if self
-            .extract_directory(&mut archive, "models/", &models_path)
-            .await
-            .is_ok()
+            .extract_directory(&mut archive, "models/", &models_path, &mut budget)
+            .await?
         {
             Some(models_path)
         } else {
             None
         };
 
-        // ✨ Extract resources directory if exists (configs, assets, etc.)
+        // ✨ Extract resources directory if exists (configs, assets, etc.) — propagate ZIP/IO errors!
         let resources_path = ext_dir.join("resources");
         let resources_dir = if self
-            .extract_directory(&mut archive, "resources/", &resources_path)
-            .await
-            .is_ok()
+            .extract_directory(&mut archive, "resources/", &resources_path, &mut budget)
+            .await?
         {
             Some(resources_path)
         } else {
@@ -824,13 +854,13 @@ impl ExtensionPackage {
                     // name can never match an expected prefix, so it degrades to "".
                     let name = file.name().map(|n| n.to_string()).unwrap_or_default();
                     // Same directory, not the binary itself, not a directory entry
-                    if name.starts_with(&dir_prefix)
+                    if !name.is_empty()
+                        && name.starts_with(&dir_prefix)
                         && !name.ends_with('/')
                         && name != binary_rel_path
                         // data/ is extension-private runtime state — packages
                         // must never write there (upgrade-preservation contract)
                         && !name.starts_with("data/")
-                        && !name[name.len() - 1..].starts_with('/')
                         && name.matches('/').count() == binary_rel_path.matches('/').count()
                     {
                         if file.is_symlink() {
@@ -1295,6 +1325,7 @@ impl ExtensionPackage {
         archive: &mut ZipArchive<R>,
         src_path: &str,
         dst_path: &Path,
+        budget: &mut InstallBudget,
     ) -> Result<(), PackageError> {
         let mut file = archive
             .by_name(src_path)
@@ -1314,6 +1345,7 @@ impl ExtensionPackage {
                 Self::effective_max_file_size()
             )));
         }
+        budget.charge(file.size())?;
 
         // Create parent directory
         if let Some(parent) = dst_path.parent() {
@@ -1343,23 +1375,19 @@ impl ExtensionPackage {
         Ok(())
     }
 
-    /// Extract a directory from the archive
+    /// Extract a directory from the archive. Returns `Ok(true)` if at least one
+    /// entry matched `src_prefix`, or `Ok(false)` if no entries matched.
+    /// Any ZIP security/format error (zip-slip, symlink, zip-bomb) is returned as `Err`.
     async fn extract_directory<R: Read + std::io::Seek>(
         &self,
         archive: &mut ZipArchive<R>,
         src_prefix: &str,
         dst_dir: &Path,
-    ) -> Result<(), PackageError> {
-        tokio::fs::create_dir_all(dst_dir).await?;
-        let mut total_bytes: u64 = 0;
+        budget: &mut InstallBudget,
+    ) -> Result<bool, PackageError> {
+        let mut matched_any = false;
 
         for i in 0..archive.len() {
-            if i + 1 > Self::MAX_EXTRACT_FILE_COUNT {
-                return Err(PackageError::Zip(format!(
-                    "Archive contains more than {} files (zip-bomb suspected)",
-                    Self::MAX_EXTRACT_FILE_COUNT
-                )));
-            }
             let mut file = archive
                 .by_index(i)
                 .map_err(|e| PackageError::Zip(format!("Failed to access file {}: {}", i, e)))?;
@@ -1389,12 +1417,11 @@ impl ExtensionPackage {
                         Self::effective_max_file_size()
                     )));
                 }
-                total_bytes += entry_size;
-                if total_bytes > Self::effective_max_total_size() {
-                    return Err(PackageError::Zip(format!(
-                        "Total extracted size exceeds {} bytes (zip-bomb suspected)",
-                        Self::effective_max_total_size()
-                    )));
+                budget.charge(entry_size)?;
+
+                if !matched_any {
+                    tokio::fs::create_dir_all(dst_dir).await?;
+                    matched_any = true;
                 }
 
                 // Create parent directory
@@ -1421,7 +1448,7 @@ impl ExtensionPackage {
             }
         }
 
-        Ok(())
+        Ok(matched_any)
     }
 
     /// Create a sidecar JSON file for WASM extensions
@@ -2085,6 +2112,124 @@ mod tests {
             "upload path RSS grew {:.1} MB for {:.0} MB package — load/install not streaming!",
             delta_mb,
             pkg_mb
+        );
+    }
+
+    #[test]
+    fn test_install_handles_utf8_and_empty_entry_names() {
+        use std::io::Write;
+        let platform = detect_platform();
+        let lib_ext = if platform.starts_with("windows") {
+            "dll"
+        } else if platform.starts_with("darwin") {
+            "dylib"
+        } else {
+            "so"
+        };
+        let binary_entry = format!("binaries/{}/extension.{}", platform, lib_ext);
+        // Ends with a multi-byte UTF-8 character (previously panicked on &name[name.len() - 1..])
+        let utf8_sibling = format!("binaries/{}/权重", platform);
+        let manifest = format!(
+            r#"{{"format":"neomind-extension-package","abi_version":3,"id":"test-utf8-names","name":"UTF8","version":"1.0.0","binaries":{{"{}":"{}"}},"type":"native"}}"#,
+            platform, binary_entry
+        );
+
+        let buf = std::io::Cursor::new(Vec::new());
+        let mut zw = zip::ZipWriter::new(buf);
+        let opts = zip::write::SimpleFileOptions::default();
+        zw.start_file("manifest.json", opts).unwrap();
+        zw.write_all(manifest.as_bytes()).unwrap();
+        zw.start_file(&binary_entry, opts).unwrap();
+        zw.write_all(b"fake binary").unwrap();
+        zw.start_file(&utf8_sibling, opts).unwrap();
+        zw.write_all(b"utf8 sibling").unwrap();
+        // Empty entry name (previously caused integer underflow on name.len() - 1)
+        zw.start_file("", opts).unwrap();
+        zw.write_all(b"empty").unwrap();
+        let zip_bytes = zw.finish().unwrap().into_inner();
+
+        let target =
+            std::env::temp_dir().join(format!("neomind-test-utf8-{}", unique_nonce()));
+        std::fs::create_dir_all(&target).unwrap();
+
+        let res = ExtensionPackage::install_sync(&zip_bytes, &target);
+        let sibling_extracted = target
+            .join("test-utf8-names")
+            .join(&utf8_sibling)
+            .exists();
+        let _ = std::fs::remove_dir_all(&target);
+
+        res.expect("install_sync must not panic on empty or multi-byte UTF-8 entry names");
+        assert!(sibling_extracted, "UTF-8 sibling file should be extracted");
+    }
+
+    #[test]
+    fn test_read_file_from_zip_rejects_oversized_manifest() {
+        use std::io::Write;
+        let buf = std::io::Cursor::new(Vec::new());
+        let mut zw = zip::ZipWriter::new(buf);
+        let opts = zip::write::SimpleFileOptions::default();
+        zw.start_file("manifest.json", opts).unwrap();
+        let oversized = vec![b' '; (ExtensionPackage::MAX_ZIP_TEXT_FILE_SIZE + 64) as usize];
+        zw.write_all(&oversized).unwrap();
+        let zip_bytes = zw.finish().unwrap().into_inner();
+
+        let err = ExtensionPackage::from_bytes(zip_bytes)
+            .expect_err("oversized manifest.json must be rejected");
+        assert!(
+            matches!(err, PackageError::Zip(_)),
+            "expected PackageError::Zip, got: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_async_install_propagates_zip_slip_in_optional_dirs() {
+        use std::io::Write;
+        let platform = detect_platform();
+        let lib_ext = if platform.starts_with("windows") {
+            "dll"
+        } else if platform.starts_with("darwin") {
+            "dylib"
+        } else {
+            "so"
+        };
+        let binary_entry = format!("binaries/{}/extension.{}", platform, lib_ext);
+        let manifest = format!(
+            r#"{{"format":"neomind-extension-package","abi_version":3,"id":"test-zipslip-models","name":"Slip","version":"1.0.0","binaries":{{"{}":"{}"}},"type":"native"}}"#,
+            platform, binary_entry
+        );
+
+        let tmp =
+            std::env::temp_dir().join(format!("neomind-test-zipslip-{}.nep", unique_nonce()));
+        {
+            let file = std::fs::File::create(&tmp).unwrap();
+            let mut zw = zip::ZipWriter::new(file);
+            let opts = zip::write::SimpleFileOptions::default();
+            zw.start_file("manifest.json", opts).unwrap();
+            zw.write_all(manifest.as_bytes()).unwrap();
+            zw.start_file(&binary_entry, opts).unwrap();
+            zw.write_all(b"fake binary").unwrap();
+            zw.start_file("models/../../escape.txt", opts).unwrap();
+            zw.write_all(b"pwn").unwrap();
+            zw.finish().unwrap();
+        }
+
+        let target =
+            std::env::temp_dir().join(format!("neomind-test-zipslip-dir-{}", unique_nonce()));
+        std::fs::create_dir_all(&target).unwrap();
+
+        let pkg = ExtensionPackage::load(&tmp).await.unwrap();
+        let err = pkg
+            .install(&target)
+            .await
+            .expect_err("zip-slip in models/ must propagate PackageError::Zip");
+
+        let _ = std::fs::remove_file(&tmp);
+        let _ = std::fs::remove_dir_all(&target);
+
+        assert!(
+            matches!(err, PackageError::Zip(_)),
+            "expected PackageError::Zip, got: {err:?}"
         );
     }
 }

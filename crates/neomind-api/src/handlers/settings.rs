@@ -938,6 +938,10 @@ pub async fn update_market_source_handler(
         ));
     }
 
+    // Validate against SSRF rules (blocks loopback/private/link-local/CGNAT
+    // targets unless NEOMIND_ALLOW_PRIVATE_MARKET=true).
+    crate::handlers::extensions::validate_market_url(&trimmed).await?;
+
     store
         .save("extension_market_url", &trimmed)
         .map_err(|e| ErrorResponse::internal(format!("Failed to save market source: {}", e)))?;
@@ -1130,5 +1134,35 @@ mod s2_4_tests {
         assert_eq!(cleared.max_rounds, 12);
         assert_eq!(cleared.execution_timeout_secs, 600);
         assert_eq!(cleared.summary_instance_id, None);
+    }
+
+    #[tokio::test]
+    async fn update_market_source_rejects_private_ssrf_urls() {
+        let state = ServerState::new_for_testing().await;
+        let admin = crate::auth_users::SessionInfo {
+            user_id: "u-admin".to_string(),
+            username: "admin".to_string(),
+            role: crate::auth_users::UserRole::Admin,
+            created_at: 0,
+            expires_at: i64::MAX,
+        };
+
+        for bad_url in [
+            "http://127.0.0.1:9375/api",
+            "http://169.254.169.254/latest/meta-data/",
+            "http://10.0.0.1/market",
+            "http://localhost:8080",
+        ] {
+            let err = update_market_source_handler(
+                State(state.clone()),
+                axum::extract::Extension(admin.clone()),
+                Json(MarketSourceRequest {
+                    market_url: bad_url.to_string(),
+                }),
+            )
+            .await
+            .expect_err(&format!("must reject private URL: {bad_url}"));
+            assert_eq!(err.status, StatusCode::BAD_REQUEST);
+        }
     }
 }

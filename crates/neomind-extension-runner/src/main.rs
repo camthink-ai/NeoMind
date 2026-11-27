@@ -37,16 +37,17 @@ use resource_limits::{setup_resource_limits, ResourceLimitsConfig};
 // Dylib validation module
 mod dylib_validation;
 
+#[allow(dead_code)]
 mod host;
 pub(crate) use capabilities::*;
-use host::SyncIpcClient;
+use ipc_routing::SyncIpcClient;
 pub(crate) use native::*;
 pub(crate) use push::*;
 pub(crate) use runner::*;
 
 // IPC routing module
 mod ipc_routing;
-use ipc_routing::STDOUT_WRITE_MUTEX;
+pub(crate) use ipc_routing::STDOUT_WRITE_MUTEX;
 
 // ============================================================================
 // Message routing for capability invocation
@@ -105,6 +106,16 @@ static GLOBAL_NATIVE_IPC_CLIENT: std::sync::OnceLock<Arc<SyncIpcClient>> =
     std::sync::OnceLock::new();
 
 fn main() {
+    // Redirect FD 1 (stdout) to FD 2 (stderr) after duplicating FD 1 into a
+    // private IPC File BEFORE anything (including native library constructors
+    // during `dlopen`) can write stray output to stdout and corrupt binary IPC
+    // frames.
+    ipc_routing::init_ipc_stdout();
+
+    // Ask the Linux kernel to send SIGTERM if our parent process dies
+    // unexpectedly (e.g. SIGKILL / crash) so no orphan runners linger.
+    ipc_routing::setup_parent_death_signal();
+
     let workers = runner_worker_threads();
     tokio::runtime::Builder::new_multi_thread()
         .worker_threads(workers)

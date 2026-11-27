@@ -10,6 +10,11 @@ use tracing;
 use super::parser;
 use super::types::*;
 
+/// Maximum allowed size of a single user skill file (64 KiB).
+pub const MAX_SKILL_CONTENT_BYTES: usize = 64 * 1024;
+/// Maximum number of user-defined skills allowed in the registry.
+pub const MAX_USER_SKILLS: usize = 200;
+
 /// Registry holding all loaded skills.
 #[derive(Debug, Clone)]
 pub struct SkillRegistry {
@@ -211,6 +216,24 @@ impl SkillRegistry {
     /// restoring the overwritten original. Updates must go through
     /// [`Self::update_user_skill`].
     pub fn add_user_skill(&mut self, content: &str) -> Result<String, String> {
+        if content.len() > MAX_SKILL_CONTENT_BYTES {
+            return Err(format!(
+                "Skill content exceeds maximum allowed size of {} bytes",
+                MAX_SKILL_CONTENT_BYTES
+            ));
+        }
+        let user_count = self
+            .skills
+            .values()
+            .filter(|s| s.metadata.origin == SkillOrigin::User)
+            .count();
+        if user_count >= MAX_USER_SKILLS {
+            return Err(format!(
+                "Maximum number of user skills ({}) reached",
+                MAX_USER_SKILLS
+            ));
+        }
+
         let mut skill = parser::parse_skill(content).map_err(|e| format!("Parse error: {}", e))?;
 
         if !is_safe_skill_id(&skill.metadata.id) {
@@ -243,6 +266,12 @@ impl SkillRegistry {
     pub fn update_user_skill(&mut self, id: &str, content: &str) -> Result<(), String> {
         if !is_safe_skill_id(id) {
             return Err(invalid_skill_id_message(id));
+        }
+        if content.len() > MAX_SKILL_CONTENT_BYTES {
+            return Err(format!(
+                "Skill content exceeds maximum allowed size of {} bytes",
+                MAX_SKILL_CONTENT_BYTES
+            ));
         }
         let existing = self
             .skills
@@ -437,6 +466,47 @@ mod tests {
             "expected actionable ASCII id error, got: {err}"
         );
         assert!(registry.get("天气").is_none());
+    }
+
+    #[test]
+    fn enforces_skill_size_and_user_count_caps() {
+        let mut registry = SkillRegistry::new();
+
+        // Oversized content rejected on add
+        let oversized = format!(
+            "---\nid: big\nname: Big\n---\n{}",
+            "x".repeat(MAX_SKILL_CONTENT_BYTES + 1)
+        );
+        let err = registry
+            .add_user_skill(&oversized)
+            .expect_err("oversized skill must be rejected");
+        assert!(err.contains("maximum allowed size"), "{err}");
+
+        // Fill up to MAX_USER_SKILLS
+        for i in 0..MAX_USER_SKILLS {
+            let content = test_skill_content(&format!("skill-{i}"), &format!("Skill {i}"));
+            registry.add_user_skill(&content).unwrap();
+        }
+
+        // 201st user skill rejected
+        let extra = test_skill_content("skill-overflow", "Overflow");
+        let err = registry
+            .add_user_skill(&extra)
+            .expect_err("user skill past cap must be rejected");
+        assert!(err.contains("Maximum number of user skills"), "{err}");
+
+        // Updating an existing user skill at the cap still works if within size limit
+        let updated_ok = test_skill_content("skill-0", "Updated 0");
+        registry.update_user_skill("skill-0", &updated_ok).unwrap();
+
+        // Oversized content rejected on update
+        let oversized_update = format!(
+            "---\nid: skill-0\nname: Big\n---\n{}",
+            "x".repeat(MAX_SKILL_CONTENT_BYTES + 1)
+        );
+        assert!(registry
+            .update_user_skill("skill-0", &oversized_update)
+            .is_err());
     }
 }
 

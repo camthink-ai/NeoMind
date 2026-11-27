@@ -2,10 +2,6 @@
 
 use super::*;
 
-use std::collections::VecDeque;
-
-use std::io::{Read, Write};
-
 use std::path::Path;
 
 use std::sync::Arc;
@@ -23,7 +19,8 @@ use neomind_extension_sdk::{
 use dylib_validation::validate_library;
 
 use ipc_routing::{
-    complete_pending_request, create_event_channel, start_stdin_reader, STDOUT_WRITE_MUTEX,
+    complete_pending_request, create_event_channel, is_shutdown_requested, shutdown_notify,
+    start_stdin_reader, write_ipc_frame,
 };
 
 impl Runner {
@@ -156,13 +153,8 @@ impl Runner {
         // Start stdin reader thread (reads all stdin messages and routes them)
         let _stdin_reader_handle = start_stdin_reader();
 
-        // Start push-output stdout writer thread (drains buffer → stdout)
-        PUSH_BUFFER
-            .set((
-                std::sync::Mutex::new(VecDeque::with_capacity(PUSH_BUFFER_CAPACITY)),
-                std::sync::Condvar::new(),
-            ))
-            .expect("PUSH_BUFFER already initialized");
+        // Start push-output stdout writer thread (drains buffer → IPC stdout)
+        let _ = push_buffer();
         std::thread::Builder::new()
             .name("push-stdout-writer".into())
             .spawn(push_stdout_writer_thread)
@@ -170,19 +162,101 @@ impl Runner {
         debug!("Push stdout writer thread started");
         debug!("Stdin reader thread started");
 
+        #[cfg(unix)]
+        let mut sigterm =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).ok();
+
         while self.running {
+            let shutdown_fut = shutdown_notify().notified();
+            tokio::pin!(shutdown_fut);
+            shutdown_fut.as_mut().enable();
+            if is_shutdown_requested() {
+                debug!("Shutdown already requested, exiting main loop");
+                self.running = false;
+                break;
+            }
+
             // Channel recv blocks efficiently - zero CPU when idle
-            tokio::select! {
-                Some(message) = event_rx.recv() => {
-                    debug!(
-                        "Received IPC message from channel: {:?}",
-                        std::mem::discriminant(&message)
-                    );
-                    self.handle_message(message).await;
+            #[cfg(unix)]
+            {
+                tokio::select! {
+                    msg = event_rx.recv() => {
+                        match msg {
+                            Some(message) => {
+                                debug!(
+                                    "Received IPC message from channel: {:?}",
+                                    std::mem::discriminant(&message)
+                                );
+                                self.handle_message(message).await;
+                            }
+                            None => {
+                                debug!("IPC event channel closed, exiting main loop");
+                                self.running = false;
+                                break;
+                            }
+                        }
+                    }
+                    _ = &mut shutdown_fut => {
+                        debug!("Shutdown notified (stdin EOF or fatal error), exiting main loop");
+                        self.running = false;
+                        break;
+                    }
+                    _ = tokio::signal::ctrl_c() => {
+                        debug!("Received SIGINT/Ctrl-C, exiting main loop");
+                        self.running = false;
+                        break;
+                    }
+                    _ = async {
+                        if let Some(ref mut s) = sigterm {
+                            s.recv().await;
+                        } else {
+                            std::future::pending::<()>().await;
+                        }
+                    } => {
+                        debug!("Received SIGTERM, exiting main loop");
+                        self.running = false;
+                        break;
+                    }
+                    _ = tokio::time::sleep(tokio::time::Duration::from_secs(30)) => {
+                        // Periodic keepalive check
+                        trace!("Extension runner keepalive");
+                    }
                 }
-                _ = tokio::time::sleep(tokio::time::Duration::from_secs(30)) => {
-                    // Periodic keepalive check
-                    trace!("Extension runner keepalive");
+            }
+
+            #[cfg(not(unix))]
+            {
+                tokio::select! {
+                    msg = event_rx.recv() => {
+                        match msg {
+                            Some(message) => {
+                                debug!(
+                                    "Received IPC message from channel: {:?}",
+                                    std::mem::discriminant(&message)
+                                );
+                                self.handle_message(message).await;
+                            }
+                            None => {
+                                debug!("IPC event channel closed, exiting main loop");
+                                self.running = false;
+                                break;
+                            }
+                        }
+                    }
+                    _ = &mut shutdown_fut => {
+                        debug!("Shutdown notified (stdin EOF or fatal error), exiting main loop");
+                        self.running = false;
+                        break;
+                    }
+                    _ = tokio::signal::ctrl_c() => {
+                        debug!("Received Ctrl-C, exiting main loop");
+                        self.running = false;
+                        break;
+                    }
+                    _ = tokio::time::sleep(tokio::time::Duration::from_secs(30)) => {
+                        // Periodic keepalive check
+                        trace!("Extension runner keepalive");
+                    }
                 }
             }
         }
@@ -225,16 +299,9 @@ impl Runner {
 
         debug!(frame_len = bytes.len(), "Frame encoded");
 
-        let _guard = STDOUT_WRITE_MUTEX.lock().unwrap_or_else(|e| {
-            error!("STDOUT_WRITE_MUTEX poisoned: {}", e);
-            e.into_inner()
-        });
-        if let Err(e) = std::io::stdout().write_all(&bytes) {
-            error!(error = %e, "Failed to write response");
+        if let Err(e) = write_ipc_frame(&bytes) {
+            error!(error = %e, "Failed to write IPC response");
             return;
-        }
-        if let Err(e) = std::io::stdout().flush() {
-            error!(error = %e, "Failed to flush stdout");
         }
 
         // Debug: confirm StreamSessionInit was sent
@@ -248,121 +315,25 @@ impl Runner {
         }
     }
 
-    /// Send a capability request to the host and wait for response
-    /// This is used for bidirectional IPC communication
+    /// Send a capability request to the host and wait for response.
+    /// Delegates to the shared `GLOBAL_NATIVE_IPC_CLIENT` so all stdin reads
+    /// remain serialized through the single `start_stdin_reader` thread.
     pub(crate) fn invoke_host_capability(
         &mut self,
         capability: &str,
         params: &serde_json::Value,
     ) -> serde_json::Value {
-        use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
-
-        static REQUEST_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
-        let request_id = REQUEST_ID_COUNTER.fetch_add(1, AtomicOrdering::SeqCst);
-
-        debug!(
-            request_id,
-            capability = %capability,
-            "Sending CapabilityRequest to host"
-        );
-
-        // Send CapabilityRequest
-        let request = IpcResponse::CapabilityRequest {
-            request_id,
-            capability: capability.to_string(),
-            params: params.clone(),
-        };
-
-        let payload = match request.to_bytes() {
-            Ok(p) => p,
-            Err(e) => {
-                error!(error = %e, "Failed to serialize CapabilityRequest");
-                return json!({"success": false, "error": "Failed to serialize request"});
-            }
-        };
-
-        let frame = IpcFrame::new(payload);
-        let bytes = frame.encode();
-
-        {
-            let _guard = STDOUT_WRITE_MUTEX.lock().unwrap_or_else(|e| {
-                error!("STDOUT_WRITE_MUTEX poisoned: {}", e);
-                e.into_inner()
+        let Some(ipc_client) = GLOBAL_NATIVE_IPC_CLIENT.get() else {
+            error!(
+                capability = %capability,
+                "Cannot invoke host capability: GLOBAL_NATIVE_IPC_CLIENT is not initialized"
+            );
+            return json!({
+                "success": false,
+                "error": "Host IPC client is not initialized"
             });
-            if let Err(e) = std::io::stdout().write_all(&bytes) {
-                drop(_guard);
-                error!(error = %e, "Failed to write CapabilityRequest");
-                return json!({"success": false, "error": "Failed to write request"});
-            }
-            if let Err(e) = std::io::stdout().flush() {
-                drop(_guard);
-                error!(error = %e, "Failed to flush CapabilityRequest");
-                return json!({"success": false, "error": "Failed to flush request"});
-            }
-        }
-
-        debug!(request_id, "CapabilityRequest sent, waiting for response");
-
-        // Read response from host
-        // Read length prefix (4 bytes)
-        let mut len_bytes = [0u8; 4];
-        match std::io::stdin().read_exact(&mut len_bytes) {
-            Ok(_) => {}
-            Err(e) => {
-                error!(error = %e, "Failed to read response length");
-                return json!({"success": false, "error": "Failed to read response length"});
-            }
-        }
-
-        let len = u32::from_le_bytes(len_bytes) as usize;
-        if len > 10 * 1024 * 1024 {
-            error!(len, "Response too large");
-            return json!({"success": false, "error": "Response too large"});
-        }
-
-        // Read payload
-        let mut payload_buf = vec![0u8; len];
-        match std::io::stdin().read_exact(&mut payload_buf) {
-            Ok(_) => {}
-            Err(e) => {
-                error!(error = %e, "Failed to read response payload");
-                return json!({"success": false, "error": "Failed to read response payload"});
-            }
-        }
-
-        // Parse response
-        let response: IpcResponse = match IpcResponse::from_bytes(&payload_buf) {
-            Ok(r) => r,
-            Err(e) => {
-                error!(error = %e, "Failed to parse response");
-                return json!({"success": false, "error": "Failed to parse response"});
-            }
         };
-
-        match response {
-            IpcResponse::CapabilityResult {
-                request_id: resp_id,
-                result,
-                error,
-            } => {
-                if resp_id != request_id {
-                    warn!(
-                        expected = request_id,
-                        got = resp_id,
-                        "Request ID mismatch in CapabilityResult"
-                    );
-                }
-                if let Some(err) = error {
-                    json!({"success": false, "error": err})
-                } else {
-                    result
-                }
-            }
-            _ => {
-                error!("Unexpected response type to CapabilityRequest");
-                json!({"success": false, "error": "Unexpected response type"})
-            }
-        }
+        ipc_client.invoke(capability, params)
     }
 
     pub(crate) async fn handle_message(&mut self, message: IpcMessage) {

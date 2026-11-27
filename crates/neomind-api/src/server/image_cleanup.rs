@@ -50,6 +50,19 @@ pub async fn cleanup_expired_images(
 /// [`cleanup_expired_images_with_protection`]; they become collectible once
 /// the sessions referencing them are themselves cleaned.
 pub async fn collect_referenced_image_files(
+    session_store: &std::sync::Arc<neomind_storage::SessionStore>,
+    agent_store: &std::sync::Arc<neomind_storage::AgentStore>,
+) -> std::collections::HashSet<String> {
+    let session_store = std::sync::Arc::clone(session_store);
+    let agent_store = std::sync::Arc::clone(agent_store);
+    tokio::task::spawn_blocking(move || {
+        collect_referenced_image_files_blocking(&session_store, &agent_store)
+    })
+    .await
+    .unwrap_or_default()
+}
+
+fn collect_referenced_image_files_blocking(
     session_store: &neomind_storage::SessionStore,
     agent_store: &neomind_storage::AgentStore,
 ) -> std::collections::HashSet<String> {
@@ -62,6 +75,16 @@ pub async fn collect_referenced_image_files(
                 for msg in &messages {
                     if msg.content.contains(MARKER) {
                         extract_image_refs(&msg.content, &mut referenced);
+                    }
+                    if let Some(ref images) = msg.images {
+                        for img in images {
+                            if img.data.contains(MARKER) {
+                                extract_image_refs(&img.data, &mut referenced);
+                            }
+                        }
+                    }
+                    if let Some(ref round_contents) = msg.round_contents {
+                        extract_image_refs_from_json(round_contents, &mut referenced);
                     }
                     if let Some(ref attachments) = msg.attachments {
                         for att in attachments {
@@ -94,18 +117,51 @@ pub async fn collect_referenced_image_files(
     referenced
 }
 
-/// Pull every `/api/images/<name>` occurrence out of `text` into `out`.
+/// Recursively extract `/api/images/<name>` references from arbitrary JSON values
+/// (e.g. `msg.round_contents`).
+fn extract_image_refs_from_json(
+    value: &serde_json::Value,
+    out: &mut std::collections::HashSet<String>,
+) {
+    const MARKER: &str = "/api/images/";
+    match value {
+        serde_json::Value::String(s) => {
+            if s.contains(MARKER) {
+                extract_image_refs(s, out);
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for item in arr {
+                extract_image_refs_from_json(item, out);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for val in map.values() {
+                extract_image_refs_from_json(val, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Pull every `/api/images/<name>` occurrence out of `text` into `out`,
+/// stripping any trailing `?query` or `#fragment`.
 fn extract_image_refs(text: &str, out: &mut std::collections::HashSet<String>) {
     const MARKER: &str = "/api/images/";
     let mut from = 0usize;
     while let Some(i) = text[from..].find(MARKER) {
         let start = from + i + MARKER.len();
-        let name: String = text[start..]
+        let raw: String = text[start..]
             .chars()
             .take_while(|c| !matches!(c, ')' | ' ' | ']' | '"' | '\'' | '\n' | '\r' | '<' | '>'))
             .collect();
+        let without_query = raw.split_once('?').map(|(s, _)| s).unwrap_or(&raw);
+        let name = without_query
+            .split_once('#')
+            .map(|(s, _)| s)
+            .unwrap_or(without_query);
         if !name.is_empty() {
-            out.insert(name);
+            out.insert(name.to_string());
         }
         from = start;
     }
@@ -114,6 +170,24 @@ fn extract_image_refs(text: &str, out: &mut std::collections::HashSet<String>) {
 /// Retention cleanup that refuses to delete files still referenced by
 /// conversations or agent journals (see [`collect_referenced_image_files`]).
 pub async fn cleanup_expired_images_with_protection(
+    images_dir: &Path,
+    retention_hours: u64,
+    protected_files: &std::collections::HashSet<String>,
+) -> anyhow::Result<(usize, usize)> {
+    let images_dir = images_dir.to_path_buf();
+    let protected_files = protected_files.clone();
+    tokio::task::spawn_blocking(move || {
+        cleanup_expired_images_with_protection_blocking(
+            &images_dir,
+            retention_hours,
+            &protected_files,
+        )
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("Image cleanup task failed: {}", e))?
+}
+
+fn cleanup_expired_images_with_protection_blocking(
     images_dir: &Path,
     retention_hours: u64,
     protected_files: &std::collections::HashSet<String>,
@@ -146,8 +220,15 @@ pub async fn cleanup_expired_images_with_protection(
         collect_expired_files(images_dir, cutoff_timestamp_secs)?
             .into_iter()
             .filter(|(path, _)| {
+                let rel = path
+                    .strip_prefix(images_dir)
+                    .ok()
+                    .and_then(|p| p.to_str())
+                    .map(|s| s.replace('\\', "/"));
                 let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                if protected_files.contains(name) {
+                let is_protected = rel.as_deref().is_some_and(|r| protected_files.contains(r))
+                    || protected_files.contains(name);
+                if is_protected {
                     tracing::debug!(
                         file = %path.display(),
                         "skipping cleanup — still referenced by a session or agent journal"
@@ -722,5 +803,97 @@ mod tests {
             deleted, 0,
             "nothing should be deleted for a brand-new image"
         );
+    }
+
+    #[test]
+    fn test_extract_image_refs_strips_query_and_fragment() {
+        let mut out = std::collections::HashSet::new();
+        extract_image_refs(
+            "![a](/api/images/chat-abc.png?v=123&size=lg#top) and /api/images/cam-1/image/1000.jpg#preview and /api/images/cam-2/snap/2000.webp?t=9",
+            &mut out,
+        );
+        assert!(out.contains("chat-abc.png"));
+        assert!(out.contains("cam-1/image/1000.jpg"));
+        assert!(out.contains("cam-2/snap/2000.webp"));
+        assert_eq!(out.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_protects_msg_images_and_three_segment_paths() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let images_dir = temp_dir.path().join("images");
+        let cam_metric_dir = images_dir.join("cam-01").join("image");
+        fs::create_dir_all(&cam_metric_dir).unwrap();
+
+        let old = SystemTime::now() - Duration::from_secs(100 * 3600);
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let expired_ts = now - 100 * 3600;
+
+        // 1. User-uploaded chat photo referenced ONLY in msg.images
+        let chat_photo = create_test_image_file(&images_dir, "chat-userupload99.png");
+        let fh = File::open(&chat_photo).unwrap();
+        fh.set_times(fs::FileTimes::new().set_modified(old)).unwrap();
+        drop(fh);
+
+        // 2. Expired 3-segment device snapshot referenced ONLY in msg.round_contents
+        let protected_snap_name = format!("{}.jpg", expired_ts);
+        let protected_snap = create_test_image_file(&cam_metric_dir, &protected_snap_name);
+
+        // 3. Unreferenced expired 3-segment device snapshot — MUST be deleted
+        let orphan_snap = create_test_image_file(&cam_metric_dir, &format!("{}.jpg", expired_ts - 10));
+
+        // Populate a real SessionStore + AgentStore
+        let session_db_path = temp_dir.path().join("sessions.redb");
+        let session_store = neomind_storage::SessionStore::open(&session_db_path).unwrap();
+        let agent_store = neomind_storage::AgentStore::memory().unwrap();
+
+        let mut user_msg = neomind_storage::SessionMessage::user("check my upload");
+        user_msg.images = Some(vec![neomind_storage::SessionMessageImage {
+            data: "/api/images/chat-userupload99.png?v=2".to_string(),
+            mime_type: Some("image/png".to_string()),
+            caption: None,
+        }]);
+
+        let mut assistant_msg = neomind_storage::SessionMessage::assistant("analyzed");
+        assistant_msg.round_contents = Some(serde_json::json!({
+            "1": format!("Frame: ![snap](/api/images/cam-01/image/{}#zoom)", protected_snap_name)
+        }));
+
+        session_store
+            .save_history("sess-protect-test", &[user_msg, assistant_msg])
+            .unwrap();
+
+        let protected = collect_referenced_image_files(&session_store, &agent_store).await;
+        assert!(
+            protected.contains("chat-userupload99.png"),
+            "msg.images ref must be collected: {:?}",
+            protected
+        );
+        assert!(
+            protected.contains(&format!("cam-01/image/{}", protected_snap_name)),
+            "round_contents 3-segment ref must be collected: {:?}",
+            protected
+        );
+
+        let (deleted, _) = cleanup_expired_images_with_protection(&images_dir, 2, &protected)
+            .await
+            .unwrap();
+
+        assert!(
+            chat_photo.exists(),
+            "user chat upload referenced via msg.images must survive cleanup"
+        );
+        assert!(
+            protected_snap.exists(),
+            "3-segment <device>/<metric>/<file> referenced via round_contents must survive cleanup"
+        );
+        assert!(
+            !orphan_snap.exists(),
+            "unreferenced expired 3-segment snapshot must be deleted"
+        );
+        assert_eq!(deleted, 1);
     }
 }

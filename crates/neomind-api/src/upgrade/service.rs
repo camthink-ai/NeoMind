@@ -318,11 +318,13 @@ async fn run_staged_upgrade(
 ) -> Result<()> {
     let client = http_client();
 
-    // 1. Resolve target version.
-    let target = match version.as_deref() {
-        Some(v) => v.trim_start_matches('v').to_string(),
+    // 1. Resolve and strictly validate target version.
+    let raw_target = match version.as_deref() {
+        Some(v) => v.to_string(),
         None => common::github_latest_version(&client).await?,
     };
+    let target = common::validate_semver_version(&raw_target)
+        .map_err(|e| anyhow!("invalid target version: {e}"))?;
     *shared
         .target_version
         .lock()
@@ -337,7 +339,7 @@ async fn run_staged_upgrade(
         None,
     );
 
-    let staging = common::staging_dir(data_dir, &target);
+    let staging = common::staging_dir(data_dir, &target)?;
     if staging.exists() {
         tokio::fs::remove_dir_all(&staging)
             .await
@@ -345,10 +347,22 @@ async fn run_staged_upgrade(
     }
     tokio::fs::create_dir_all(&staging).await?;
 
+    // Fetch release checksums when published (HTTP 200 → strictly enforced;
+    // HTTP 404 → warn during stage, while the root apply step always requires
+    // checksums.txt unless NEOMIND_ALLOW_UNVERIFIED_UPGRADE=1).
+    let release_checksums = common::fetch_release_checksums_optional(&client, &target).await?;
+    if release_checksums.is_none() {
+        tracing::warn!(
+            version = %target,
+            "web upgrade: release checksums.txt not found (HTTP 404)"
+        );
+    }
+
     // 2. Download the server tarball (streamed, capped, progress events).
     shared.set_phase(phase::DOWNLOADING);
     let arch = common::host_arch();
-    let server_url = common::server_tarball_url(&target, arch);
+    let server_asset = common::server_tarball_filename(arch)?;
+    let server_url = common::server_tarball_url(&target, arch)?;
     let tarball = staging.join("neomind.tar.gz");
     {
         let bus = event_bus.clone();
@@ -379,7 +393,7 @@ async fn run_staged_upgrade(
         common::download_to_file(&client, &server_url, &tarball, Some(&mut on_progress)).await?;
     }
 
-    // 3. Extract + verify (blocking work off the async threads).
+    // 3. Verify SHA-256 (when checksums.txt is published), then extract + verify.
     shared.set_phase(phase::VERIFYING);
     publish_progress(
         &event_bus,
@@ -390,9 +404,35 @@ async fn run_staged_upgrade(
         None,
         None,
     );
+    if let Some(checksums) = release_checksums.as_ref() {
+        match checksums.get(&server_asset) {
+            Some(expected_sha) => {
+                let tarball_check = tarball.clone();
+                let expected = expected_sha.clone();
+                tokio::task::spawn_blocking(move || {
+                    common::verify_file_sha256(&tarball_check, &expected)
+                })
+                .await
+                .context("checksum verify task panicked")??;
+                tracing::info!(asset = %server_asset, "web upgrade: server tarball SHA-256 verified");
+            }
+            None if !common::allow_unverified_upgrade() => {
+                return Err(anyhow!(
+                    "release checksums.txt does not contain an entry for {server_asset}"
+                ));
+            }
+            None => {
+                tracing::warn!(
+                    asset = %server_asset,
+                    "web upgrade: asset missing from checksums.txt (NEOMIND_ALLOW_UNVERIFIED_UPGRADE=1)"
+                );
+            }
+        }
+    }
     let staging_for_block = staging.clone();
+    let tarball_for_extract = tarball.clone();
     let extracted = tokio::task::spawn_blocking(move || -> Result<PathBuf> {
-        common::extract_tar_gz(&tarball, &staging_for_block)?;
+        common::extract_tar_gz(&tarball_for_extract, &staging_for_block)?;
         let bin = staging_for_block.join("neomind");
         if !bin.exists() {
             return Err(anyhow!(
@@ -426,7 +466,7 @@ async fn run_staged_upgrade(
 
     // 4. Stage the web tarball too when the server actually serves one.
     let web_tarball = if common::web_dir().is_dir() {
-        let web_url = common::web_tarball_url(&target);
+        let web_url = common::web_tarball_url(&target)?;
         let dest = staging.join("neomind-web.tar.gz");
         let bus = event_bus.clone();
         let target_for_cb = target.clone();
@@ -454,7 +494,22 @@ async fn run_staged_upgrade(
             );
         };
         match common::download_to_file(&client, &web_url, &dest, Some(&mut on_progress)).await {
-            Ok(_) => Some(dest),
+            Ok(_) => {
+                if let Some(expected_sha) = release_checksums
+                    .as_ref()
+                    .and_then(|c| c.get("neomind-web.tar.gz"))
+                    .cloned()
+                {
+                    let web_check = dest.clone();
+                    tokio::task::spawn_blocking(move || {
+                        common::verify_file_sha256(&web_check, &expected_sha)
+                    })
+                    .await
+                    .context("web checksum verify task panicked")??;
+                    tracing::info!("web upgrade: frontend tarball SHA-256 verified");
+                }
+                Some(dest)
+            }
             // Web tarball is an optional asset — a missing one must not block
             // the (more important) backend binary upgrade.
             Err(e) => {
@@ -472,6 +527,7 @@ async fn run_staged_upgrade(
         arch: arch.to_string(),
         staged_at: chrono_now_millis(),
         server_binary: "neomind".to_string(),
+        server_tarball: Some("neomind.tar.gz".to_string()),
         extension_runner: new_runner
             .as_ref()
             .map(|p| p.file_name().unwrap().to_string_lossy().to_string()),
@@ -580,10 +636,11 @@ fn now_epoch_ms() -> u64 {
 
 fn http_client() -> reqwest::Client {
     reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
+        .connect_timeout(Duration::from_secs(30))
+        .read_timeout(Duration::from_secs(60))
         .user_agent(neomind_core::brand::user_agent())
         .build()
-        .expect("reqwest client with 30s timeout")
+        .expect("reqwest client with connect/read timeouts")
 }
 
 /// Publish a progress event (best-effort — no bus means no listener).

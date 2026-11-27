@@ -234,6 +234,13 @@ pub async fn import_config_handler(
     State(state): State<ServerState>,
     Json(import): Json<ConfigImport>,
 ) -> Result<Json<ApiResponse<ConfigImportResult>>, ErrorResponse> {
+    if import.config.version != "1.0" {
+        return Err(ErrorResponse::bad_request(format!(
+            "Unsupported configuration version '{}' (expected '1.0')",
+            import.config.version
+        )));
+    }
+
     let mut result = ConfigImportResult {
         imported: ConfigExport {
             version: import.config.version.clone(),
@@ -253,8 +260,13 @@ pub async fn import_config_handler(
     if options.sections.llm_settings {
         if let Some(llm_settings) = &import.config.llm_settings {
             match import_llm_settings(&state, llm_settings, options.overwrite).await {
-                Ok(_) => {
+                Ok(true) => {
                     result.imported.llm_settings = Some(llm_settings.clone());
+                }
+                Ok(false) => {
+                    result.skipped.push(
+                        "LLM settings: existing backend preserved (overwrite=false)".to_string(),
+                    );
                 }
                 Err(e) => {
                     result.errors.push(format!("LLM settings: {}", e));
@@ -270,9 +282,16 @@ pub async fn import_config_handler(
     // Import devices
     if options.sections.devices {
         if let Some(devices) = &import.config.devices {
+            let mut imported_devices = Vec::new();
             for device in &devices.devices {
                 match import_device(&state, device, options.overwrite).await {
-                    Ok(_) => {}
+                    Ok(true) => imported_devices.push(device.clone()),
+                    Ok(false) => {
+                        result.skipped.push(format!(
+                            "Device {}: device import is not supported via config import",
+                            device.device_id
+                        ));
+                    }
                     Err(e) => {
                         result
                             .errors
@@ -280,7 +299,11 @@ pub async fn import_config_handler(
                     }
                 }
             }
-            result.imported.devices = Some(devices.clone());
+            if !imported_devices.is_empty() {
+                result.imported.devices = Some(DevicesExport {
+                    devices: imported_devices,
+                });
+            }
         } else {
             result
                 .skipped
@@ -291,15 +314,25 @@ pub async fn import_config_handler(
     // Import rules
     if options.sections.rules {
         if let Some(rules) = &import.config.rules {
+            let mut imported_rules = Vec::new();
             for rule in &rules.rules {
                 match import_rule(&state, rule, options.overwrite).await {
-                    Ok(_) => {}
+                    Ok(true) => imported_rules.push(rule.clone()),
+                    Ok(false) => {
+                        result
+                            .skipped
+                            .push(format!("Rule {}: skipped", rule.id));
+                    }
                     Err(e) => {
                         result.errors.push(format!("Rule {}: {}", rule.id, e));
                     }
                 }
             }
-            result.imported.rules = Some(rules.clone());
+            if !imported_rules.is_empty() {
+                result.imported.rules = Some(RulesExport {
+                    rules: imported_rules,
+                });
+            }
         } else {
             result
                 .skipped
@@ -366,19 +399,53 @@ pub async fn validate_config_handler(
     }))))
 }
 
+fn validate_http_endpoint(endpoint: &str) -> Result<(), String> {
+    let parsed =
+        reqwest::Url::parse(endpoint).map_err(|e| format!("Invalid endpoint URL: {}", e))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err(format!(
+            "Endpoint URL must use http:// or https:// (got '{}')",
+            parsed.scheme()
+        ));
+    }
+    if parsed.host_str().is_none() {
+        return Err("Endpoint URL has no host".to_string());
+    }
+    Ok(())
+}
+
 async fn import_llm_settings(
     state: &ServerState,
     settings: &LlmSettingsExport,
-    _overwrite: bool,
-) -> Result<(), String> {
+    overwrite: bool,
+) -> Result<bool, String> {
     use neomind_agent::LlmBackend;
 
-    let backend = match settings.backend.as_str() {
+    if settings.model.trim().is_empty() {
+        return Err("Model must not be empty".to_string());
+    }
+
+    if !overwrite
+        && state
+            .agents
+            .session_manager
+            .get_llm_backend()
+            .await
+            .ok()
+            .flatten()
+            .is_some()
+    {
+        return Ok(false);
+    }
+
+    let backend_name = settings.backend.trim().to_ascii_lowercase();
+    let backend = match backend_name.as_str() {
         "ollama" => {
             let endpoint = settings
                 .endpoint
                 .clone()
                 .unwrap_or_else(|| "http://localhost:11434".to_string());
+            validate_http_endpoint(&endpoint)?;
             LlmBackend::Ollama {
                 endpoint,
                 model: settings.model.clone(),
@@ -390,8 +457,44 @@ async fn import_llm_settings(
                 .endpoint
                 .clone()
                 .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+            validate_http_endpoint(&endpoint)?;
+            neomind_core::net::resolve_and_validate_public_url(&endpoint)
+                .await
+                .map_err(|e| format!("Disallowed OpenAI endpoint: {}", e))?;
             LlmBackend::OpenAi {
                 api_key: String::new(), // API key needs to be set separately for security
+                endpoint,
+                model: settings.model.clone(),
+                capabilities: None,
+            }
+        }
+        "anthropic" => {
+            let endpoint = settings
+                .endpoint
+                .clone()
+                .unwrap_or_else(|| "https://api.anthropic.com/v1".to_string());
+            validate_http_endpoint(&endpoint)?;
+            neomind_core::net::resolve_and_validate_public_url(&endpoint)
+                .await
+                .map_err(|e| format!("Disallowed Anthropic endpoint: {}", e))?;
+            LlmBackend::Anthropic {
+                api_key: String::new(),
+                endpoint,
+                model: settings.model.clone(),
+                capabilities: None,
+            }
+        }
+        "google" => {
+            let endpoint = settings
+                .endpoint
+                .clone()
+                .unwrap_or_else(|| "https://generativelanguage.googleapis.com/v1beta".to_string());
+            validate_http_endpoint(&endpoint)?;
+            neomind_core::net::resolve_and_validate_public_url(&endpoint)
+                .await
+                .map_err(|e| format!("Disallowed Google endpoint: {}", e))?;
+            LlmBackend::Google {
+                api_key: String::new(),
                 endpoint,
                 model: settings.model.clone(),
                 capabilities: None,
@@ -407,24 +510,24 @@ async fn import_llm_settings(
         .set_default_llm_backend(backend)
         .await;
 
-    Ok(())
+    Ok(true)
 }
 
 async fn import_device(
     _state: &ServerState,
     _device: &DeviceConfigExport,
     _overwrite: bool,
-) -> Result<(), String> {
-    // Device import is a placeholder - actual implementation depends on device type
-    // The device registration happens through the normal device registration API
-    Ok(())
+) -> Result<bool, String> {
+    // Device import is a placeholder - actual implementation depends on device type.
+    // Return Ok(false) so callers do not falsely count devices as imported.
+    Ok(false)
 }
 
 async fn import_rule(
     _state: &ServerState,
     _rule: &RuleConfigExport,
     _overwrite: bool,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     // Rule import is a placeholder - the rule engine doesn't currently support
     // importing rules from text. Rules need to be created through the rule API.
     Err("Rule import not currently supported".to_string())

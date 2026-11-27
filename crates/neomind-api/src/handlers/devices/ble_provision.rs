@@ -205,33 +205,96 @@ fn resolve_broker_config(
     }
 }
 
-/// Mint (or rotate) a device-scoped MQTT user for the embedded broker.
-///
-/// Embedded user passwords are bcrypt-only at rest, so BLE provision cannot
-/// echo an operator-created credential. Each resolve_only phase gets a fresh
-/// plaintext pair keyed by `device_id`; the hash is upserted for the broker.
-fn mint_device_mqtt_credential(
-    store: &neomind_storage::SettingsStore,
-    device_id: &str,
-) -> Result<(String, String), ErrorResponse> {
-    let username = device_id.trim().to_string();
-    if username.is_empty() || username.len() > 64 {
+/// Maximum total MQTT credentials permitted in the embedded broker store
+/// (matches `handlers/mqtt/broker_config.rs`).
+const MAX_MQTT_CREDENTIALS: usize = 100;
+
+/// Build a device-scoped MQTT username (`dev_<sanitized_id>`) so BLE
+/// provisioning can never overwrite operator-created MQTT credentials.
+fn device_scoped_mqtt_username(device_id: &str) -> Result<String, ErrorResponse> {
+    let sanitized: String = device_id
+        .trim()
+        .to_ascii_lowercase()
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+        .collect();
+    if sanitized.is_empty() {
         return Err(ErrorResponse::bad_request(
             "device id is not a valid MQTT username (1-64 chars)",
         ));
     }
-    if username.starts_with("__neomind") {
+    if sanitized.starts_with("__neomind") {
         return Err(ErrorResponse::bad_request(
             "device id collides with reserved MQTT system username prefix",
         ));
     }
+    let username = if sanitized.starts_with("dev_") {
+        sanitized
+    } else {
+        format!("dev_{sanitized}")
+    };
+    if username.len() > 64 {
+        return Err(ErrorResponse::bad_request(
+            "device id is not a valid MQTT username (1-64 chars)",
+        ));
+    }
+    Ok(username)
+}
+
+/// Mint (or rotate) a device-scoped MQTT user for the embedded broker.
+///
+/// Embedded user passwords are bcrypt-only at rest, so BLE provision cannot
+/// echo an operator-created credential. Each resolve_only phase gets a fresh
+/// plaintext pair keyed by `dev_<sanitized_device_id>`; the hash is upserted
+/// for the broker while enforcing the global 100-credential cap.
+async fn mint_device_mqtt_credential(
+    store: &neomind_storage::SettingsStore,
+    device_id: &str,
+) -> Result<(String, String), ErrorResponse> {
+    let username = device_scoped_mqtt_username(device_id)?;
+
+    // Fast-fail cap check before burning CPU on bcrypt when inserting a new
+    // device credential; re-provisioning an existing `dev_*` credential rotates
+    // it in place without consuming a new slot.
+    let existing_creds = store
+        .list_mqtt_credentials()
+        .map_err(|e| ErrorResponse::internal(format!("Failed to list MQTT credentials: {e}")))?;
+    let already_exists = existing_creds.iter().any(|c| c.username == username);
+    if !already_exists && existing_creds.len() >= MAX_MQTT_CREDENTIALS {
+        return Err(ErrorResponse::bad_request(format!(
+            "Maximum MQTT credential limit ({}) reached",
+            MAX_MQTT_CREDENTIALS
+        )));
+    }
 
     let password = generate_provision_password(16);
-    let password_hash = bcrypt::hash(&password, 12)
+    let password_for_hash = password.clone();
+    let password_hash = tokio::task::spawn_blocking(move || bcrypt::hash(&password_for_hash, 12))
+        .await
+        .map_err(|e| ErrorResponse::internal(format!("MQTT password hash task failed: {e}")))?
         .map_err(|e| ErrorResponse::internal(format!("Failed to hash MQTT password: {e}")))?;
-    store
-        .add_mqtt_credential(&username, &password_hash)
+
+    let (inserted, count_after) = store
+        .try_add_mqtt_credential(&username, &password_hash)
         .map_err(|e| ErrorResponse::internal(format!("Failed to store MQTT credential: {e}")))?;
+
+    if inserted {
+        if count_after > MAX_MQTT_CREDENTIALS {
+            let _ = store.delete_mqtt_credential(&username);
+            return Err(ErrorResponse::bad_request(format!(
+                "Maximum MQTT credential limit ({}) reached",
+                MAX_MQTT_CREDENTIALS
+            )));
+        }
+    } else {
+        // Existing device-scoped credential (`dev_*`): rotate password hash in place.
+        store
+            .add_mqtt_credential(&username, &password_hash)
+            .map_err(|e| {
+                ErrorResponse::internal(format!("Failed to rotate MQTT credential: {e}"))
+            })?;
+    }
+
     Ok((username, password))
 }
 
@@ -274,7 +337,7 @@ fn refresh_credential_cache(state: &ServerState) {
 ///
 /// Phase 2 register must not rotate — the device already holds the phase-1
 /// plaintext. External / custom brokers already carry their own credentials.
-fn attach_embedded_auth_credentials(
+async fn attach_embedded_auth_credentials(
     state: &ServerState,
     req: &BleProvisionRequest,
     device_id: &str,
@@ -293,7 +356,7 @@ fn attach_embedded_auth_credentials(
 
     let store = config::open_settings_store()
         .map_err(|e| ErrorResponse::internal(format!("Failed to open settings store: {e}")))?;
-    let (username, password) = mint_device_mqtt_credential(store.as_ref(), device_id)?;
+    let (username, password) = mint_device_mqtt_credential(store.as_ref(), device_id).await?;
     cfg.username = username;
     cfg.password = password;
     refresh_credential_cache(state);
@@ -377,14 +440,14 @@ fn resolve_mqtt_config(
 }
 
 /// Resolve MQTT config and, when needed, attach embedded-broker device creds.
-fn resolve_mqtt_config_for_provision(
+async fn resolve_mqtt_config_for_provision(
     state: &ServerState,
     req: &BleProvisionRequest,
     device_type: &str,
     device_id: &str,
 ) -> Result<MqttConfigResponse, ErrorResponse> {
     let mut cfg = resolve_mqtt_config(req, device_type, device_id)?;
-    attach_embedded_auth_credentials(state, req, device_id, &mut cfg)?;
+    attach_embedded_auth_credentials(state, req, device_id, &mut cfg).await?;
     Ok(cfg)
 }
 
@@ -440,7 +503,8 @@ pub async fn ble_provision_handler(
         );
 
         let mqtt_config =
-            resolve_mqtt_config_for_provision(&state, &req, &existing.device_type, &device_id)?;
+            resolve_mqtt_config_for_provision(&state, &req, &existing.device_type, &device_id)
+                .await?;
         let topic_prefix = mqtt_config.topic_prefix.trim_end_matches('/').to_string();
         let topic_prefix = topic_prefix
             .strip_suffix("/uplink")
@@ -505,7 +569,7 @@ pub async fn ble_provision_handler(
 
     // 4. Resolve broker config (NeoMind subscribed or device-custom)
     let mqtt_config =
-        resolve_mqtt_config_for_provision(&state, &req, &req.device_type, &device_id)?;
+        resolve_mqtt_config_for_provision(&state, &req, &req.device_type, &device_id).await?;
     let topic_prefix = mqtt_config.topic_prefix.trim_end_matches('/').to_string();
     let topic_prefix = topic_prefix
         .strip_suffix("/uplink")
@@ -734,26 +798,72 @@ mod tests {
         assert!(p2.is_empty());
     }
 
-    #[test]
-    fn mint_device_mqtt_credential_stores_hash_and_returns_plaintext() {
+    #[tokio::test]
+    async fn mint_device_mqtt_credential_stores_hash_and_returns_plaintext() {
         let tmp = tempfile::tempdir().unwrap();
         let store = neomind_storage::SettingsStore::open(tmp.path().join("settings.redb")).unwrap();
         let device_id = "ne101_a2f003";
-        let (username, password) = mint_device_mqtt_credential(store.as_ref(), device_id).unwrap();
-        assert_eq!(username, device_id);
+        let expected_user = "dev_ne101_a2f003";
+        let (username, password) = mint_device_mqtt_credential(store.as_ref(), device_id)
+            .await
+            .unwrap();
+        assert_eq!(username, expected_user);
         assert_eq!(password.len(), 16);
         let creds = store.list_mqtt_credentials().unwrap();
-        let row = creds.iter().find(|c| c.username == device_id).unwrap();
+        let row = creds.iter().find(|c| c.username == expected_user).unwrap();
         assert!(bcrypt::verify(&password, &row.password_hash).unwrap());
 
         // Rotate on re-provision: new plaintext, updated hash.
-        let (u2, p2) = mint_device_mqtt_credential(store.as_ref(), device_id).unwrap();
-        assert_eq!(u2, device_id);
+        let (u2, p2) = mint_device_mqtt_credential(store.as_ref(), device_id)
+            .await
+            .unwrap();
+        assert_eq!(u2, expected_user);
         assert_ne!(p2, password);
         let creds2 = store.list_mqtt_credentials().unwrap();
-        let row2 = creds2.iter().find(|c| c.username == device_id).unwrap();
+        let row2 = creds2.iter().find(|c| c.username == expected_user).unwrap();
         assert!(bcrypt::verify(&p2, &row2.password_hash).unwrap());
         assert!(!bcrypt::verify(&password, &row2.password_hash).unwrap());
+    }
+
+    #[tokio::test]
+    async fn mint_device_mqtt_credential_enforces_cap_and_isolates_operator_users() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = neomind_storage::SettingsStore::open(tmp.path().join("settings.redb")).unwrap();
+
+        // Operator account "admin" must not be touched by provisioning device_id "admin".
+        store.add_mqtt_credential("admin", "operator_hash").unwrap();
+        let (minted_user, _) = mint_device_mqtt_credential(store.as_ref(), "admin")
+            .await
+            .unwrap();
+        assert_eq!(minted_user, "dev_admin");
+        let creds = store.list_mqtt_credentials().unwrap();
+        assert_eq!(
+            creds
+                .iter()
+                .find(|c| c.username == "admin")
+                .unwrap()
+                .password_hash,
+            "operator_hash"
+        );
+
+        // Fill up to MAX_MQTT_CREDENTIALS (100)
+        for i in creds.len()..MAX_MQTT_CREDENTIALS {
+            store
+                .add_mqtt_credential(&format!("op_{i}"), "hash")
+                .unwrap();
+        }
+
+        // New device credential beyond 100 must be rejected
+        let err = mint_device_mqtt_credential(store.as_ref(), "overflow_device")
+            .await
+            .expect_err("must reject credential past cap");
+        assert!(err.message.contains("Maximum MQTT credential limit"));
+
+        // Rotating an existing device credential at the cap still succeeds
+        let (rot_user, _) = mint_device_mqtt_credential(store.as_ref(), "admin")
+            .await
+            .expect("rotating existing dev_* credential at cap must succeed");
+        assert_eq!(rot_user, "dev_admin");
     }
 
     #[test]

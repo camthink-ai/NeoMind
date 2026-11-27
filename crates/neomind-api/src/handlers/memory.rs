@@ -87,10 +87,17 @@ pub struct AddMemoryRequest {
 // Helper Functions
 // ============================================================================
 
-/// Get the memory store
-fn get_memory_store(_state: &ServerState) -> MarkdownMemoryStore {
-    let config = neomind_storage::MemoryConfig::load();
-    MarkdownMemoryStore::with_config(&config.storage_path, config.clone())
+/// Maximum character count allowed on legacy memory write endpoints.
+const LEGACY_MEMORY_MAX_CHARS: usize = 100_000;
+
+/// Get the memory store pinned to the server's canonical memory base path
+/// (never trusting a user-modified `storage_path`).
+fn get_memory_store(state: &ServerState) -> MarkdownMemoryStore {
+    let mut config = neomind_storage::MemoryConfig::load();
+    let base_path = state.agents.system_memory_store.base_path().to_path_buf();
+    config.storage_path = base_path.to_string_lossy().to_string();
+    config.clamp_bounds();
+    MarkdownMemoryStore::with_config(base_path, config)
 }
 
 /// Create error response
@@ -187,6 +194,13 @@ pub async fn update_category(
         )
     })?;
 
+    if req.content.chars().count() > LEGACY_MEMORY_MAX_CHARS {
+        return Err(ErrorResponse::bad_request(format!(
+            "Content exceeds maximum allowed length of {} characters",
+            LEGACY_MEMORY_MAX_CHARS
+        )));
+    }
+
     let store = get_memory_store(&state);
     store
         .init()
@@ -278,8 +292,15 @@ pub async fn get_stats(State(state): State<ServerState>) -> Response {
         (status = 200, description = "Memory subsystem configuration"),
     )
 )]
-pub async fn get_config(State(_state): State<ServerState>) -> Response {
-    let config = MemoryConfig::load();
+pub async fn get_config(State(state): State<ServerState>) -> Response {
+    let mut config = MemoryConfig::load();
+    config.storage_path = state
+        .agents
+        .system_memory_store
+        .base_path()
+        .to_string_lossy()
+        .to_string();
+    config.clamp_bounds();
     Json(config).into_response()
 }
 
@@ -294,9 +315,20 @@ pub async fn get_config(State(_state): State<ServerState>) -> Response {
     )
 )]
 pub async fn update_config(
-    State(_state): State<ServerState>,
-    Json(req): Json<UpdateConfigRequest>,
+    State(state): State<ServerState>,
+    Json(mut req): Json<UpdateConfigRequest>,
 ) -> HandlerResult<serde_json::Value> {
+    // Always pin storage_path to the server's canonical memory store path so
+    // callers cannot redirect reads/writes to arbitrary filesystem directories.
+    req.config.storage_path = state
+        .agents
+        .system_memory_store
+        .base_path()
+        .to_string_lossy()
+        .to_string();
+    // Clamp numeric bounds to prevent memory exhaustion, chrono overflow, or tight loops.
+    req.config.clamp_bounds();
+
     req.config
         .save()
         .map_err(|e| ErrorResponse::internal(format!("Failed to save config: {}", e)))?;
@@ -319,6 +351,13 @@ pub async fn add_memory_entry(
         )
     })?;
 
+    if req.content.chars().count() > LEGACY_MEMORY_MAX_CHARS {
+        return Err(ErrorResponse::bad_request(format!(
+            "Content exceeds maximum allowed length of {} characters",
+            LEGACY_MEMORY_MAX_CHARS
+        )));
+    }
+
     let store = state.agents.system_memory_store.clone();
 
     // Read existing content
@@ -338,6 +377,13 @@ pub async fn add_memory_entry(
         content.push('\n');
     }
     content.push_str(&entry);
+
+    if content.chars().count() > LEGACY_MEMORY_MAX_CHARS {
+        return Err(ErrorResponse::bad_request(format!(
+            "Memory category would exceed maximum allowed length of {} characters",
+            LEGACY_MEMORY_MAX_CHARS
+        )));
+    }
 
     // Write back
     store
@@ -538,11 +584,21 @@ pub async fn update_memory_content(
     Path((source_type, id)): Path<(String, String)>,
     Json(request): Json<UpdateMemoryRequest>,
 ) -> HandlerResult<serde_json::Value> {
+    if request.content.chars().count() > LEGACY_MEMORY_MAX_CHARS {
+        return Err(ErrorResponse::bad_request(format!(
+            "Content exceeds maximum allowed length of {} characters",
+            LEGACY_MEMORY_MAX_CHARS
+        )));
+    }
+
     let store = get_memory_store(&state);
 
     store
         .write_raw_markdown(&source_type, &id, &request.content)
-        .map_err(|e| ErrorResponse::internal(format!("Failed to update memory: {}", e)))?;
+        .map_err(|e| match e {
+            neomind_storage::Error::InvalidInput(msg) => ErrorResponse::bad_request(msg),
+            other => ErrorResponse::internal(format!("Failed to update memory: {}", other)),
+        })?;
 
     ok(serde_json::json!({
         "message": "Memory updated"

@@ -84,11 +84,20 @@ pub async fn start_upgrade_handler(
         return Err(ErrorResponse::forbidden("Admin access required"));
     }
 
-    let version = payload.and_then(|Json(v)| {
-        v.get("version")
-            .and_then(|x| x.as_str())
-            .map(str::to_string)
-    });
+    let version = match payload.and_then(|Json(v)| v.get("version").cloned()) {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(v)) => {
+            match crate::upgrade::common::validate_semver_version(&v) {
+                Ok(clean) => Some(clean),
+                Err(msg) => return Err(ErrorResponse::bad_request(msg)),
+            }
+        }
+        Some(_) => {
+            return Err(ErrorResponse::bad_request(
+                "version must be a semver string",
+            ));
+        }
+    };
 
     let (started, reason) = state
         .upgrade
@@ -174,5 +183,36 @@ mod admin_forbidden_tests {
             .await
             .expect_err("upgrade_status must reject non-admin");
         assert_eq!(e3.status, StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn start_upgrade_rejects_invalid_version_with_400() {
+        let state = ServerState::new_for_testing().await;
+        let admin = SessionInfo {
+            user_id: "u-admin".to_string(),
+            username: "admin".to_string(),
+            role: UserRole::Admin,
+            created_at: 0,
+            expires_at: i64::MAX,
+        };
+
+        for bad in [
+            json!({ "version": "../1.4.0" }),
+            json!({ "version": "1.4.0/../../etc" }),
+            json!({ "version": "1.4.0?x=1" }),
+            json!({ "version": "1.4.0#frag" }),
+            json!({ "version": "" }),
+            json!({ "version": "1.4.0 " }),
+            json!({ "version": 12345 }),
+        ] {
+            let err = start_upgrade_handler(
+                State(state.clone()),
+                Extension(admin.clone()),
+                Some(Json(bad.clone())),
+            )
+            .await
+            .expect_err(&format!("expected 400 for payload {bad}"));
+            assert_eq!(err.status, StatusCode::BAD_REQUEST);
+        }
     }
 }

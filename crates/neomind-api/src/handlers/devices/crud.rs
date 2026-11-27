@@ -714,11 +714,27 @@ pub async fn get_devices_current_batch_handler(
     State(state): State<ServerState>,
     Json(req): Json<BatchCurrentValuesRequest>,
 ) -> HandlerResult<serde_json::Value> {
+    const MAX_BATCH_DEVICE_IDS: usize = 200;
+    if req.device_ids.len() > MAX_BATCH_DEVICE_IDS {
+        return Err(ErrorResponse::bad_request(format!(
+            "Too many device_ids requested: {} (max {})",
+            req.device_ids.len(),
+            MAX_BATCH_DEVICE_IDS
+        )));
+    }
+
+    // Deduplicate device_ids while preserving request order
+    let mut seen = std::collections::HashSet::with_capacity(req.device_ids.len());
+    let unique_device_ids: Vec<String> = req
+        .device_ids
+        .into_iter()
+        .filter(|id| seen.insert(id.clone()))
+        .collect();
+
     // [fan-out] Devices polled CONCURRENTLY — dashboards hit this for every
     // widget's device set; the sequential loop summed per-device latencies
     // (the inner per-metric fallback was already join_all'd).
-    let per_device: Vec<_> = req
-        .device_ids
+    let per_device: Vec<_> = unique_device_ids
         .into_iter()
         .map(|device_id| {
             let state = state.clone();
@@ -769,7 +785,11 @@ async fn one_device_current(state: &ServerState, device_id: &str) -> serde_json:
         // If cache is empty, try time_series_storage for recent data
         let current_values_json = if current_values_json.is_empty() {
             // Try to get the device template to know which metrics to fetch
-            let template = state.devices.service.get_template(device_id);
+            let template = state
+                .devices
+                .service
+                .get_device(device_id)
+                .and_then(|c| state.devices.service.get_template(&c.device_type));
 
             if let Some(template) = template {
                 // PERFORMANCE FIX: Use batch query instead of sequential N+1 queries
@@ -869,6 +889,10 @@ pub async fn add_device_handler(
             .collect();
         format!("{}_{}", req.device_type, random_str)
     };
+
+    // Validate device_id against length and path/control-char injection
+    neomind_devices::registry::validate_device_id(&device_id)
+        .map_err(|e| ErrorResponse::bad_request(e.to_string()))?;
 
     // Parse connection_config JSON into ConnectionConfig
     let connection_config: neomind_devices::ConnectionConfig =
@@ -1419,5 +1443,94 @@ mod device_error_mapping_tests {
             "seconds_since_last_seen must be null when never seen"
         );
         assert_eq!(resp["health"], json!("unknown"));
+    }
+
+    #[tokio::test]
+    async fn current_batch_rejects_over_200_and_fixes_cold_cache_template_lookup() {
+        use neomind_devices::{
+            mdl::MetricDataType, mdl_format::MetricDefinition, ConnectionConfig, DeviceConfig,
+            DeviceTypeTemplate, MetricValue,
+        };
+
+        let state = ServerState::new_for_testing().await;
+
+        // 1. Over 200 device_ids must return 400 Bad Request
+        let too_many = BatchCurrentValuesRequest {
+            device_ids: (0..201).map(|i| format!("dev-{i}")).collect(),
+        };
+        let err = get_devices_current_batch_handler(State(state.clone()), Json(too_many))
+            .await
+            .unwrap_err();
+        assert_eq!(err.status, axum::http::StatusCode::BAD_REQUEST);
+
+        // 2. Cold-cache fallback looks up template via config.device_type (not device_id)
+        let tpl = DeviceTypeTemplate::new("temp_sensor_v1", "Temp Sensor").with_metric(
+            MetricDefinition {
+                name: "temperature".to_string(),
+                display_name: "Temperature".to_string(),
+                data_type: MetricDataType::Float,
+                unit: "C".to_string(),
+                min: None,
+                max: None,
+                required: false,
+            },
+        );
+        state
+            .devices
+            .service
+            .register_template(tpl)
+            .await
+            .expect("register template");
+
+        let cfg = DeviceConfig {
+            device_id: "sensor-abc".to_string(),
+            name: "Sensor ABC".to_string(),
+            device_type: "temp_sensor_v1".to_string(),
+            adapter_type: "webhook".to_string(),
+            connection_config: ConnectionConfig::default(),
+            adapter_id: None,
+            last_seen: 0,
+            offline_timeout_secs: None,
+        };
+        state
+            .devices
+            .service
+            .registry()
+            .register_device(cfg)
+            .await
+            .expect("register device");
+
+        // Write directly to telemetry storage so in-memory cache stays cold
+        state
+            .devices
+            .telemetry
+            .write(
+                "device:sensor-abc",
+                "temperature",
+                neomind_devices::telemetry::DataPoint {
+                    timestamp: chrono::Utc::now().timestamp(),
+                    value: MetricValue::Float(24.5),
+                    quality: Some(1.0),
+                    metadata: None,
+                },
+            )
+            .await
+            .expect("write telemetry");
+
+        // Pass duplicate device_ids to verify dedup as well
+        let req = BatchCurrentValuesRequest {
+            device_ids: vec!["sensor-abc".to_string(), "sensor-abc".to_string()],
+        };
+        let resp = get_devices_current_batch_handler(State(state), Json(req))
+            .await
+            .expect("batch current succeeds")
+            .0
+            .data
+            .expect("data payload");
+        assert_eq!(resp["count"], json!(1));
+        assert_eq!(
+            resp["devices"]["sensor-abc"]["current_values"]["temperature"],
+            json!(24.5)
+        );
     }
 }

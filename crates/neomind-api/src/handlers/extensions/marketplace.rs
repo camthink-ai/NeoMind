@@ -52,6 +52,127 @@ pub(crate) fn extension_market_base_url() -> String {
     DEFAULT_EXTENSION_MARKET_BASE_URL.to_string()
 }
 
+/// Return true if private/loopback marketplace hosts are explicitly allowed
+/// via `NEOMIND_ALLOW_PRIVATE_MARKET=true` (or `1`).
+pub(crate) fn allow_private_market() -> bool {
+    std::env::var("NEOMIND_ALLOW_PRIVATE_MARKET")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+/// Validate a remote marketplace URL against SSRF policy.
+///
+/// Rejects non-http(s) schemes and any host resolving to private/loopback/
+/// link-local/CGNAT/reserved IP addresses unless `NEOMIND_ALLOW_PRIVATE_MARKET=true`.
+/// Returns the parsed URL and (when public validation ran) the resolved
+/// `SocketAddr`s so callers can pin them with `resolve_to_addrs`.
+pub(crate) async fn validate_market_url(
+    raw_url: &str,
+) -> Result<(reqwest::Url, Option<Vec<std::net::SocketAddr>>), ErrorResponse> {
+    let parsed = reqwest::Url::parse(raw_url)
+        .map_err(|e| ErrorResponse::bad_request(format!("Invalid marketplace URL: {}", e)))?;
+    match parsed.scheme() {
+        "http" | "https" => {}
+        other => {
+            return Err(ErrorResponse::bad_request(format!(
+                "Only http:// and https:// URLs are allowed (got '{}')",
+                other
+            )));
+        }
+    }
+    if parsed.host_str().is_none() {
+        return Err(ErrorResponse::bad_request("Marketplace URL has no host"));
+    }
+    if allow_private_market() {
+        return Ok((parsed, None));
+    }
+    let addrs = neomind_core::net::resolve_and_validate_public_url(raw_url)
+        .await
+        .map_err(|e| {
+            ErrorResponse::bad_request(format!(
+                "Marketplace URL blocked by SSRF policy: {} (set NEOMIND_ALLOW_PRIVATE_MARKET=true to allow private hosts)",
+                e
+            ))
+        })?;
+    Ok((parsed, Some(addrs)))
+}
+
+enum ValidatedGetError {
+    Blocked(ErrorResponse),
+    Transport(reqwest::Error),
+}
+
+impl ValidatedGetError {
+    fn into_error_response(self, context: &str) -> ErrorResponse {
+        match self {
+            Self::Blocked(err) => err,
+            Self::Transport(e) => ErrorResponse::service_unavailable(format!("{}: {}", context, e))
+                .with_hint("Check network connectivity to the marketplace registry and retry."),
+        }
+    }
+}
+
+/// Perform an HTTP GET with SSRF validation on the initial URL and on EVERY
+/// redirect hop (using `reqwest::redirect::Policy::none()` + pinned DNS
+/// addresses via `resolve_to_addrs`).
+async fn validated_get(
+    url: &str,
+    timeout: std::time::Duration,
+    extra_headers: &[(&str, &str)],
+) -> Result<reqwest::Response, ValidatedGetError> {
+    const MAX_REDIRECTS: usize = 5;
+    let mut current_url = url.to_string();
+
+    for _hop in 0..=MAX_REDIRECTS {
+        let (parsed, pinned_addrs) = validate_market_url(&current_url)
+            .await
+            .map_err(ValidatedGetError::Blocked)?;
+
+        let mut builder = reqwest::Client::builder()
+            .timeout(timeout)
+            .redirect(reqwest::redirect::Policy::none());
+        if let (Some(addrs), Some(host)) = (pinned_addrs.as_ref(), parsed.host_str()) {
+            builder = builder.resolve_to_addrs(host, addrs);
+        }
+        let client = builder.build().map_err(|e| {
+            ValidatedGetError::Blocked(ErrorResponse::internal(format!(
+                "Failed to build HTTP client: {}",
+                e
+            )))
+        })?;
+
+        let mut req = client
+            .get(parsed.clone())
+            .header("User-Agent", "NeoMind-Extension-Marketplace");
+        for (k, v) in extra_headers {
+            req = req.header(*k, *v);
+        }
+
+        let resp = req.send().await.map_err(ValidatedGetError::Transport)?;
+        if resp.status().is_redirection() {
+            if let Some(loc) = resp
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|v| v.to_str().ok())
+            {
+                let next = parsed.join(loc).map_err(|e| {
+                    ValidatedGetError::Blocked(ErrorResponse::bad_request(format!(
+                        "Invalid redirect Location '{}': {}",
+                        loc, e
+                    )))
+                })?;
+                current_url = next.to_string();
+                continue;
+            }
+        }
+        return Ok(resp);
+    }
+
+    Err(ValidatedGetError::Blocked(ErrorResponse::bad_request(
+        "Too many redirects while fetching marketplace resource",
+    )))
+}
+
 /// Fall back to the release-level `checksums.txt` for a package sha256.
 ///
 /// The marketplace index does not carry per-build sha256; the Extensions CI
@@ -59,18 +180,10 @@ pub(crate) fn extension_market_base_url() -> String {
 /// .nep assets, so integrity data is at least as fresh as the package
 /// itself. Derives the checksum URL from the package URL and looks up the
 /// matching filename.
-async fn fetch_release_checksum(
-    client: &reqwest::Client,
-    package_url: &str,
-    nep_filename: &str,
-) -> Option<String> {
+async fn fetch_release_checksum(package_url: &str, nep_filename: &str) -> Option<String> {
     let base = package_url.rsplit_once('/')?.0;
     let url = format!("{base}/checksums.txt");
-    let text = client
-        .get(&url)
-        .timeout(std::time::Duration::from_secs(10))
-        .header("User-Agent", "NeoMind-Extension-Marketplace")
-        .send()
+    let text = validated_get(&url, std::time::Duration::from_secs(10), &[])
         .await
         .ok()?
         .error_for_status()
@@ -464,20 +577,16 @@ pub async fn list_marketplace_extensions_handler(
         cache_buster
     );
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .map_err(|e| ErrorResponse::internal(format!("Failed to build HTTP client: {}", e)))?;
-
-    let response = match client
-        .get(&index_url)
-        .header("User-Agent", "NeoMind-Extension-Marketplace")
-        .header("Cache-Control", "no-cache")
-        .send()
-        .await
+    let response = match validated_get(
+        &index_url,
+        std::time::Duration::from_secs(10),
+        &[("Cache-Control", "no-cache")],
+    )
+    .await
     {
         Ok(r) => r,
-        Err(e) => {
+        Err(ValidatedGetError::Blocked(err)) => return Err(err),
+        Err(ValidatedGetError::Transport(e)) => {
             tracing::error!("Failed to connect to marketplace: {}", e);
             return ok(json!({
                 "extensions": [],
@@ -550,17 +659,9 @@ pub async fn get_marketplace_extension_handler(
         id
     );
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .map_err(|e| ErrorResponse::internal(format!("Failed to build HTTP client: {}", e)))?;
-
-    let response = client
-        .get(&metadata_url)
-        .header("User-Agent", "NeoMind-Extension-Marketplace")
-        .send()
+    let response = validated_get(&metadata_url, std::time::Duration::from_secs(10), &[])
         .await
-        .map_err(|e| ErrorResponse::internal(format!("Failed to fetch metadata: {}", e)))?;
+        .map_err(|e| e.into_error_response("Failed to fetch metadata"))?;
 
     if !response.status().is_success() {
         return Err(ErrorResponse::not_found(format!(
@@ -614,20 +715,12 @@ pub async fn get_marketplace_extension_readme_handler(
         id
     );
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .map_err(|e| ErrorResponse::internal(format!("Failed to build HTTP client: {}", e)))?;
-
-    let response = client
-        .get(&readme_url)
-        .header("User-Agent", "NeoMind-Extension-Marketplace")
-        .send()
-        .await;
+    let response = validated_get(&readme_url, std::time::Duration::from_secs(10), &[]).await;
 
     // README missing (or transient fetch failure) is normal → content: null.
     let content = match response {
         Ok(r) if r.status().is_success() => r.text().await.ok(),
+        Err(ValidatedGetError::Blocked(err)) => return Err(err),
         _ => None,
     };
 
@@ -838,47 +931,37 @@ pub async fn install_marketplace_extension_handler(
         cache_buster
     );
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
-        .build()
-        .map_err(|e| ErrorResponse::internal(format!("Failed to build HTTP client: {}", e)))?;
-
-    // Fetch metadata
-    let metadata: MarketplaceExtensionMetadata = match client
-        .get(&metadata_url)
-        .header("User-Agent", "NeoMind-Extension-Marketplace")
-        .send()
-        .await
-    {
-        Ok(r) if r.status().is_success() => r.json().await.map_err(|e| {
-            ErrorResponse::internal(format!(
-                "Failed to parse marketplace metadata for '{}': {}",
-                req.id, e
-            ))
-            .with_hint("Retry later or verify the marketplace registry metadata.")
-        })?,
-        Ok(r) if r.status() == reqwest::StatusCode::NOT_FOUND => {
-            return Err(
-                ErrorResponse::not_found(format!("Marketplace extension '{}'", req.id))
-                    .with_hint("Run `neomind extension market-list` to see available extensions."),
-            );
-        }
-        Ok(r) => {
-            return Err(ErrorResponse::service_unavailable(format!(
-                "Marketplace metadata fetch failed for '{}': HTTP {}",
-                req.id,
-                r.status()
-            ))
-            .with_hint("Check network access to the marketplace registry and retry."));
-        }
-        Err(e) => {
-            return Err(ErrorResponse::service_unavailable(format!(
-                "Network error fetching marketplace metadata for '{}': {}",
-                req.id, e
-            ))
-            .with_hint("Check network connectivity to the marketplace registry and retry."));
-        }
-    };
+    // Fetch metadata (with SSRF validation + validated redirect loop)
+    let metadata: MarketplaceExtensionMetadata =
+        match validated_get(&metadata_url, std::time::Duration::from_secs(60), &[]).await {
+            Ok(r) if r.status().is_success() => r.json().await.map_err(|e| {
+                ErrorResponse::internal(format!(
+                    "Failed to parse marketplace metadata for '{}': {}",
+                    req.id, e
+                ))
+                .with_hint("Retry later or verify the marketplace registry metadata.")
+            })?,
+            Ok(r) if r.status() == reqwest::StatusCode::NOT_FOUND => {
+                return Err(
+                    ErrorResponse::not_found(format!("Marketplace extension '{}'", req.id))
+                        .with_hint("Run `neomind extension market-list` to see available extensions."),
+                );
+            }
+            Ok(r) => {
+                return Err(ErrorResponse::service_unavailable(format!(
+                    "Marketplace metadata fetch failed for '{}': HTTP {}",
+                    req.id,
+                    r.status()
+                ))
+                .with_hint("Check network access to the marketplace registry and retry."));
+            }
+            Err(e) => {
+                return Err(e.into_error_response(&format!(
+                    "Network error fetching marketplace metadata for '{}'",
+                    req.id
+                )));
+            }
+        };
 
     // Detect platform + hardware variant (jetson/cuda/cpu) so jetson/cuda
     // installs download the accelerated .nep build, not the plain CPU one.
@@ -923,19 +1006,13 @@ pub async fn install_marketplace_extension_handler(
             package_url
         );
 
-        // Download the .nep package
-        let package_response = client
-            .get(package_url)
-            .header("User-Agent", "NeoMind-Extension-Marketplace")
-            .send()
-            .await
-            .map_err(|e| {
-                ErrorResponse::service_unavailable(format!(
-                    "Failed to download package for '{}': {}",
-                    req.id, e
-                ))
-                .with_hint("Check network connectivity to the marketplace registry and retry.")
-            })?;
+        // Download the .nep package (with SSRF validation on initial URL + redirects)
+        let package_response =
+            validated_get(package_url, std::time::Duration::from_secs(60), &[])
+                .await
+                .map_err(|e| {
+                    e.into_error_response(&format!("Failed to download package for '{}'", req.id))
+                })?;
 
         if !package_response.status().is_success() {
             return Err(ErrorResponse::service_unavailable(format!(
@@ -982,7 +1059,7 @@ pub async fn install_marketplace_extension_handler(
         let mut expected_sha256 = expected_sha256;
         if expected_sha256.is_none() {
             let filename = package_url.rsplit('/').next().unwrap_or("");
-            if let Some(sha) = fetch_release_checksum(&client, package_url, filename).await {
+            if let Some(sha) = fetch_release_checksum(package_url, filename).await {
                 tracing::info!(
                     extension_id = %req.id,
                     "Package SHA256 sourced from the release checksums.txt"
@@ -1041,6 +1118,41 @@ pub async fn install_marketplace_extension_handler(
             }
         }
 
+        // Pre-parse and validate manifest BEFORE touching disk or unloading
+        // any running extension. Reject packages whose manifest.id does not
+        // match the requested extension id (prevents a compromised mirror or
+        // mislabeled artifact from overwriting an unrelated extension).
+        let precheck_pkg =
+            neomind_core::extension::package::ExtensionPackage::load(&tmp_path)
+                .await
+                .map_err(|e| {
+                    ErrorResponse::bad_request(format!(
+                        "Invalid .nep package for '{}': {}",
+                        req.id, e
+                    ))
+                })?;
+        if precheck_pkg.manifest.id != req.id {
+            return Err(ErrorResponse::bad_request(format!(
+                "Package manifest id '{}' does not match requested extension id '{}' — refusing to install",
+                precheck_pkg.manifest.id, req.id
+            )));
+        }
+
+        // Unload any currently running instance of `req.id` BEFORE overwriting
+        // its binaries on disk (prevents ETXTBSY / Windows file lock / SIGBUS).
+        if runtime.contains(&req.id).await {
+            tracing::info!(
+                "Extension {} already registered, unloading before package extraction",
+                req.id
+            );
+            runtime.unregister(&req.id).await.map_err(|e| {
+                ErrorResponse::internal(format!(
+                    "Failed to unregister existing extension '{}': {}",
+                    req.id, e
+                ))
+            })?;
+        }
+
         // Prepare target directory
         let data_dir = neomind_core::paths::data_dir()
             .to_string_lossy()
@@ -1048,8 +1160,6 @@ pub async fn install_marketplace_extension_handler(
         let target_dir = PathBuf::from(data_dir).join("extensions");
 
         // Install from the temp file — streams the ZIP from disk, not memory.
-        // (install_from_file reads manifest + validates internally, so the old
-        // from_bytes() pre-check is redundant and dropped.)
         let tmp_path_clone = tmp_path.clone();
         let target_dir_clone = target_dir.clone();
         let install_result = tokio::task::spawn_blocking(move || {
@@ -1071,19 +1181,6 @@ pub async fn install_marketplace_extension_handler(
                     elapsed_ms = install_start.elapsed().as_millis() as u64,
                     "Package downloaded and extracted, starting extension load"
                 );
-
-                // Check if already registered and unregister if needed
-                let is_registered = runtime.contains(&ext_id).await;
-
-                if is_registered {
-                    tracing::info!("Extension {} already registered, will replace", ext_id);
-                    runtime.unregister(&ext_id).await.map_err(|e| {
-                        ErrorResponse::internal(format!(
-                            "Failed to unregister existing extension '{}': {}",
-                            ext_id, e
-                        ))
-                    })?;
-                }
 
                 // Load and register the extension binary (unified handles isolated/in-process)
                 match runtime.load(&result.binary_path).await {
@@ -1204,14 +1301,13 @@ pub async fn install_marketplace_extension_handler(
             .get(build_key.as_str())
             .expect("select_build_key invariant: returned key must exist in metadata.builds");
 
-        // Download the extension binary
+        // Download the extension binary (with SSRF validation + validated redirects)
         tracing::info!("Downloading extension {} from {}", req.id, build.url);
 
-        let download_response = client
-            .get(&build.url)
-            .send()
-            .await
-            .map_err(|e| ErrorResponse::internal(format!("Download failed: {}", e)))?;
+        let download_response =
+            validated_get(&build.url, std::time::Duration::from_secs(60), &[])
+                .await
+                .map_err(|e| e.into_error_response("Download failed"))?;
 
         if !download_response.status().is_success() {
             return Err(ErrorResponse::service_unavailable(format!(
@@ -1230,18 +1326,65 @@ pub async fn install_marketplace_extension_handler(
                 .map_err(ErrorResponse::internal)?;
         let _guard = AutoRemove(tmp_path.clone());
 
-        // Verify SHA256 if provided — hash the temp file in a streaming fashion.
-        if !build.sha256.is_empty() {
+        // Enforce NEOMIND_STRICT_PACKAGE_SHA256 on legacy binary downloads too.
+        let mut expected_sha256 = if build.sha256.is_empty() {
+            None
+        } else {
+            Some(build.sha256.clone())
+        };
+        if expected_sha256.is_none() {
+            let filename = build.url.rsplit('/').next().unwrap_or("");
+            if let Some(sha) = fetch_release_checksum(&build.url, filename).await {
+                tracing::info!(
+                    extension_id = %req.id,
+                    "Legacy binary SHA256 sourced from release checksums.txt"
+                );
+                expected_sha256 = Some(sha);
+            }
+        }
+        if expected_sha256.is_none() {
+            let strict = std::env::var("NEOMIND_STRICT_PACKAGE_SHA256")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false);
+            if strict {
+                return Err(ErrorResponse::bad_request(
+                    "Marketplace build metadata carries no sha256 and NEOMIND_STRICT_PACKAGE_SHA256 is enabled — refusing to install an unverified binary",
+                )
+                .with_hint("Unset NEOMIND_STRICT_PACKAGE_SHA256 or publish a release checksum."));
+            }
+            tracing::warn!(
+                extension_id = %req.id,
+                url = %build.url,
+                "Marketplace build metadata carries no sha256 — integrity check skipped (set NEOMIND_STRICT_PACKAGE_SHA256=1 to refuse unverified binaries)"
+            );
+        }
+
+        // Verify SHA256 when provided — hash the temp file in a streaming fashion.
+        if let Some(ref expected) = expected_sha256 {
             let checksum = compute_sha256_of_file(&tmp_path).map_err(|e| {
                 ErrorResponse::internal(format!("Failed to hash downloaded file: {}", e))
             })?;
-            if checksum != build.sha256 {
+            if checksum != *expected {
                 return Err(ErrorResponse::bad_request(format!(
                     "Checksum verification failed for '{}': expected {}, got {}",
-                    req.id, build.sha256, checksum
+                    req.id, expected, checksum
                 ))
                 .with_hint("Retry the download; if mismatch persists, report a corrupted marketplace artifact."));
             }
+        }
+
+        // Unload any currently running instance BEFORE overwriting binary on disk.
+        if runtime.contains(&req.id).await {
+            tracing::info!(
+                "Extension {} already registered, unloading before legacy binary install",
+                req.id
+            );
+            runtime.unregister(&req.id).await.map_err(|e| {
+                ErrorResponse::internal(format!(
+                    "Failed to unregister existing extension '{}': {}",
+                    req.id, e
+                ))
+            })?;
         }
 
         // Determine file extension based on platform
@@ -1356,40 +1499,31 @@ pub async fn check_marketplace_updates_handler(
             ext_id
         );
 
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(5))
-            .build();
-
-        if let Ok(client) = client {
-            if let Ok(response) = client
-                .get(&metadata_url)
-                .header("User-Agent", "NeoMind-Extension-Marketplace")
-                .send()
-                .await
-            {
-                if response.status().is_success() {
-                    if let Ok(metadata) = response.json::<MarketplaceExtensionMetadata>().await {
-                        // Semver comparison, and only upgrades count. The old
-                        // string `!=` flagged downgrades and build-suffix
-                        // mismatches as "updates" — combined with extensions
-                        // that hardcoded their version, some entries showed a
-                        // permanent false "update available".
-                        let newer = matches!(
-                            (
-                                metadata.version.parse::<semver::Version>(),
-                                ext_info.metadata.version.parse::<semver::Version>(),
-                            ),
-                            (Ok(new), Ok(cur)) if new > cur
-                        );
-                        if newer {
-                            updates.push(serde_json::json!({
-                                "id": ext_id,
-                                "name": ext_info.metadata.name,
-                                "current_version": ext_info.metadata.version.to_string(),
-                                "latest_version": metadata.version,
-                                "categories": metadata.categories,
-                            }));
-                        }
+        if let Ok(response) =
+            validated_get(&metadata_url, std::time::Duration::from_secs(5), &[]).await
+        {
+            if response.status().is_success() {
+                if let Ok(metadata) = response.json::<MarketplaceExtensionMetadata>().await {
+                    // Semver comparison, and only upgrades count. The old
+                    // string `!=` flagged downgrades and build-suffix
+                    // mismatches as "updates" — combined with extensions
+                    // that hardcoded their version, some entries showed a
+                    // permanent false "update available".
+                    let newer = matches!(
+                        (
+                            metadata.version.parse::<semver::Version>(),
+                            ext_info.metadata.version.parse::<semver::Version>(),
+                        ),
+                        (Ok(new), Ok(cur)) if new > cur
+                    );
+                    if newer {
+                        updates.push(serde_json::json!({
+                            "id": ext_id,
+                            "name": ext_info.metadata.name,
+                            "current_version": ext_info.metadata.version.to_string(),
+                            "latest_version": metadata.version,
+                            "categories": metadata.categories,
+                        }));
                     }
                 }
             }

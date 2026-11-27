@@ -25,12 +25,10 @@
     "core:app:allow-name",
     "core:app:allow-version",
     "core:webview:allow-print",
-    "core:webview:allow-internal-toggle-devtools",
     "core:webview:allow-create-webview",
     "core:webview:allow-create-webview-window",
     "process:allow-exit",
     "process:allow-restart",
-    "shell:allow-open",
     "notification:default",
     "notification:allow-is-permission-granted",
     "blec:default"

@@ -457,6 +457,17 @@ fn attach_device_shell_example(proj: &mut serde_json::Value, device_id: &str, cm
     }
 }
 
+/// Validate a single path segment used when materializing image data URLs.
+/// Strictly allows `[A-Za-z0-9._-]`, non-empty, no `..`, and no leading `.`.
+fn is_safe_image_path_segment(segment: &str) -> bool {
+    !segment.is_empty()
+        && !segment.starts_with('.')
+        && !segment.contains("..")
+        && segment
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+}
+
 /// If `s` is a `data:image/...;base64,...` data URL, save the decoded bytes
 /// to `data/images/{device_id}/{metric_name}/{timestamp}.{ext}` and return the
 /// `/api/images/...` URL. Returns `None` for non-data-URL values or if the
@@ -468,6 +479,14 @@ fn attach_device_shell_example(proj: &mut serde_json::Value, device_id: &str, cm
 fn materialize_data_url(s: &str, device_id: &str, metric_name: &str) -> Option<String> {
     // Only handle data URLs
     if !s.starts_with("data:") {
+        return None;
+    }
+    if !is_safe_image_path_segment(device_id) || !is_safe_image_path_segment(metric_name) {
+        tracing::warn!(
+            device_id = device_id,
+            metric = metric_name,
+            "Rejected unsafe device_id or metric_name in materialize_data_url"
+        );
         return None;
     }
     // Parse "data:image/jpeg;base64,/9j/..."
@@ -509,15 +528,29 @@ fn materialize_data_url(s: &str, device_id: &str, metric_name: &str) -> Option<S
     // Resolve data_dir from env (set by the server/dispatch context)
     let data_dir = crate::auto_auth::data_dir_for_paths();
     let images_dir = std::path::Path::new(&data_dir).join("images");
+    if std::fs::create_dir_all(&images_dir).is_err() {
+        return None;
+    }
+    let canon_images = std::fs::canonicalize(&images_dir).ok()?;
+
     // Create device/metric subdirectory to match the URL structure:
     // /api/images/{device_id}/{metric_name}/{filename}
     let metric_dir = images_dir.join(device_id).join(metric_name);
     if std::fs::create_dir_all(&metric_dir).is_err() {
         return None;
     }
+    let canon_metric = std::fs::canonicalize(&metric_dir).ok()?;
+    if !canon_metric.starts_with(&canon_images) {
+        tracing::warn!(
+            device_id = device_id,
+            metric = metric_name,
+            "Rejected materialized image path escaping images_dir"
+        );
+        return None;
+    }
 
     let filename = format!("{}.{}", hash, ext);
-    let filepath = metric_dir.join(&filename);
+    let filepath = canon_metric.join(&filename);
 
     // Dedup: skip write if file already exists with same content hash
     if !filepath.exists() && std::fs::write(&filepath, &bytes).is_err() {
@@ -2168,5 +2201,62 @@ mod tests {
             out.suggestion
         );
         server.await.unwrap();
+    }
+
+    #[serial_test::serial]
+    #[test]
+    fn materialize_data_url_rejects_path_traversal_and_allows_safe_segments() {
+        let _lock = crate::auto_auth::DATA_DIR_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var_os("NEOMIND_DATA_DIR");
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var("NEOMIND_DATA_DIR", tmp.path());
+
+        let data_url = "data:image/png;base64,iVBORw0KGgo=";
+
+        // Traversal / unsafe device_id and metric_name must be rejected
+        for (bad_dev, bad_metric) in [
+            ("../escape", "image"),
+            ("cam-01", "../../etc"),
+            ("a/b", "image"),
+            ("cam-01", "a\\b"),
+            (".hidden", "image"),
+            ("cam-01", ".hidden"),
+            ("foo..bar", "image"),
+            ("cam-01", "foo..bar"),
+            ("", "image"),
+            ("cam-01", ""),
+            ("cam:01", "image"),
+        ] {
+            assert!(
+                materialize_data_url(data_url, bad_dev, bad_metric).is_none(),
+                "expected traversal/unsafe ({bad_dev:?}, {bad_metric:?}) to return None"
+            );
+        }
+
+        // Valid device_id and metric_name materialize inside images_dir
+        let url = materialize_data_url(data_url, "cam-01", "values.image")
+            .expect("valid data URL should materialize");
+        assert!(url.starts_with("/api/images/cam-01/values.image/"));
+        assert!(url.ends_with(".png"));
+
+        let filename = url.rsplit('/').next().unwrap();
+        let expected_path = tmp
+            .path()
+            .join("images")
+            .join("cam-01")
+            .join("values.image")
+            .join(filename);
+        assert!(
+            expected_path.exists(),
+            "materialized file should exist inside images_dir: {}",
+            expected_path.display()
+        );
+
+        match prev {
+            Some(v) => std::env::set_var("NEOMIND_DATA_DIR", v),
+            None => std::env::remove_var("NEOMIND_DATA_DIR"),
+        }
     }
 }

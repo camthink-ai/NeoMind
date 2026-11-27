@@ -11,7 +11,7 @@ edition = "2021"
 tauri-build = { version = "2.5", features = [] }
 
 [dependencies]
-tauri = { version = "2.10", features = ["tray-icon", "devtools", "image-png"] }
+tauri = { version = "2.10", features = ["tray-icon", "image-png"] }
 tauri-plugin-shell = "2"
 tauri-plugin-process = "2"
 tauri-plugin-single-instance = "2"
@@ -43,4 +43,5 @@ leaky-bucket = "=1.1.2"
 # This feature is used for production builds or when a dev server is not specified, DO NOT REMOVE!!
 custom-protocol = ["tauri/custom-protocol"]
 default = ["embedded-broker"]
+devtools = ["tauri/devtools"]
 embedded-broker = []

@@ -223,10 +223,16 @@ pub async fn get_app_version(_app: AppHandle) -> Result<String, String> {
 
 /// Restart the application
 ///
-/// Uses `request_restart()` which schedules a restart after the current
-/// event loop tick completes, giving the app a chance to clean up gracefully.
+/// Triggers graceful shutdown of the embedded server (flushing telemetry,
+/// stopping extensions, DataPush, IM bridges, device adapters, and llama-server)
+/// before calling `request_restart()`.
 #[tauri::command]
 pub async fn relaunch_app(app: AppHandle) {
+    let app_for_shutdown = app.clone();
+    let _ = tokio::task::spawn_blocking(move || {
+        crate::clean_shutdown(&app_for_shutdown);
+    })
+    .await;
     app.request_restart();
 }
 

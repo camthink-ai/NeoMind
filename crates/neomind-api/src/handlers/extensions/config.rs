@@ -111,6 +111,100 @@ pub async fn set_extension_ai_enabled_handler(
     ok(json!({ "id": id, "ai_enabled": req.ai_enabled }))
 }
 
+/// Mask placeholder returned for secret extension config values.
+const SECRET_CONFIG_MASK: &str = "*****";
+
+/// Determine whether a config key should be treated as secret based on its name
+/// or parameter metadata.
+fn is_secret_config_key(key: &str, parameters: Option<&[ParameterDefinition]>) -> bool {
+    let lower = key.to_ascii_lowercase();
+    if lower.contains("password")
+        || lower.contains("api_key")
+        || lower.contains("apikey")
+        || lower.contains("token")
+        || lower.contains("secret")
+        || lower.contains("private_key")
+    {
+        return true;
+    }
+    if let Some(params) = parameters {
+        if let Some(param) = params.iter().find(|p| p.name == key) {
+            let desc_lower = param.description.to_ascii_lowercase();
+            let display_lower = param.display_name.to_ascii_lowercase();
+            if desc_lower.contains("secret")
+                || display_lower.contains("secret")
+                || display_lower.contains("password")
+                || display_lower.contains("api key")
+                || display_lower.contains("token")
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Recursively mask secret fields in a config JSON value for API responses.
+fn mask_secret_config(
+    value: &serde_json::Value,
+    parameters: Option<&[ParameterDefinition]>,
+) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => {
+            let mut out = serde_json::Map::with_capacity(map.len());
+            for (k, v) in map {
+                let masked = if is_secret_config_key(k, parameters) {
+                    match v {
+                        serde_json::Value::Null => serde_json::Value::Null,
+                        serde_json::Value::String(s) if s.is_empty() => {
+                            serde_json::Value::String(String::new())
+                        }
+                        serde_json::Value::Object(_) => mask_secret_config(v, None),
+                        _ => serde_json::Value::String(SECRET_CONFIG_MASK.to_string()),
+                    }
+                } else {
+                    mask_secret_config(v, None)
+                };
+                out.insert(k.clone(), masked);
+            }
+            serde_json::Value::Object(out)
+        }
+        serde_json::Value::Array(arr) => serde_json::Value::Array(
+            arr.iter()
+                .map(|item| mask_secret_config(item, None))
+                .collect(),
+        ),
+        _ => value.clone(),
+    }
+}
+
+/// Recursively restore masked (`"*****"`) fields from the existing persisted config
+/// before validating, saving, or applying an extension config update.
+fn restore_masked_secrets(
+    incoming: &serde_json::Value,
+    existing: Option<&serde_json::Value>,
+) -> serde_json::Value {
+    match incoming {
+        serde_json::Value::Object(inc_map) => {
+            let existing_map = existing.and_then(|e| e.as_object());
+            let mut out = serde_json::Map::with_capacity(inc_map.len());
+            for (k, v) in inc_map {
+                let existing_val = existing_map.and_then(|m| m.get(k));
+                let resolved = if v.as_str() == Some(SECRET_CONFIG_MASK) {
+                    existing_val.cloned().unwrap_or_else(|| v.clone())
+                } else if v.is_object() {
+                    restore_masked_secrets(v, existing_val)
+                } else {
+                    v.clone()
+                };
+                out.insert(k.clone(), resolved);
+            }
+            serde_json::Value::Object(out)
+        }
+        _ => incoming.clone(),
+    }
+}
+
 /// GET /api/extensions/:id/config
 ///
 /// Get the configuration schema and current values for an extension.
@@ -148,18 +242,23 @@ pub async fn get_extension_config_handler(
         .and_then(|r| r.config);
 
     // Build config schema from extension metadata
-    let config_schema = if let Some(config_params) = &ext_info.metadata.config_parameters {
+    let config_params = ext_info.metadata.config_parameters.as_deref();
+    let config_schema = if let Some(config_params) = config_params {
         build_config_schema_dto(config_params)
     } else {
         // No config parameters defined
         json!({"type": "object", "properties": {}})
     };
 
+    let masked_config = current_config
+        .map(|cfg| mask_secret_config(&cfg, config_params))
+        .unwrap_or_else(|| json!({}));
+
     ok(json!({
         "extension_id": id,
         "extension_name": ext_info.metadata.name,
         "config_schema": config_schema,
-        "current_config": current_config.unwrap_or_else(|| json!({})),
+        "current_config": masked_config,
     }))
 }
 
@@ -195,17 +294,24 @@ pub async fn update_extension_config_handler(
         .await
         .ok_or_else(|| ErrorResponse::not_found(format!("Extension {}", id)))?;
 
-    // Validate config against schema if present
-    if let Some(config_params) = &ext_info.metadata.config_parameters {
-        validate_config(&config, config_params)
+    // Load existing persisted config so unchanged masked ("*****") secret fields
+    // preserve their stored values instead of overwriting them with the mask.
+    let store = state.extensions.store.clone();
+    let existing_record = store.load(&id).ok().flatten();
+    let existing_config = existing_record.as_ref().and_then(|r| r.config.as_ref());
+    let resolved_config = restore_masked_secrets(&config, existing_config);
+
+    // Validate resolved config against schema if present
+    let config_params = ext_info.metadata.config_parameters.as_deref();
+    if let Some(config_params) = config_params {
+        validate_config(&resolved_config, config_params)
             .map_err(|e| ErrorResponse::bad_request(format!("Invalid config: {}", e)))?;
     }
 
-    // Save config to storage
-    let store = state.extensions.store.clone();
+    // Save resolved config to storage
     {
-        if let Ok(Some(mut record)) = store.load(&id) {
-            record.config = Some(config.clone());
+        if let Some(mut record) = existing_record {
+            record.config = Some(resolved_config.clone());
             store.save(&record)?;
         } else {
             // Create new record with config
@@ -221,7 +327,7 @@ pub async fn update_extension_config_handler(
                 "native".to_string(),
                 ext_info.metadata.version.to_string(),
             )
-            .with_config(config.clone());
+            .with_config(resolved_config.clone());
             store.save(&new_record)?;
         }
     }
@@ -230,7 +336,7 @@ pub async fn update_extension_config_handler(
     let hot_reload_result = state
         .extensions
         .runtime
-        .send_config_update(&id, &config)
+        .send_config_update(&id, &resolved_config)
         .await;
 
     let message = match &hot_reload_result {
@@ -247,7 +353,7 @@ pub async fn update_extension_config_handler(
 
     ok(json!({
         "extension_id": id,
-        "config": config,
+        "config": mask_secret_config(&resolved_config, config_params),
         "hot_reloaded": hot_reload_result.is_ok(),
         "message": message,
     }))
@@ -539,4 +645,68 @@ pub enum ComponentCategory {
     Media,
     Custom,
     Other,
+}
+
+#[cfg(test)]
+mod config_secret_masking_tests {
+    use super::*;
+
+    #[test]
+    fn masks_secret_fields_and_preserves_non_secret_fields() {
+        let cfg = json!({
+            "host": "example.com",
+            "port": 8080,
+            "api_key": "sk-real-key-123",
+            "apiKey": "key-456",
+            "db_password": "hunter2",
+            "auth_token": "tok-abc",
+            "webhook_secret": "sec-xyz",
+            "private_key": "-----BEGIN KEY-----",
+            "empty_secret": "",
+            "nested": {
+                "client_secret": "nested-secret",
+                "region": "us-east-1"
+            }
+        });
+
+        let masked = mask_secret_config(&cfg, None);
+        assert_eq!(masked["host"], "example.com");
+        assert_eq!(masked["port"], 8080);
+        assert_eq!(masked["api_key"], SECRET_CONFIG_MASK);
+        assert_eq!(masked["apiKey"], SECRET_CONFIG_MASK);
+        assert_eq!(masked["db_password"], SECRET_CONFIG_MASK);
+        assert_eq!(masked["auth_token"], SECRET_CONFIG_MASK);
+        assert_eq!(masked["webhook_secret"], SECRET_CONFIG_MASK);
+        assert_eq!(masked["private_key"], SECRET_CONFIG_MASK);
+        assert_eq!(masked["empty_secret"], "");
+        assert_eq!(masked["nested"]["client_secret"], SECRET_CONFIG_MASK);
+        assert_eq!(masked["nested"]["region"], "us-east-1");
+    }
+
+    #[test]
+    fn restores_masked_values_from_existing_config_on_put() {
+        let existing = json!({
+            "host": "old.example.com",
+            "api_key": "sk-real-key-123",
+            "password": "original-password",
+            "nested": {
+                "token": "nested-tok"
+            }
+        });
+
+        let incoming = json!({
+            "host": "new.example.com",
+            "api_key": "*****",
+            "password": "updated-password",
+            "nested": {
+                "token": "*****"
+            }
+        });
+
+        let restored = restore_masked_secrets(&incoming, Some(&existing));
+        assert_eq!(restored["host"], "new.example.com");
+        assert_eq!(restored["api_key"], "sk-real-key-123");
+        assert_eq!(restored["password"], "updated-password");
+        assert_eq!(restored["nested"]["token"], "nested-tok");
+    }
 }

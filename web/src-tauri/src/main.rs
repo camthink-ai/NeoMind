@@ -6,7 +6,7 @@ mod update;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 
 use tauri::tray::TrayIconEvent;
 use tauri::{image::Image, AppHandle, Emitter, Listener, Manager};
@@ -17,17 +17,80 @@ use tracing::info;
 struct ServerState {
     runtime: Arc<Mutex<Option<Runtime>>>,
     server_thread: Arc<Mutex<Option<std::thread::JoinHandle<()>>>>,
+    shutdown_handle: edge_api::ShutdownHandle,
+    /// Signalled when the server thread finishes graceful shutdown (or exits).
+    done: Arc<(Mutex<bool>, Condvar)>,
 }
 
-impl ServerState {}
+impl ServerState {
+    /// Trigger graceful server shutdown and wait up to 8 seconds for cleanup
+    /// (telemetry flush, extensions, DataPush, IM bridges, device adapters,
+    /// and llama-server) to complete. Idempotent.
+    fn shutdown(&self) {
+        self.shutdown_handle.trigger();
+
+        let has_thread = self
+            .server_thread
+            .lock()
+            .map(|g| g.is_some())
+            .unwrap_or(false);
+
+        if has_thread {
+            let (lock, cvar) = &*self.done;
+            let timeout = std::time::Duration::from_secs(8);
+            let deadline = std::time::Instant::now() + timeout;
+            if let Ok(mut finished) = lock.lock() {
+                while !*finished {
+                    let Some(remaining) =
+                        deadline.checked_duration_since(std::time::Instant::now())
+                    else {
+                        tracing::warn!(
+                            timeout_secs = timeout.as_secs(),
+                            "Timed out waiting for embedded server graceful shutdown"
+                        );
+                        break;
+                    };
+                    match cvar.wait_timeout(finished, remaining) {
+                        Ok((guard, wait_res)) => {
+                            finished = guard;
+                            if wait_res.timed_out() && !*finished {
+                                tracing::warn!(
+                                    timeout_secs = timeout.as_secs(),
+                                    "Timed out waiting for embedded server graceful shutdown"
+                                );
+                                break;
+                            }
+                        }
+                        Err(poisoned) => {
+                            finished = poisoned.into_inner().0;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            let is_finished = lock.lock().map(|g| *g).unwrap_or(false);
+            if is_finished {
+                if let Ok(mut guard) = self.server_thread.lock() {
+                    if let Some(handle) = guard.take() {
+                        let _ = handle.join();
+                    }
+                }
+            }
+        }
+
+        // Safety net if the runtime was never moved into the server thread.
+        if let Ok(mut guard) = self.runtime.lock() {
+            if let Some(rt) = guard.take() {
+                rt.shutdown_timeout(std::time::Duration::from_secs(2));
+            }
+        }
+    }
+}
 
 impl Drop for ServerState {
     fn drop(&mut self) {
-        if let Ok(mut guard) = self.runtime.lock() {
-            if let Some(rt) = guard.take() {
-                rt.shutdown_background();
-            }
-        }
+        self.shutdown();
     }
 }
 
@@ -154,25 +217,19 @@ fn show_main_window(app: &AppHandle) {
     }
 }
 
-/// Properly shutdown the server before exiting
-fn clean_shutdown(app_handle: &AppHandle) {
-    // Stop the embedded llama-server children BEFORE tearing the runtime
-    // down: the embedded server runs on this runtime (never through the
-    // standalone serve shutdown path), and kill_on_drop alone would leave
-    // the process alive until app exit — force-quit paths could still leak
-    // a ~2 GB model process. Explicit, immediate, idempotent.
-    edge_api::builtin_llm::server::stop_all_llama_servers();
-
-    // Try to get server state and shutdown
+/// Properly shutdown the server before exiting or restarting.
+///
+/// Triggers the embedded server's graceful shutdown token and waits up to 8s
+/// for `cleanup_resources()` (telemetry flush, extensions, DataPush, IM
+/// bridges, device adapters, and llama-server) to complete. Idempotent.
+pub(crate) fn clean_shutdown(app_handle: &AppHandle) {
     if let Some(state) = app_handle.try_state::<ServerState>() {
-        // Shutdown the tokio runtime
-        if let Ok(mut guard) = state.runtime.lock() {
-            if let Some(rt) = guard.take() {
-                rt.shutdown_timeout(tokio::time::Duration::from_secs(2));
-            }
-        }
-        // The server thread will be joined when ServerState is dropped
+        state.shutdown();
     }
+
+    // Safety net: ensure embedded llama-server children are stopped even if
+    // graceful shutdown timed out or ServerState was unavailable. Idempotent.
+    edge_api::builtin_llm::server::stop_all_llama_servers();
 }
 
 /// Create and set up the system tray menu
@@ -284,9 +341,11 @@ fn start_axum_server(
     // Startup cleanup of old log files
     cleanup_old_logs(&log_dir);
 
-    // Clone the Arc before moving into the closure
+    // Clone the Arcs and shutdown handle before moving into the closure
     let runtime_arc = Arc::clone(&state.runtime);
     let server_thread = Arc::clone(&state.server_thread);
+    let shutdown_handle = state.shutdown_handle.clone();
+    let done = Arc::clone(&state.done);
     // Clone the AppHandle so the server thread can emit a "backend-start-failed"
     // event if start_server() errors (e.g. port 9375 already in use). Without
     // this the failure is only eprintln'd to stderr, the Tauri window stays open
@@ -295,6 +354,18 @@ fn start_axum_server(
     let app_handle_for_errors = app_handle.clone();
 
     let thread_handle = std::thread::spawn(move || {
+        struct DoneGuard(Arc<(Mutex<bool>, Condvar)>);
+        impl Drop for DoneGuard {
+            fn drop(&mut self) {
+                let (lock, cvar) = &*self.0;
+                if let Ok(mut finished) = lock.lock() {
+                    *finished = true;
+                }
+                cvar.notify_all();
+            }
+        }
+        let _done_guard = DoneGuard(done);
+
         let rt = match runtime_arc.lock() {
             Ok(mut guard) => guard.take(),
             Err(_) => {
@@ -309,7 +380,7 @@ fn start_axum_server(
         };
 
         rt.block_on(async move {
-            if let Err(e) = edge_api::start_server().await {
+            if let Err(e) = edge_api::start_server_with_shutdown(shutdown_handle).await {
                 let err_str = e.to_string();
                 eprintln!("Failed to start server: {}", err_str);
                 // Surface the failure to the frontend so the user sees a clear
@@ -326,6 +397,10 @@ fn start_axum_server(
                 );
             }
         });
+
+        // Bound runtime teardown so stray blocking tasks cannot hang exit after
+        // start_server_with_shutdown() has already completed cleanup_resources().
+        rt.shutdown_timeout(std::time::Duration::from_secs(2));
     });
 
     if let Ok(mut guard) = server_thread.lock() {
@@ -348,6 +423,8 @@ pub fn run() {
     let server_state = ServerState {
         runtime: Arc::new(Mutex::new(Some(rt))),
         server_thread: Arc::new(Mutex::new(None)),
+        shutdown_handle: edge_api::new_shutdown_handle(),
+        done: Arc::new((Mutex::new(false), Condvar::new())),
     };
 
     let builder = tauri::Builder::default()

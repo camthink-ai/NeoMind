@@ -1104,7 +1104,7 @@ impl MarkdownMemoryStore {
             return Ok(0);
         }
 
-        let ttl_duration = Duration::days(ttl_days as i64);
+        let ttl_duration = Duration::days((ttl_days.min(3650)) as i64);
         let now = Utc::now();
         let mut deleted_count = 0;
 
@@ -1154,7 +1154,9 @@ impl MarkdownMemoryStore {
                 "session_id must be 1-128 characters".to_string(),
             ));
         }
-        if session_id.contains('\0')
+        if session_id == "."
+            || session_id.starts_with('.')
+            || session_id.contains('\0')
             || session_id.contains("..")
             || session_id.contains('/')
             || session_id.contains('\\')
@@ -1196,7 +1198,9 @@ impl MarkdownMemoryStore {
                 "agent_id must be 1-128 characters".to_string(),
             ));
         }
-        if agent_id.contains('\0')
+        if agent_id == "."
+            || agent_id.starts_with('.')
+            || agent_id.contains('\0')
             || agent_id.contains("..")
             || agent_id.contains('/')
             || agent_id.contains('\\')
@@ -1511,6 +1515,12 @@ impl MarkdownMemoryStore {
     #[allow(deprecated)]
     pub fn write_category(&self, category: &MemoryCategory, content: &str) -> Result<()> {
         warn!(?category, "write_category called (deprecated)");
+        if content.chars().count() > crate::memory_config::MAX_PERSISTENT_CHAR_LIMIT {
+            return Err(Error::InvalidInput(format!(
+                "Category content exceeds {} char limit",
+                crate::memory_config::MAX_PERSISTENT_CHAR_LIMIT
+            )));
+        }
         let path = self.category_path(category);
 
         if let Some(parent) = path.parent() {
@@ -2067,6 +2077,12 @@ impl MarkdownMemoryStore {
     #[deprecated(note = "Legacy API - not recommended for new code")]
     pub fn write_raw_markdown(&self, source_type: &str, id: &str, content: &str) -> Result<()> {
         warn!(source_type, id, "write_raw_markdown called (deprecated)");
+        if content.chars().count() > crate::memory_config::MAX_PERSISTENT_CHAR_LIMIT {
+            return Err(Error::InvalidInput(format!(
+                "Memory content exceeds {} char limit",
+                crate::memory_config::MAX_PERSISTENT_CHAR_LIMIT
+            )));
+        }
         let path = match source_type {
             "agent" => {
                 Self::validate_agent_id(id)?;
@@ -3642,4 +3658,29 @@ fn lock_key_stable_across_directory_creation() {
         Arc::ptr_eq(&pre.write_lock, &post.write_lock),
         "pre-init and post-init instances must share one lock"
     );
+}
+
+#[test]
+fn validate_ids_reject_dot_and_leading_dot() {
+    for bad in [".", "..", ".hidden", ".env", "a/b", "a\\b", "a\0b", ""] {
+        assert!(
+            MarkdownMemoryStore::validate_agent_id(bad).is_err(),
+            "agent_id must reject {bad:?}"
+        );
+        assert!(
+            MarkdownMemoryStore::validate_session_id(bad).is_err(),
+            "session_id must reject {bad:?}"
+        );
+    }
+    assert!(MarkdownMemoryStore::validate_agent_id("agent-123_ok").is_ok());
+    assert!(MarkdownMemoryStore::validate_session_id("sess-123_ok").is_ok());
+}
+
+#[tokio::test]
+async fn cleanup_old_sessions_clamps_huge_ttl_without_panic() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = MarkdownMemoryStore::new(temp.path());
+    store.init().unwrap();
+    let deleted = store.cleanup_old_sessions(u64::MAX).await.unwrap();
+    assert_eq!(deleted, 0);
 }

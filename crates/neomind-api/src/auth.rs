@@ -307,7 +307,17 @@ impl AuthState {
         };
 
         let hash = crypto.hash_api_key(&key);
-        let encrypted = crypto.encrypt_str(&key).unwrap_or_else(|_| key.clone());
+        let encrypted = match crypto.encrypt_str(&key) {
+            Ok(enc) => enc,
+            Err(e) => {
+                error!(
+                    category = "auth",
+                    error = %e,
+                    "Failed to encrypt generated default API key — refusing to persist plaintext"
+                );
+                return HashMap::new();
+            }
+        };
 
         let mut keys = HashMap::new();
         keys.insert(hash.clone(), (encrypted, info.clone()));
@@ -332,7 +342,17 @@ impl AuthState {
         };
 
         let hash = crypto.hash_api_key(&key);
-        let encrypted = crypto.encrypt_str(&key).unwrap_or_else(|_| key.clone());
+        let encrypted = match crypto.encrypt_str(&key) {
+            Ok(enc) => enc,
+            Err(e) => {
+                error!(
+                    category = "auth",
+                    error = %e,
+                    "Failed to encrypt generated default API key — refusing to persist plaintext"
+                );
+                return HashMap::new();
+            }
+        };
 
         let mut keys = HashMap::new();
         keys.insert(hash, (encrypted, info));
@@ -354,14 +374,22 @@ impl AuthState {
                 active: true,
             };
             let hash = crypto.hash_api_key(&default_key);
-            let encrypted = crypto
-                .encrypt_str(&default_key)
-                .unwrap_or_else(|_| default_key.clone());
-            keys.insert(hash, (encrypted, info));
-            info!(
-                category = "auth",
-                "Loaded default API key from NEOMIND_API_KEY"
-            );
+            match crypto.encrypt_str(&default_key) {
+                Ok(encrypted) => {
+                    keys.insert(hash, (encrypted, info));
+                    info!(
+                        category = "auth",
+                        "Loaded default API key from NEOMIND_API_KEY"
+                    );
+                }
+                Err(e) => {
+                    error!(
+                        category = "auth",
+                        error = %e,
+                        "Failed to encrypt NEOMIND_API_KEY — refusing to persist plaintext"
+                    );
+                }
+            }
         }
 
         keys
@@ -455,8 +483,15 @@ impl AuthState {
             .collect()
     }
 
-    /// Create a new API key and persist to database.
-    pub async fn create_key(&self, name: String, permissions: Vec<String>) -> (String, ApiKeyInfo) {
+    /// Create a new API key and persist it encrypted to the database.
+    ///
+    /// Fails closed with `Err(CryptoError)` if encryption fails so keys are
+    /// never silently persisted in plaintext.
+    pub async fn try_create_key(
+        &self,
+        name: String,
+        permissions: Vec<String>,
+    ) -> Result<(String, ApiKeyInfo), crate::crypto::CryptoError> {
         let key = format!("nmk_{}", Uuid::new_v4().to_string().replace("-", ""));
         let info = ApiKeyInfo {
             id: Uuid::new_v4().to_string(),
@@ -467,10 +502,15 @@ impl AuthState {
         };
 
         let hash = self.crypto.hash_api_key(&key);
-        let encrypted = self
-            .crypto
-            .encrypt_str(&key)
-            .unwrap_or_else(|_| key.clone());
+        let encrypted = self.crypto.encrypt_str(&key).map_err(|e| {
+            error!(
+                category = "auth",
+                key_id = %info.id,
+                error = %e,
+                "Failed to encrypt new API key — refusing to persist plaintext"
+            );
+            e
+        })?;
 
         // DashMap insert is lock-free
         self.api_keys
@@ -481,7 +521,17 @@ impl AuthState {
             warn!(category = "auth", error = %e, "Failed to save API key to database");
         }
 
-        (key, info)
+        Ok((key, info))
+    }
+
+    /// Create a new API key and persist to database.
+    ///
+    /// Fails closed if encryption fails rather than silently persisting plaintext.
+    /// Prefer [`Self::try_create_key`] when explicit error handling is desired.
+    pub async fn create_key(&self, name: String, permissions: Vec<String>) -> (String, ApiKeyInfo) {
+        self.try_create_key(name, permissions)
+            .await
+            .expect("API key encryption failed; refusing to persist plaintext")
     }
 
     /// Boot-time bootstrap: ensure at least one ACTIVE wildcard API key
@@ -502,15 +552,27 @@ impl AuthState {
         if has_wildcard {
             return false;
         }
-        let (_, info) = self
-            .create_key("internal-agent".to_string(), vec!["*".to_string()])
-            .await;
-        tracing::info!(
-            key_id = %info.id,
-            "Provisioned internal-agent API key (wildcard) — the chat agent's \
-             platform commands now authenticate out of the box"
-        );
-        true
+        match self
+            .try_create_key("internal-agent".to_string(), vec!["*".to_string()])
+            .await
+        {
+            Ok((_, info)) => {
+                tracing::info!(
+                    key_id = %info.id,
+                    "Provisioned internal-agent API key (wildcard) — the chat agent's \
+                     platform commands now authenticate out of the box"
+                );
+                true
+            }
+            Err(e) => {
+                error!(
+                    category = "auth",
+                    error = %e,
+                    "Failed to provision internal-agent API key (encryption failed)"
+                );
+                false
+            }
+        }
     }
 
     /// Delete an API key and persist to database.

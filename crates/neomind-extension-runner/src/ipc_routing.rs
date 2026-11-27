@@ -4,16 +4,17 @@
 //! 1. Pending capability requests (via PENDING_REQUESTS)
 //! 2. Main event queue (via EVENT_TX)
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::panic::UnwindSafe;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use dashmap::DashMap;
 use serde_json::json;
 use tracing::{debug, error, trace, warn};
 
-use neomind_extension_sdk::{IpcMessage, IpcResponse};
+use neomind_extension_sdk::{IpcFrame, IpcMessage, IpcResponse};
 
 type ResponseSender = Sender<IpcResponse>;
 
@@ -28,6 +29,216 @@ static EVENT_TX: std::sync::OnceLock<tokio::sync::mpsc::Sender<IpcMessage>> =
 /// Global mutex for stdout writes — prevents interleaved frames from
 /// `send_response()` and the push-output callback running concurrently.
 pub(crate) static STDOUT_WRITE_MUTEX: Mutex<()> = Mutex::new(());
+
+/// Private IPC output file duplicated from FD 1 before redirecting FD 1 -> FD 2
+/// on Unix. All IPC frames are written here instead of raw `std::io::stdout()`.
+#[cfg(unix)]
+static IPC_STDOUT: std::sync::OnceLock<Mutex<std::fs::File>> = std::sync::OnceLock::new();
+
+/// Shutdown flag + async notify used when stdin hits EOF or fatal read error.
+static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
+static SHUTDOWN_NOTIFY: std::sync::OnceLock<tokio::sync::Notify> = std::sync::OnceLock::new();
+
+/// Consecutive and currently active hung FFI worker threads.
+static CONSECUTIVE_HUNG_FFI_THREADS: AtomicUsize = AtomicUsize::new(0);
+static ACTIVE_HUNG_FFI_THREADS: AtomicUsize = AtomicUsize::new(0);
+
+/// Duplicate FD 1 into a private `File` stored in `IPC_STDOUT`, then redirect
+/// FD 1 to FD 2 (`stderr`) so stray `printf`/`println!` calls from native
+/// extensions or third-party libraries (ONNX, OpenCV, FFmpeg) never corrupt
+/// 4-byte length-prefixed binary IPC frames.
+pub(crate) fn init_ipc_stdout() {
+    #[cfg(unix)]
+    {
+        use std::os::unix::io::FromRawFd;
+        let ipc_fd = unsafe { libc::dup(libc::STDOUT_FILENO) };
+        if ipc_fd >= 0 {
+            unsafe {
+                let _ = libc::fcntl(ipc_fd, libc::F_SETFD, libc::FD_CLOEXEC);
+                if libc::dup2(libc::STDERR_FILENO, libc::STDOUT_FILENO) >= 0 {
+                    let file = std::fs::File::from_raw_fd(ipc_fd);
+                    let _ = IPC_STDOUT.set(Mutex::new(file));
+                } else {
+                    libc::close(ipc_fd);
+                }
+            }
+        }
+    }
+}
+
+/// On Linux, request `SIGTERM` from the kernel if the parent process dies.
+pub(crate) fn setup_parent_death_signal() {
+    #[cfg(target_os = "linux")]
+    unsafe {
+        let _ = libc::prctl(
+            libc::PR_SET_PDEATHSIG,
+            libc::SIGTERM as libc::c_ulong,
+            0,
+            0,
+            0,
+        );
+    }
+}
+
+/// Write an encoded IPC frame atomically to the private IPC output stream.
+/// Falls back to `std::io::stdout()` on non-Unix or when `init_ipc_stdout()`
+/// was not invoked (e.g. unit tests).
+pub(crate) fn write_ipc_frame(bytes: &[u8]) -> std::io::Result<()> {
+    #[cfg(unix)]
+    if let Some(ipc_file) = IPC_STDOUT.get() {
+        let mut file = ipc_file.lock().unwrap_or_else(|e| {
+            error!("IPC_STDOUT mutex poisoned: {}", e);
+            e.into_inner()
+        });
+        file.write_all(bytes)?;
+        file.flush()?;
+        return Ok(());
+    }
+
+    let _guard = STDOUT_WRITE_MUTEX.lock().unwrap_or_else(|e| {
+        error!("STDOUT_WRITE_MUTEX poisoned: {}", e);
+        e.into_inner()
+    });
+    let mut stdout = std::io::stdout();
+    stdout.write_all(bytes)?;
+    stdout.flush()?;
+    Ok(())
+}
+
+/// Access the shutdown notification primitive.
+pub(crate) fn shutdown_notify() -> &'static tokio::sync::Notify {
+    SHUTDOWN_NOTIFY.get_or_init(tokio::sync::Notify::new)
+}
+
+/// Check whether shutdown has been signaled by the stdin reader or signal handler.
+pub(crate) fn is_shutdown_requested() -> bool {
+    SHUTDOWN_REQUESTED.load(Ordering::Acquire)
+}
+
+/// Signal runner shutdown (used on stdin EOF or fatal framing error).
+/// Sets the atomic flag, wakes the main select loop via `Notify`, and best-effort
+/// enqueues `IpcMessage::Shutdown` into `EVENT_TX`.
+pub(crate) fn signal_shutdown() {
+    SHUTDOWN_REQUESTED.store(true, Ordering::Release);
+    shutdown_notify().notify_waiters();
+    if let Some(tx) = EVENT_TX.get() {
+        let _ = tx.try_send(IpcMessage::Shutdown);
+    }
+}
+
+/// Synchronous IPC client for host capability invocation.
+///
+/// Sends `CapabilityRequest` over the private IPC output channel (never raw
+/// redirected stdout) and awaits the matching `CapabilityResult` routed by the
+/// stdin reader via `PENDING_REQUESTS`.
+pub struct SyncIpcClient {}
+
+impl Default for SyncIpcClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SyncIpcClient {
+    pub fn new() -> Self {
+        Self {}
+    }
+
+    pub fn invoke(&self, capability: &str, params: &serde_json::Value) -> serde_json::Value {
+        static REQUEST_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
+        let request_id = REQUEST_ID_COUNTER.fetch_add(1, Ordering::SeqCst);
+
+        debug!(capability, request_id, "SyncIpcClient invoke");
+
+        // Register pending request BEFORE sending
+        let response_rx = register_pending_request(request_id);
+
+        let request = IpcResponse::CapabilityRequest {
+            request_id,
+            capability: capability.to_string(),
+            params: params.clone(),
+        };
+
+        let payload = match request.to_bytes() {
+            Ok(p) => p,
+            Err(e) => {
+                error!("SyncIpcClient: failed to serialize request: {e}");
+                get_pending_requests().remove(&request_id);
+                return json!({"success": false, "error": format!("Failed to serialize request: {}", e)});
+            }
+        };
+
+        let frame = IpcFrame::new(payload);
+        let bytes = frame.encode();
+
+        if let Err(e) = write_ipc_frame(&bytes) {
+            error!("SyncIpcClient: failed to write request: {e}");
+            get_pending_requests().remove(&request_id);
+            return json!({"success": false, "error": format!("Failed to write request: {}", e)});
+        }
+
+        debug!("SyncIpcClient: request sent, waiting for response");
+
+        match response_rx.recv_timeout(std::time::Duration::from_secs(30)) {
+            Ok(response) => {
+                debug!("SyncIpcClient: received response");
+                match response {
+                    IpcResponse::CapabilityResult {
+                        request_id: resp_id,
+                        result,
+                        error,
+                    } => {
+                        if resp_id != request_id {
+                            warn!(expected = request_id, got = resp_id, "Request ID mismatch");
+                            return json!({"success": false, "error": "Request ID mismatch"});
+                        }
+                        if let Some(err) = error {
+                            json!({"success": false, "error": err})
+                        } else {
+                            result
+                        }
+                    }
+                    _ => {
+                        warn!("SyncIpcClient: unexpected response type");
+                        json!({"success": false, "error": "Unexpected response type"})
+                    }
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                error!("SyncIpcClient: timeout waiting for response");
+                get_pending_requests().remove(&request_id);
+                json!({"success": false, "error": "Timeout waiting for response"})
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                error!("SyncIpcClient: response channel disconnected");
+                get_pending_requests().remove(&request_id);
+                json!({"success": false, "error": "Response channel disconnected"})
+            }
+        }
+    }
+}
+
+/// Read exact bytes from `reader`, retrying transparently on `EINTR`
+/// (`ErrorKind::Interrupted`) without losing partial progress.
+pub(crate) fn read_exact_retry<R: Read>(reader: &mut R, mut buf: &mut [u8]) -> std::io::Result<()> {
+    while !buf.is_empty() {
+        match reader.read(buf) {
+            Ok(0) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "failed to fill whole buffer",
+                ));
+            }
+            Ok(n) => {
+                let tmp = buf;
+                buf = &mut tmp[n..];
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
+}
 
 /// Wrap an FFI call in `catch_unwind` so an extension panic does not
 /// abort the runner process. Returns the value or an error string.
@@ -79,27 +290,58 @@ where
     T: Send + 'static,
 {
     let (tx, rx) = std::sync::mpsc::channel();
+    let timed_out = Arc::new(AtomicBool::new(false));
+    let timed_out_worker = Arc::clone(&timed_out);
+    let label_owned = label.to_string();
     let builder = std::thread::Builder::new().name(format!("ffi-{label}"));
     builder
         .spawn(move || {
-            let result = safe_ffi_call("ffi-worker", f);
+            let result = safe_ffi_call(&label_owned, f);
+            if timed_out_worker.load(Ordering::Acquire) {
+                let remaining = ACTIVE_HUNG_FFI_THREADS
+                    .fetch_sub(1, Ordering::Relaxed)
+                    .saturating_sub(1);
+                warn!(
+                    label = %label_owned,
+                    active_hung_threads = remaining,
+                    "Previously detached FFI worker thread finally returned"
+                );
+            }
             let _ = tx.send(result);
         })
         .map_err(|e| format!("Failed to spawn FFI thread for {}: {}", label, e))?;
 
     let timeout = ffi_call_timeout();
     match rx.recv_timeout(timeout) {
-        Ok(inner_result) => inner_result,
+        Ok(inner_result) => {
+            CONSECUTIVE_HUNG_FFI_THREADS.store(0, Ordering::Relaxed);
+            inner_result
+        }
         Err(_) => {
+            timed_out.store(true, Ordering::Release);
+            let consecutive = CONSECUTIVE_HUNG_FFI_THREADS.fetch_add(1, Ordering::Relaxed) + 1;
+            let active = ACTIVE_HUNG_FFI_THREADS.fetch_add(1, Ordering::Relaxed) + 1;
             error!(
                 label = label,
                 timeout_secs = timeout.as_secs(),
-                "FFI call timed out — extension may be stuck, thread detached"
+                consecutive_hung_threads = consecutive,
+                active_hung_threads = active,
+                "FFI call timed out — extension may be stuck, thread detached (library kept alive)"
             );
+            if consecutive >= 3 {
+                error!(
+                    label = label,
+                    consecutive_hung_threads = consecutive,
+                    active_hung_threads = active,
+                    "CRITICAL: {} consecutive hung FFI threads — extension appears deadlocked and is leaking detached worker threads",
+                    consecutive
+                );
+            }
             Err(format!(
-                "FFI call timed out after {}s in {}",
+                "FFI call timed out after {}s in {} (consecutive hung calls: {})",
                 timeout.as_secs(),
-                label
+                label,
+                consecutive
             ))
         }
     }
@@ -150,38 +392,20 @@ pub(crate) fn start_stdin_reader() -> std::thread::JoinHandle<()> {
     std::thread::spawn(|| {
         debug!("StdinReader started");
 
-        let mut consecutive_errors = 0u32;
-        const MAX_CONSECUTIVE_ERRORS: u32 = 5;
+        let mut stdin = std::io::stdin().lock();
 
-        loop {
-            // Read length prefix
+        'read_loop: loop {
+            // Read length prefix (retrying EINTR transparently)
             let mut len_bytes = [0u8; 4];
-            match std::io::stdin().read_exact(&mut len_bytes) {
-                Ok(_) => {
-                    consecutive_errors = 0;
-                }
+            match read_exact_retry(&mut stdin, &mut len_bytes) {
+                Ok(()) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                    debug!("Stdin closed");
-                    break;
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
-                    // Retry on interrupt (signal received during read)
-                    continue;
+                    debug!("Stdin closed (EOF), signaling runner shutdown");
+                    break 'read_loop;
                 }
                 Err(e) => {
-                    consecutive_errors += 1;
-                    warn!(
-                        consecutive_errors,
-                        max = MAX_CONSECUTIVE_ERRORS,
-                        "Error reading length: {e}"
-                    );
-                    if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
-                        error!("Too many consecutive stdin errors, giving up");
-                        break;
-                    }
-                    // Brief backoff before retry
-                    std::thread::sleep(std::time::Duration::from_millis(100));
-                    continue;
+                    error!("Fatal stdin error reading length prefix: {e}; signaling runner shutdown");
+                    break 'read_loop;
                 }
             }
 
@@ -192,28 +416,36 @@ pub(crate) fn start_stdin_reader() -> std::thread::JoinHandle<()> {
                 .unwrap_or(10 * 1024 * 1024);
             if len > max_size {
                 warn!(len, max_size, "Message too large, draining");
-                // Drain the oversized payload in chunks to keep stdin aligned
+                // Drain the oversized payload in chunks to keep stdin aligned;
+                // on any read error, break out of the outer loop instead of
+                // continuing on a desynced stream.
                 let mut remaining = len;
                 let mut drain_buf = [0u8; 4096];
                 while remaining > 0 {
                     let to_read = remaining.min(drain_buf.len());
-                    if std::io::stdin()
-                        .read_exact(&mut drain_buf[..to_read])
-                        .is_err()
-                    {
-                        debug!("Stdin closed while draining oversized message");
-                        break;
+                    if let Err(e) = read_exact_retry(&mut stdin, &mut drain_buf[..to_read]) {
+                        error!(
+                            error = %e,
+                            remaining,
+                            "Stdin error while draining oversized message; shutting down to prevent stream desync"
+                        );
+                        break 'read_loop;
                     }
                     remaining -= to_read;
                 }
                 continue;
             }
 
-            // Read payload
+            // Read payload; on any read error, break instead of continuing on a
+            // partially consumed / desynced frame.
             let mut payload = vec![0u8; len];
-            if let Err(e) = std::io::stdin().read_exact(&mut payload) {
-                warn!("Error reading payload: {e}");
-                continue;
+            if let Err(e) = read_exact_retry(&mut stdin, &mut payload) {
+                error!(
+                    error = %e,
+                    expected_len = len,
+                    "Fatal stdin error reading payload; shutting down to prevent stream desync"
+                );
+                break 'read_loop;
             }
 
             // Parse message
@@ -250,6 +482,9 @@ pub(crate) fn start_stdin_reader() -> std::thread::JoinHandle<()> {
             }
         }
 
+        // Notify the main loop so the runner exits cleanly instead of lingering
+        // as an orphan process when the parent closes stdin or crashes.
+        signal_shutdown();
         debug!("StdinReader exiting");
     })
 }
@@ -1226,5 +1461,46 @@ mod tests {
         for handle in handles {
             handle.join().unwrap();
         }
+    }
+
+    #[test]
+    fn test_read_exact_retry_handles_eintr_and_partial_reads() {
+        struct FlakyReader {
+            data: Vec<u8>,
+            pos: usize,
+            calls: usize,
+        }
+        impl Read for FlakyReader {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                self.calls += 1;
+                if self.calls % 2 == 1 {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Interrupted,
+                        "simulated EINTR",
+                    ));
+                }
+                if self.pos >= self.data.len() {
+                    return Ok(0);
+                }
+                let n = 1.min(buf.len()).min(self.data.len() - self.pos);
+                buf[..n].copy_from_slice(&self.data[self.pos..self.pos + n]);
+                self.pos += n;
+                Ok(n)
+            }
+        }
+
+        let mut reader = FlakyReader {
+            data: b"abcd".to_vec(),
+            pos: 0,
+            calls: 0,
+        };
+        let mut out = [0u8; 4];
+        read_exact_retry(&mut reader, &mut out).expect("should retry EINTR and succeed");
+        assert_eq!(&out, b"abcd");
+
+        // Subsequent read must return UnexpectedEof
+        let mut eof_buf = [0u8; 2];
+        let err = read_exact_retry(&mut reader, &mut eof_buf).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
     }
 }

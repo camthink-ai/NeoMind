@@ -57,23 +57,27 @@ fn reserved_component_ids() -> Vec<&'static str> {
 // ---------------------------------------------------------------------------
 
 /// Validate a component ID:
-/// - Must not be empty
+/// - Must be 1-128 ASCII alphanumeric, '-' or '_' characters
 /// - Must not be a reserved built-in ID
-/// - Must not contain path traversal characters
 fn validate_component_id(id: &str) -> Result<(), ErrorResponse> {
-    if id.is_empty() {
-        return Err(ErrorResponse::bad_request("Component ID cannot be empty"));
+    if id.is_empty() || id.len() > 128 {
+        return Err(ErrorResponse::bad_request(
+            "Component ID must be 1-128 characters",
+        ));
+    }
+    if !id
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(ErrorResponse::bad_request(
+            "Component ID contains invalid characters (only ASCII letters, digits, '-' and '_' allowed)",
+        ));
     }
     if reserved_component_ids().contains(&id) {
         return Err(ErrorResponse::bad_request(format!(
             "Component ID '{}' is reserved for built-in components",
             id
         )));
-    }
-    if id.contains('.') || id.contains('/') || id.contains('\\') || id.contains("..") {
-        return Err(ErrorResponse::bad_request(
-            "Component ID contains invalid characters",
-        ));
     }
     Ok(())
 }
@@ -91,6 +95,55 @@ async fn publish_lifecycle_event(state: &ServerState, component_id: &str, lifecy
             })
             .await;
     }
+}
+
+/// Build a reqwest client pinned to validated public IPs with redirects disabled
+/// to prevent SSRF and DNS-rebinding attacks when downloading marketplace entries.
+async fn build_pinned_public_http_client(url: &str) -> Result<reqwest::Client, ErrorResponse> {
+    let addrs = neomind_core::net::resolve_and_validate_public_url(url)
+        .await
+        .map_err(|e| {
+            ErrorResponse::bad_request(format!("Invalid or disallowed marketplace URL: {}", e))
+        })?;
+    let parsed = reqwest::Url::parse(url)
+        .map_err(|e| ErrorResponse::bad_request(format!("Invalid marketplace URL: {}", e)))?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| ErrorResponse::bad_request("Marketplace URL has no host"))?;
+    let host_unbracketed = host.trim_start_matches('[').trim_end_matches(']');
+
+    let mut builder = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::none());
+    if host_unbracketed.parse::<std::net::IpAddr>().is_err() {
+        builder = builder.resolve_to_addrs(host_unbracketed, &addrs);
+    }
+    builder
+        .build()
+        .map_err(|e| ErrorResponse::internal(format!("Failed to build HTTP client: {}", e)))
+}
+
+/// Verify optional SHA-256 hex digest of a downloaded component bundle.
+fn verify_optional_bundle_sha256(
+    component_id: &str,
+    expected_sha256: Option<&str>,
+    bundle_bytes: &[u8],
+) -> Result<(), ErrorResponse> {
+    let Some(expected) = expected_sha256.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(());
+    };
+    use sha2::{Digest, Sha256};
+    let actual: String = Sha256::digest(bundle_bytes)
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect();
+    if !crate::auth::constant_time_eq_str(&actual, &expected.to_ascii_lowercase()) {
+        return Err(ErrorResponse::bad_request(format!(
+            "Bundle SHA-256 digest mismatch for component '{}'",
+            component_id
+        )));
+    }
+    Ok(())
 }
 
 /// Build a reqwest client with sensible defaults.
@@ -379,16 +432,23 @@ pub async fn market_install_handler(
         }
     };
 
-    // Download manifest and bundle in parallel
+    // Validate manifest_url and bundle_url against SSRF (public IPs only, no redirects)
     let manifest_url = entry.manifest_url.clone();
     let bundle_url = entry.bundle_url.clone();
+    let expected_sha256 = entry.bundle_sha256.clone();
 
+    let (manifest_client, bundle_client) = tokio::try_join!(
+        build_pinned_public_http_client(&manifest_url),
+        build_pinned_public_http_client(&bundle_url),
+    )?;
+
+    // Download manifest and bundle in parallel
     let (manifest_result, bundle_result) = tokio::join!(
-        client
+        manifest_client
             .get(&manifest_url)
             .header("User-Agent", "NeoMind-Component-Marketplace")
             .send(),
-        client
+        bundle_client
             .get(&bundle_url)
             .header("User-Agent", "NeoMind-Component-Marketplace")
             .send()
@@ -462,6 +522,10 @@ pub async fn market_install_handler(
             manifest.id, component_id
         )));
     }
+
+    // Verify optional bundle SHA-256 digest and static bundle/manifest coherence
+    verify_optional_bundle_sha256(&component_id, expected_sha256.as_deref(), &bundle_bytes)?;
+    validate_component_bundle(&manifest, &bundle_bytes)?;
 
     // Set install timestamp
     manifest.installed_at = chrono::Utc::now().timestamp();
@@ -766,11 +830,22 @@ async fn install_from_parts(
     }))
 }
 
+/// Maximum number of entries allowed in an uploaded component ZIP archive.
+const MAX_ZIP_ENTRIES: usize = 1_000;
+
 /// Extract `manifest.json` and `bundle.js` from a ZIP archive.
 fn extract_zip_contents(zip_data: &[u8]) -> Result<(String, Vec<u8>), ErrorResponse> {
     let reader = std::io::Cursor::new(zip_data);
     let mut archive = zip::ZipArchive::new(reader)
         .map_err(|e| ErrorResponse::bad_request(format!("Invalid ZIP file: {}", e)))?;
+
+    if archive.len() > MAX_ZIP_ENTRIES {
+        return Err(ErrorResponse::bad_request(format!(
+            "ZIP archive contains too many entries ({} > {})",
+            archive.len(),
+            MAX_ZIP_ENTRIES
+        )));
+    }
 
     let mut manifest_text: Option<String> = None;
     let mut bundle_bytes: Option<Vec<u8>> = None;
@@ -902,6 +977,8 @@ pub async fn get_component_handler(
     if let Some(builtin) = builtin_component_list().into_iter().find(|c| c.id == id) {
         return ok(json!({ "component": builtin, "builtin": true, "registered": true }));
     }
+
+    validate_component_id(&id)?;
 
     // Check installed community components
     let store = state.frontend_component_store.clone();
@@ -1698,6 +1775,7 @@ pub async fn get_bundle_handler(
         .status(200)
         .header("content-type", "application/javascript")
         .header("cache-control", "no-cache")
+        .header("x-content-type-options", "nosniff")
         .body(axum::body::Body::from(bytes))
         .unwrap())
 }
@@ -1845,5 +1923,51 @@ mod bundle_validation_tests {
         assert_eq!(err.code, "BAD_GATEWAY");
 
         let _ = server.await;
+    }
+
+    #[test]
+    fn validate_component_id_enforces_strict_charset_and_length() {
+        assert!(validate_component_id("my-widget_1").is_ok());
+        assert!(validate_component_id("").is_err());
+        assert!(validate_component_id(".").is_err());
+        assert!(validate_component_id("..").is_err());
+        assert!(validate_component_id("../secret").is_err());
+        assert!(validate_component_id("foo/bar").is_err());
+        assert!(validate_component_id("foo\\bar").is_err());
+        assert!(validate_component_id("foo.bar").is_err());
+        assert!(validate_component_id("foo bar").is_err());
+        assert!(validate_component_id(&"a".repeat(129)).is_err());
+        assert!(validate_component_id(&"a".repeat(128)).is_ok());
+    }
+
+    #[test]
+    fn verify_optional_bundle_sha256_accepts_matching_and_rejects_mismatch() {
+        let bytes = b"var Demo = { default: () => null };";
+        use sha2::{Digest, Sha256};
+        let digest: String = Sha256::digest(bytes)
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect();
+        assert!(verify_optional_bundle_sha256("demo", None, bytes).is_ok());
+        assert!(verify_optional_bundle_sha256("demo", Some(&digest), bytes).is_ok());
+        assert!(verify_optional_bundle_sha256("demo", Some(&digest.to_uppercase()), bytes).is_ok());
+        assert!(verify_optional_bundle_sha256("demo", Some("0".repeat(64).as_str()), bytes).is_err());
+    }
+
+    #[test]
+    fn extract_zip_contents_rejects_archives_over_entry_cap() {
+        let mut cursor = std::io::Cursor::new(Vec::new());
+        {
+            let mut zip = zip::ZipWriter::new(&mut cursor);
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            for i in 0..=MAX_ZIP_ENTRIES {
+                zip.start_file(format!("f{i}.txt"), options).unwrap();
+            }
+            zip.finish().unwrap();
+        }
+        let err = extract_zip_contents(cursor.get_ref())
+            .expect_err("ZIP with > MAX_ZIP_ENTRIES must be rejected");
+        assert!(err.message.contains("too many entries"), "{err:?}");
     }
 }

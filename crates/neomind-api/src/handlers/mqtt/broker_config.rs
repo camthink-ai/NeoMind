@@ -542,18 +542,9 @@ pub async fn upload_tls_handler(
     std::fs::write(&cert_path, &req.cert_pem)
         .map_err(|e| ErrorResponse::internal(format!("Failed to write certificate: {}", e)))?;
 
-    // Write private key
-    std::fs::write(&key_path, &req.key_pem)
+    // Write private key atomically with 0600 permissions on Unix (no TOCTOU window)
+    cert_gen::write_private_key_file(&key_path, req.key_pem.as_bytes())
         .map_err(|e| ErrorResponse::internal(format!("Failed to write private key: {}", e)))?;
-
-    // Restrict private key file permissions on Unix
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600)).map_err(
-            |e| ErrorResponse::internal(format!("Failed to set key file permissions: {}", e)),
-        )?;
-    }
 
     // Write CA certificate if provided
     if let Some(ca_pem) = &req.ca_pem {

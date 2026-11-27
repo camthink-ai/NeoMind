@@ -4,8 +4,11 @@ use axum::{
     extract::{Path, State},
     Json,
 };
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
 use neomind_devices::registry::DeviceTypeTemplate;
 
@@ -349,6 +352,71 @@ pub async fn validate_device_type_handler(
 const CLOUD_REPO: &str = "camthink-ai/NeoMind-DeviceTypes";
 const CLOUD_BRANCH: &str = "main";
 const CLOUD_BASE_URL: &str = "https://raw.githubusercontent.com/camthink-ai/NeoMind-DeviceTypes";
+const MAX_CLOUD_IMPORT_ITEMS: usize = 50;
+const MAX_CLOUD_FETCH_CONCURRENCY: usize = 8;
+const MAX_CLOUD_RESPONSE_BYTES: usize = 512 * 1024;
+const CLOUD_LIST_CACHE_TTL: Duration = Duration::from_secs(300);
+
+static CLOUD_HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+fn cloud_http_client() -> &'static reqwest::Client {
+    CLOUD_HTTP_CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .user_agent("NeoMind-DeviceType-Importer")
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new())
+    })
+}
+
+struct CloudListCacheEntry {
+    fetched_at: Instant,
+    payload: serde_json::Value,
+}
+
+static CLOUD_LIST_CACHE: OnceLock<tokio::sync::RwLock<Option<CloudListCacheEntry>>> =
+    OnceLock::new();
+
+fn cloud_list_cache() -> &'static tokio::sync::RwLock<Option<CloudListCacheEntry>> {
+    CLOUD_LIST_CACHE.get_or_init(|| tokio::sync::RwLock::new(None))
+}
+
+/// Strictly validate cloud repository branch / device_type_id against
+/// `1..=64` ASCII `[A-Za-z0-9_-]` to prevent URL path traversal / query injection.
+fn is_valid_cloud_identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 64
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+}
+
+/// Read a reqwest response body with a strict byte cap.
+async fn read_capped_bytes(
+    mut response: reqwest::Response,
+    max_bytes: usize,
+) -> Result<Vec<u8>, String> {
+    if let Some(len) = response.content_length() {
+        if len > max_bytes as u64 {
+            return Err(format!(
+                "Response too large ({} bytes, max {})",
+                len, max_bytes
+            ));
+        }
+    }
+    let mut buf = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|e| format!("Failed to read response: {}", e))?
+    {
+        if buf.len().saturating_add(chunk.len()) > max_bytes {
+            return Err(format!("Response exceeded max size of {} bytes", max_bytes));
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    Ok(buf)
+}
 
 /// Cloud device type metadata (in index.json)
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -424,17 +492,24 @@ pub struct CloudImportResponse {
 pub async fn list_cloud_device_types_handler(
     State(_state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
+    // Serve from 5-minute in-memory TTL cache to avoid outbound GitHub amplification
+    {
+        let cache = cloud_list_cache().read().await;
+        if let Some(entry) = cache.as_ref() {
+            if entry.fetched_at.elapsed() < CLOUD_LIST_CACHE_TTL {
+                return ok(entry.payload.clone());
+            }
+        }
+    }
+
     // Use raw.githubusercontent.com to avoid GitHub API rate limits
     let index_url = format!("{}/{}/types/index.json", CLOUD_BASE_URL, CLOUD_BRANCH);
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .map_err(|e| ErrorResponse::internal(format!("Failed to build HTTP client: {}", e)))?;
+    let client = cloud_http_client();
 
     let response = match client
         .get(&index_url)
-        .header("User-Agent", "NeoMind-DeviceType-Importer")
+        .timeout(Duration::from_secs(10))
         .send()
         .await
     {
@@ -463,7 +538,20 @@ pub async fn list_cloud_device_types_handler(
         }));
     }
 
-    let index: CloudDeviceTypesIndex = match response.json().await {
+    let body = match read_capped_bytes(response, MAX_CLOUD_RESPONSE_BYTES).await {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::error!("Failed to read cloud index: {}", e);
+            return ok(json!({
+                "device_types": [],
+                "total": 0,
+                "error": "parse_error",
+                "message": "Unable to read cloud repository response."
+            }));
+        }
+    };
+
+    let index: CloudDeviceTypesIndex = match serde_json::from_slice(&body) {
         Ok(i) => i,
         Err(e) => {
             tracing::error!("Failed to parse cloud index: {}", e);
@@ -477,11 +565,21 @@ pub async fn list_cloud_device_types_handler(
         }
     };
 
-    ok(json!({
+    let payload = json!({
         "device_types": index.device_types,
         "total": index.device_types.len(),
         "index_version": index.version,
-    }))
+    });
+
+    {
+        let mut cache = cloud_list_cache().write().await;
+        *cache = Some(CloudListCacheEntry {
+            fetched_at: Instant::now(),
+            payload: payload.clone(),
+        });
+    }
+
+    ok(payload)
 }
 
 /// Result of fetching a single device type from cloud
@@ -523,13 +621,24 @@ async fn fetch_device_type(
         };
     }
 
-    let content = match response.text().await {
+    let bytes = match read_capped_bytes(response, MAX_CLOUD_RESPONSE_BYTES).await {
+        Ok(b) => b,
+        Err(e) => {
+            return FetchedDeviceType {
+                id: device_type_id.to_string(),
+                template: None,
+                error: Some(e),
+            };
+        }
+    };
+
+    let content = match String::from_utf8(bytes) {
         Ok(c) => c,
         Err(e) => {
             return FetchedDeviceType {
                 id: device_type_id.to_string(),
                 template: None,
-                error: Some(format!("Failed to read response: {}", e)),
+                error: Some(format!("Invalid UTF-8 response: {}", e)),
             };
         }
     };
@@ -551,6 +660,32 @@ async fn fetch_device_type(
     }
 }
 
+/// Validate a `CloudImportRequest` before performing any outbound HTTP requests.
+fn validate_cloud_import_request(request: &CloudImportRequest) -> Result<&str, ErrorResponse> {
+    let branch = request.branch.as_deref().unwrap_or(CLOUD_BRANCH);
+    if !is_valid_cloud_identifier(branch) {
+        return Err(ErrorResponse::bad_request(
+            "Invalid branch name: must be 1..=64 ASCII characters [A-Za-z0-9_-]",
+        ));
+    }
+    if request.device_types.len() > MAX_CLOUD_IMPORT_ITEMS {
+        return Err(ErrorResponse::bad_request(format!(
+            "Too many device types requested: {} (max {})",
+            request.device_types.len(),
+            MAX_CLOUD_IMPORT_ITEMS
+        )));
+    }
+    for id in &request.device_types {
+        if !is_valid_cloud_identifier(id) {
+            return Err(ErrorResponse::bad_request(format!(
+                "Invalid device_type_id '{}': must be 1..=64 ASCII characters [A-Za-z0-9_-]",
+                id
+            )));
+        }
+    }
+    Ok(branch)
+}
+
 /// Import selected device types from cloud
 ///
 /// POST /api/device-types/cloud/import
@@ -567,24 +702,22 @@ pub async fn import_cloud_device_types_handler(
     State(state): State<ServerState>,
     Json(request): Json<CloudImportRequest>,
 ) -> HandlerResult<CloudImportResponse> {
-    let branch = request.branch.as_deref().unwrap_or(CLOUD_BRANCH);
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| ErrorResponse::internal(format!("Failed to build HTTP client: {}", e)))?;
+    let branch = validate_cloud_import_request(&request)?.to_string();
+    let client = cloud_http_client();
 
     let mut imported = 0;
     let mut failed = 0;
     let mut failures = Vec::new();
 
-    // Fetch all device types in parallel
-    let fetch_futures: Vec<_> = request
-        .device_types
-        .iter()
-        .map(|id| fetch_device_type(&client, CLOUD_REPO, branch, id))
-        .collect();
-
-    let fetched = futures::future::join_all(fetch_futures).await;
+    // Fetch device types with bounded concurrency
+    let fetched: Vec<FetchedDeviceType> = futures::stream::iter(request.device_types)
+        .map(|id| {
+            let branch = branch.clone();
+            async move { fetch_device_type(client, CLOUD_REPO, &branch, &id).await }
+        })
+        .buffer_unordered(MAX_CLOUD_FETCH_CONCURRENCY)
+        .collect()
+        .await;
 
     // Process fetched device types
     for result in fetched {
@@ -646,4 +779,68 @@ pub async fn import_cloud_device_types_handler(
         failed,
         failures,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cloud_identifier_accepts_safe_names_and_rejects_traversal() {
+        for valid in ["main", "ne101_camera", "release-v1_4", "A", &"a".repeat(64)] {
+            assert!(
+                is_valid_cloud_identifier(valid),
+                "expected valid cloud identifier: {valid}"
+            );
+        }
+
+        for invalid in [
+            "",
+            &"a".repeat(65),
+            "../etc/passwd",
+            "..",
+            ".",
+            "main/extra",
+            "foo.json",
+            "main?foo=bar",
+            "main#frag",
+            "foo%2fbar",
+            "foo bar",
+            "main\\sub",
+        ] {
+            assert!(
+                !is_valid_cloud_identifier(invalid),
+                "expected invalid cloud identifier to be rejected: {invalid:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn cloud_import_request_validation_rejects_traversal_and_oversized_batches() {
+        let bad_branch = CloudImportRequest {
+            device_types: vec!["ne101_camera".to_string()],
+            branch: Some("../../other-org/repo".to_string()),
+        };
+        assert!(validate_cloud_import_request(&bad_branch).is_err());
+
+        let bad_id = CloudImportRequest {
+            device_types: vec!["../secret?token=1".to_string()],
+            branch: Some("main".to_string()),
+        };
+        assert!(validate_cloud_import_request(&bad_id).is_err());
+
+        let too_many = CloudImportRequest {
+            device_types: (0..=MAX_CLOUD_IMPORT_ITEMS)
+                .map(|i| format!("type_{i}"))
+                .collect(),
+            branch: Some("main".to_string()),
+        };
+        assert!(validate_cloud_import_request(&too_many).is_err());
+
+        let valid = CloudImportRequest {
+            device_types: vec!["ne101_camera".to_string(), "ne301-camera".to_string()],
+            branch: Some("main".to_string()),
+        };
+        assert_eq!(validate_cloud_import_request(&valid).unwrap(), "main");
+    }
 }

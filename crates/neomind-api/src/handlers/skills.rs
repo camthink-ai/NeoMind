@@ -284,6 +284,19 @@ pub async fn create_skill_handler(
     State(state): State<ServerState>,
     Json(req): Json<CreateSkillRequest>,
 ) -> Response {
+    if req.content.len() > neomind_agent::skills::registry::MAX_SKILL_CONTENT_BYTES {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": format!(
+                    "Skill content exceeds maximum allowed size of {} bytes",
+                    neomind_agent::skills::registry::MAX_SKILL_CONTENT_BYTES
+                )
+            })),
+        )
+            .into_response();
+    }
+
     let registry = state.agents.session_manager.skill_registry();
     let mut guard = registry.write().await;
 
@@ -339,6 +352,19 @@ pub async fn update_skill_handler(
     Path(id): Path<String>,
     Json(req): Json<CreateSkillRequest>,
 ) -> Response {
+    if req.content.len() > neomind_agent::skills::registry::MAX_SKILL_CONTENT_BYTES {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": format!(
+                    "Skill content exceeds maximum allowed size of {} bytes",
+                    neomind_agent::skills::registry::MAX_SKILL_CONTENT_BYTES
+                )
+            })),
+        )
+            .into_response();
+    }
+
     let registry = state.agents.session_manager.skill_registry();
     let mut guard = registry.write().await;
 

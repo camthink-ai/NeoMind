@@ -24,6 +24,7 @@ const PAGE_SIZE = 10
 export function PushTargetsTab({ searchQuery = '' }: { searchQuery?: string } = {}) {
   const { t } = useTranslation()
   const isMobile = useIsMobile()
+  const isAdmin = useStore((s) => s.user?.role === 'admin')
   const {
     pushTargets,
     pushTargetsLoading,
@@ -192,32 +193,40 @@ export function PushTargetsTab({ searchQuery = '' }: { searchQuery?: string } = 
   }
 
   const actions: TableRowAction<PushTarget>[] = [
-    {
-      label: t('common:dataPush.toggle', 'Start / Stop'),
-      icon: <Play className="h-4 w-4" />,
-      onClick: (target) => handleToggle(target),
-    },
-    {
-      label: t('common:dataPush.test', 'Test'),
-      icon: testingId ? <Loader2 className="h-4 w-4 animate-spin" /> : <FlaskConical className="h-4 w-4" />,
-      onClick: (target) => handleTest(target.id, target.name),
-    },
+    ...(isAdmin
+      ? [
+          {
+            label: t('common:dataPush.toggle', 'Start / Stop'),
+            icon: <Play className="h-4 w-4" />,
+            onClick: (target: PushTarget) => handleToggle(target),
+          },
+          {
+            label: t('common:dataPush.test', 'Test'),
+            icon: testingId ? <Loader2 className="h-4 w-4 animate-spin" /> : <FlaskConical className="h-4 w-4" />,
+            onClick: (target: PushTarget) => handleTest(target.id, target.name),
+          },
+        ]
+      : []),
     {
       label: t('common:dataPush.logs', 'Logs'),
       icon: <FileText className="h-4 w-4" />,
       onClick: (target) => setLogsTargetId(target.id),
     },
-    {
-      label: t('common:dataPush.edit', 'Edit'),
-      icon: <Pencil className="h-4 w-4" />,
-      onClick: (target) => setEditingPushTarget(target),
-    },
-    {
-      label: t('common:dataPush.delete', 'Delete'),
-      icon: <Trash2 className="h-4 w-4" />,
-      variant: 'destructive' as const,
-      onClick: (target) => handleDelete(target),
-    },
+    ...(isAdmin
+      ? [
+          {
+            label: t('common:dataPush.edit', 'Edit'),
+            icon: <Pencil className="h-4 w-4" />,
+            onClick: (target: PushTarget) => setEditingPushTarget(target),
+          },
+          {
+            label: t('common:dataPush.delete', 'Delete'),
+            icon: <Trash2 className="h-4 w-4" />,
+            variant: 'destructive' as const,
+            onClick: (target: PushTarget) => handleDelete(target),
+          },
+        ]
+      : []),
   ]
 
   // Pagination
@@ -255,7 +264,7 @@ export function PushTargetsTab({ searchQuery = '' }: { searchQuery?: string } = 
         data={paginatedTargets}
         renderCell={renderCell}
         rowKey={(row: PushTarget) => row.id}
-        onRowClick={(row: PushTarget) => setEditingPushTarget(row)}
+        onRowClick={isAdmin ? (row: PushTarget) => setEditingPushTarget(row) : undefined}
         actions={actions}
         loading={pushTargetsLoading}
         flexHeight
@@ -322,7 +331,7 @@ export function PushTargetsTab({ searchQuery = '' }: { searchQuery?: string } = 
       />
 
       {/* Create/Edit Dialog */}
-      <PushTargetDialog />
+      {isAdmin && <PushTargetDialog />}
     </div>
   )
 }

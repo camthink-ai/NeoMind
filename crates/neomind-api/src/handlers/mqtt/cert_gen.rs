@@ -51,6 +51,38 @@ fn get_hostname() -> Option<String> {
     hostname::get().ok().and_then(|h| h.into_string().ok())
 }
 
+/// Write a private key file with mode `0600` atomically at creation time on Unix,
+/// avoiding the `fs::write` (0644) -> `set_permissions` (0600) TOCTOU window.
+///
+/// Also enforces `0600` on the open file descriptor via `File::set_permissions`
+/// (`fchmod`) before writing, so overwriting an existing file with looser
+/// permissions tightens it before any key material is written.
+pub(crate) fn write_private_key_file(
+    path: &std::path::Path,
+    contents: &[u8],
+) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        file.write_all(contents)?;
+        file.sync_all()?;
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, contents)
+    }
+}
+
 /// Generate self-signed CA + server certificates for the MQTT broker.
 ///
 /// The CA certificate is valid for 5 years; the server certificate is valid
@@ -155,23 +187,12 @@ pub fn generate_self_signed_certs() -> Result<CertPaths, String> {
 
     std::fs::write(&ca_cert_path, ca_cert.pem())
         .map_err(|e| format!("Failed to write CA cert: {}", e))?;
-    std::fs::write(&ca_key_path, ca_key.serialize_pem())
+    write_private_key_file(&ca_key_path, ca_key.serialize_pem().as_bytes())
         .map_err(|e| format!("Failed to write CA key: {}", e))?;
     std::fs::write(&server_cert_path, server_cert.pem())
         .map_err(|e| format!("Failed to write server cert: {}", e))?;
-    std::fs::write(&server_key_path, server_key.serialize_pem())
+    write_private_key_file(&server_key_path, server_key.serialize_pem().as_bytes())
         .map_err(|e| format!("Failed to write server key: {}", e))?;
-
-    // Restrict private key file permissions on Unix
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let key_mode = std::fs::Permissions::from_mode(0o600);
-        std::fs::set_permissions(&ca_key_path, key_mode.clone())
-            .map_err(|e| format!("Failed to set CA key permissions: {}", e))?;
-        std::fs::set_permissions(&server_key_path, key_mode)
-            .map_err(|e| format!("Failed to set server key permissions: {}", e))?;
-    }
 
     tracing::info!(
         ca_cert = %ca_cert_path.display(),
@@ -186,4 +207,29 @@ pub fn generate_self_signed_certs() -> Result<CertPaths, String> {
         server_cert_path: server_cert_path.to_string_lossy().to_string(),
         server_key_path: server_key_path.to_string_lossy().to_string(),
     })
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn write_private_key_file_creates_with_0600_and_tightens_existing() {
+        let dir = tempfile::tempdir().unwrap();
+        let fresh = dir.path().join("mqtt-server.key");
+        write_private_key_file(&fresh, b"secret-key-1").unwrap();
+        let mode = std::fs::metadata(&fresh).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "fresh private key must be created 0600");
+        assert_eq!(std::fs::read(&fresh).unwrap(), b"secret-key-1");
+
+        // Pre-existing file with world-readable 0644 must be tightened to 0600
+        let existing = dir.path().join("mqtt-ca.key");
+        std::fs::write(&existing, b"old-key").unwrap();
+        std::fs::set_permissions(&existing, std::fs::Permissions::from_mode(0o644)).unwrap();
+        write_private_key_file(&existing, b"new-secret-key").unwrap();
+        let mode = std::fs::metadata(&existing).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "overwritten private key must be tightened to 0600");
+        assert_eq!(std::fs::read(&existing).unwrap(), b"new-secret-key");
+    }
 }

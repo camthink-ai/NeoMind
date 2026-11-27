@@ -301,8 +301,9 @@ function App() {
       delete (window as any).NeoMindStream
     }
   }, [])
-  const { isAuthenticated, checkAuthStatus, setWsConnected, updateDialogOpen, serverUpgradeDialogOpen } = useStore((s) => ({
+  const { isAuthenticated, user, checkAuthStatus, setWsConnected, updateDialogOpen, serverUpgradeDialogOpen } = useStore((s) => ({
     isAuthenticated: s.isAuthenticated,
+    user: s.user,
     checkAuthStatus: s.checkAuthStatus,
     setWsConnected: s.setWsConnected,
     updateDialogOpen: s.updateDialogOpen,
@@ -503,23 +504,33 @@ function App() {
   }, [currentPath])
 
   // Unified WebSocket + SSE connection management
-  // Connects when authenticated (not on setup), disconnects otherwise
+  // Connects when authenticated (not on setup), disconnects otherwise.
+  // Viewers do not have permission for /api/chat WS (4003), so skip connecting
+  // chat WS for viewers while keeping SSE events and extension sync active.
   useEffect(() => {
+    const isViewer = user?.role === 'viewer'
     if (isAuthenticated && currentPath !== '/setup') {
-      import('@/lib/websocket').then(({ ws }) => {
-        // Register connection handler for state tracking + extension re-sync
-        const cleanup = ws.onConnection((connected, isReconnect) => {
-          setWsConnected(connected)
-          if (connected && isReconnect) {
-            extensionSyncRef.current?.()
-          }
+      if (isViewer) {
+        import('@/lib/websocket').then(({ ws }) => {
+          ws.disconnect()
         })
-        setWsConnected(ws.isConnected())
-        // Connect chat WebSocket (idempotent — skips if already connected)
-        ws.connect()
+        setWsConnected(false)
+      } else {
+        import('@/lib/websocket').then(({ ws }) => {
+          // Register connection handler for state tracking + extension re-sync
+          const cleanup = ws.onConnection((connected, isReconnect) => {
+            setWsConnected(connected)
+            if (connected && isReconnect) {
+              extensionSyncRef.current?.()
+            }
+          })
+          setWsConnected(ws.isConnected())
+          // Connect chat WebSocket (idempotent — skips if already connected)
+          ws.connect()
 
-        return cleanup
-      })
+          return cleanup
+        })
+      }
       import('@/lib/events').then(({ refreshEventConnections }) => {
         refreshEventConnections()
       })
@@ -533,7 +544,7 @@ function App() {
         closeAllEventsConnections()
       })
     }
-  }, [isAuthenticated, setWsConnected, currentPath])
+  }, [isAuthenticated, user?.role, setWsConnected, currentPath])
 
 
   // Backend never came up — show a clear error page above everything else

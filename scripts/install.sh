@@ -202,6 +202,11 @@ install_linux() {
     # Install systemd service
     if [ "$NO_SERVICE" != "true" ]; then
         status "Installing systemd service..."
+        if [ "$USE_NGINX" = "true" ]; then
+            BIND_HOST="127.0.0.1"
+        else
+            BIND_HOST="0.0.0.0"
+        fi
         $SUDO tee /etc/systemd/system/neomind.service >/dev/null <<EOF
 [Unit]
 Description=NeoMind Edge AI Platform
@@ -214,7 +219,7 @@ Type=simple
 User=neomind
 Group=neomind
 WorkingDirectory=${DATA_DIR}
-ExecStart=${INSTALL_DIR}/neomind serve --host 0.0.0.0 --port ${PORT}
+ExecStart=${INSTALL_DIR}/neomind serve --host ${BIND_HOST} --port ${PORT}
 Restart=always
 RestartSec=3
 TimeoutStopSec=30
@@ -250,7 +255,7 @@ EOF
         # file and the staging dir land in different trees.
         status "Installing web-upgrade helper units..."
         $SUDO mkdir -p "${DATA_DIR}/data/upgrade"
-        $SUDO chown neomind:neomind "${DATA_DIR}/data/upgrade"
+        $SUDO chown -R neomind:neomind "${DATA_DIR}/data"
         $SUDO tee /etc/systemd/system/neomind-upgrade-apply.service >/dev/null <<EOF
 [Unit]
 Description=NeoMind web-triggered upgrade apply helper
@@ -400,27 +405,35 @@ EOF
     # Configure firewall
     status "Configuring firewall..."
     if available ufw; then
-        # Allow nginx (port 80) when using nginx
         if [ "$USE_NGINX" = "true" ]; then
+            # Behind nginx: only expose port 80; backend stays bound to 127.0.0.1.
             if ! $SUDO ufw status 2>/dev/null | grep -q "^80/tcp"; then
                 $SUDO ufw allow 80/tcp >/dev/null 2>&1 || true
             fi
+            success "Firewall rules added (ufw: 80)"
+        else
+            if ! $SUDO ufw status 2>/dev/null | grep -q "^${PORT}/tcp"; then
+                $SUDO ufw allow ${PORT}/tcp >/dev/null 2>&1 || true
+            fi
+            success "Firewall rules added (ufw: ${PORT})"
         fi
-        # Always allow API port
-        if ! $SUDO ufw status 2>/dev/null | grep -q "^${PORT}/tcp"; then
-            $SUDO ufw allow ${PORT}/tcp >/dev/null 2>&1 || true
-        fi
-        success "Firewall rules added (ufw: ${PORT})"
     elif available firewall-cmd; then
         if [ "$USE_NGINX" = "true" ]; then
             $SUDO firewall-cmd --permanent --add-service=http >/dev/null 2>&1 || true
+            $SUDO firewall-cmd --reload >/dev/null 2>&1 || true
+            success "Firewall rules added (firewalld: http)"
+        else
+            $SUDO firewall-cmd --permanent --add-port=${PORT}/tcp >/dev/null 2>&1 || true
+            $SUDO firewall-cmd --reload >/dev/null 2>&1 || true
+            success "Firewall rules added (firewalld: ${PORT})"
         fi
-        $SUDO firewall-cmd --permanent --add-port=${PORT}/tcp >/dev/null 2>&1 || true
-        $SUDO firewall-cmd --reload >/dev/null 2>&1 || true
-        success "Firewall rules added (firewalld: ${PORT})"
     else
         warning "No firewall tool found (ufw/firewalld)."
-        warning "Make sure port ${PORT} is open for LAN access."
+        if [ "$USE_NGINX" = "true" ]; then
+            warning "Make sure port 80 is open for LAN access."
+        else
+            warning "Make sure port ${PORT} is open for LAN access."
+        fi
     fi
 
     success "Installation complete!"
@@ -566,12 +579,14 @@ print_post_install() {
             echo "Access the application:"
             if [ "$USE_NGINX" = "true" ] && available nginx; then
                 echo "  Web UI:  ${BOLD}http://${LAN_IP:-localhost}${NC} (nginx)"
-                echo "  Direct:  http://${LAN_IP:-localhost}:${PORT}"
+                echo "  API:     http://${LAN_IP:-localhost}/api"
+                echo "  Docs:    http://${LAN_IP:-localhost}/api/docs"
+                echo "  Backend: http://127.0.0.1:${PORT} (loopback only)"
             else
                 echo "  Web UI:  ${BOLD}http://${LAN_IP:-localhost}:${PORT}${NC}"
+                echo "  API:     http://${LAN_IP:-localhost}:${PORT}/api"
+                echo "  Docs:    http://${LAN_IP:-localhost}:${PORT}/api/docs"
             fi
-            echo "  API:     http://${LAN_IP:-localhost}:${PORT}/api"
-            echo "  Docs:    http://${LAN_IP:-localhost}:${PORT}/api/docs"
         else
             echo "To start NeoMind:"
             echo "  ${INSTALL_DIR}/neomind serve"
@@ -608,10 +623,10 @@ print_post_install() {
 # llama.cpp prebuilt asset name for OS/ARCH (official ggml-org releases).
 llama_asset() {
     case "$OS/$ARCH" in
-        linux/x86_64) echo "ubuntu-x64" ;;
+        linux/x86_64|linux/amd64) echo "ubuntu-x64" ;;
         linux/aarch64|linux/arm64) echo "ubuntu-arm64" ;;
         darwin/arm64) echo "macos-arm64" ;;
-        darwin/x86_64) echo "macos-x64" ;;
+        darwin/x86_64|darwin/amd64) echo "macos-x64" ;;
         *) return 1 ;;
     esac
 }
@@ -712,14 +727,31 @@ install_builtin_model() {
             sha="fa401b55b07ee70a54c6dae3903c783a6e65064312529ea57175cb5f8dec6634"; quant="qat_q4_0" ;;
         *) error "Unknown BUILTIN_MODEL: ${id} (sparkx2.6-1.7b | lfm25-2.6b | qwen3.5-4b | gemma4-e2b | none)" ;;
     esac
-    dir="${DATA_DIR}/models/${id}"
+    dir="${DATA_DIR}/data/models/${id}"
     $SUDO mkdir -p "$dir"
     status "Downloading builtin model ${id}..."
     $SUDO curl -fsSL -o "$dir/$local" "https://huggingface.co/$repo/resolve/main/$file" || {
         error "Failed to download ${id} from HuggingFace"
     }
+    if [ -n "$sha" ]; then
+        status "Verifying SHA-256 checksum for ${id}..."
+        actual_sha=""
+        if available sha256sum; then
+            actual_sha=$(sha256sum "$dir/$local" | awk '{print $1}')
+        elif available shasum; then
+            actual_sha=$(shasum -a 256 "$dir/$local" | awk '{print $1}')
+        else
+            $SUDO rm -f "$dir/$local"
+            error "Neither sha256sum nor shasum is installed; cannot verify ${id}"
+        fi
+        if [ "$actual_sha" != "$sha" ]; then
+            $SUDO rm -f "$dir/$local"
+            error "SHA-256 mismatch for ${id}: expected ${sha}, got ${actual_sha}"
+        fi
+        success "SHA-256 verified for ${id}"
+    fi
     $SUDO sh -c "printf '{\"id\":\"%s\",\"version\":\"1.0\",\"file_name\":\"%s\",\"sha256\":\"%s\",\"quant\":\"%s\"}' \"$id\" \"$local\" \"$sha\" \"$quant\" > \"$dir/manifest.json\""
-    $SUDO chown -R neomind:neomind "$dir" 2>/dev/null || true
+    $SUDO chown -R neomind:neomind "${DATA_DIR}/data" 2>/dev/null || true
     success "Builtin model ${id} installed -> ${dir}"
 }
 

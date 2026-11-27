@@ -39,8 +39,43 @@ use axum::{
 };
 use futures::Stream;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
+
+/// Tracks drafts currently running background analysis or LLM enhancement so
+/// concurrent requests for the same draft are deduplicated with 409 Conflict.
+static IN_FLIGHT_DRAFT_OPS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+
+fn in_flight_draft_ops() -> &'static Mutex<HashSet<String>> {
+    IN_FLIGHT_DRAFT_OPS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+struct DraftInFlightGuard {
+    key: String,
+}
+
+impl DraftInFlightGuard {
+    fn try_acquire(key: String) -> Option<Self> {
+        let mut set = in_flight_draft_ops()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if set.insert(key.clone()) {
+            Some(Self { key })
+        } else {
+            None
+        }
+    }
+}
+
+impl Drop for DraftInFlightGuard {
+    fn drop(&mut self) {
+        let mut set = in_flight_draft_ops()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        set.remove(&self.key);
+    }
+}
 
 /// Helper to create an LLM runtime from a configuration
 /// This creates a simple default runtime for auto-onboarding when LLM is not fully configured
@@ -250,6 +285,10 @@ pub async fn approve_draft_device(
 ) -> HandlerResult<ApproveDraftResponse> {
     let manager = get_auto_onboard_manager(&state).await?;
     let device_service = state.devices.service.clone();
+
+    // Serialize concurrent approve / reject / confirm-association on the same draft.
+    let draft_lock = manager.confirm_draft_lock_for(&device_id);
+    let _draft_guard = draft_lock.lock().await;
 
     // Get the draft
     let draft = manager.get_draft(&device_id).await.ok_or_else(|| {
@@ -615,6 +654,9 @@ pub async fn reject_draft_device(
     Json(request): Json<RejectDraftDeviceRequest>,
 ) -> HandlerResult<SuccessResponse> {
     let manager = get_auto_onboard_manager(&state).await?;
+    let draft_lock = manager.confirm_draft_lock_for(&device_id);
+    let _draft_guard = draft_lock.lock().await;
+
     manager
         .reject_device(&device_id, &request.reason)
         .await
@@ -951,10 +993,18 @@ pub async fn trigger_draft_analysis(
         ));
     }
 
-    // Trigger analysis in background
+    let in_flight_guard = DraftInFlightGuard::try_acquire(device_id.clone()).ok_or_else(|| {
+        ErrorResponse::conflict(format!(
+            "Analysis or enhancement is already running for draft '{}'",
+            device_id
+        ))
+    })?;
+
+    // Trigger analysis in background (RAII guard releases on completion or panic)
     let manager_clone = manager.clone();
     let device_id_clone = device_id.clone();
     tokio::spawn(async move {
+        let _guard = in_flight_guard;
         let _ = manager_clone
             .analyze_device(&draft_id, &device_id_clone, samples)
             .await;
@@ -998,11 +1048,19 @@ pub async fn enhance_draft_with_llm(
         )
     })?;
 
-    // Trigger LLM enhancement in background
+    let in_flight_guard = DraftInFlightGuard::try_acquire(device_id.clone()).ok_or_else(|| {
+        ErrorResponse::conflict(format!(
+            "Analysis or enhancement is already running for draft '{}'",
+            device_id
+        ))
+    })?;
+
+    // Trigger LLM enhancement in background (RAII guard releases on completion or panic)
     let manager_clone = manager.clone();
     let device_id_clone = device_id.clone();
     let metrics_clone = gen_type.metrics.clone();
     tokio::spawn(async move {
+        let _guard = in_flight_guard;
         // Use the manager's public method for LLM enhancement
         let enhancements: Vec<(String, crate::automation::discovery::MetricEnhancement)> =
             manager_clone

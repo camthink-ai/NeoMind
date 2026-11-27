@@ -525,15 +525,70 @@ function ExtensionDetailView({
     }
   }, [extension.id])
 
+  // Strip ASCII control characters and whitespace before protocol inspection.
+  const normalizeRawUrl = (raw: string | undefined | null): string =>
+    (raw ?? "").replace(/[\u0000-\u001f\u007f]/g, "").trim()
+
+  // Strictly validate external link URLs: allow ONLY https:, http:, mailto:, or # anchors.
+  // Explicitly rejects javascript:, data:, vbscript:, file:, etc.
+  const sanitizeSafeLinkUrl = (raw: string | undefined | null): string | undefined => {
+    const cleaned = normalizeRawUrl(raw)
+    if (!cleaned) return undefined
+    if (cleaned.startsWith("#")) return cleaned
+    try {
+      const parsed = new URL(cleaned)
+      if (
+        parsed.protocol === "https:" ||
+        parsed.protocol === "http:" ||
+        parsed.protocol === "mailto:"
+      ) {
+        return parsed.href
+      }
+      return undefined
+    } catch {
+      return undefined
+    }
+  }
+
   // Resolve a relative path inside the README to an absolute GitHub raw URL
   // (so screenshots / doc links load instead of 404'ing against the app).
-  // Absolute URLs (http[s]:, mailto:) and in-page anchors (#) are kept as-is.
-  const resolveReadmeUrl = (raw: string | undefined): string | undefined => {
-    if (!raw) return raw
-    if (/^(https?:|mailto:|#|data:)/i.test(raw)) return raw
-    const base = `https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/${extension.id}/`
-    return base + raw.replace(/^\.?\//, "")
+  // For links: allow ONLY https:, http:, mailto:, # anchors, or safe relative paths.
+  // For images: allow ONLY https:, http:, or safe relative paths.
+  // Always reject javascript:, data:, vbscript:, etc.
+  const resolveReadmeUrl = (
+    raw: string | undefined,
+    kind: "link" | "image" = "link"
+  ): string | undefined => {
+    const cleaned = normalizeRawUrl(raw)
+    if (!cleaned) return undefined
+    if (cleaned.startsWith("#")) {
+      return kind === "link" ? cleaned : undefined
+    }
+    // Any explicit URI scheme or protocol-relative URL must pass protocol allowlist.
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(cleaned) || cleaned.startsWith("//")) {
+      try {
+        const parsed = new URL(cleaned.startsWith("//") ? `https:${cleaned}` : cleaned)
+        if (parsed.protocol === "https:" || parsed.protocol === "http:") {
+          return parsed.href
+        }
+        if (kind === "link" && parsed.protocol === "mailto:") {
+          return parsed.href
+        }
+        return undefined
+      } catch {
+        return undefined
+      }
+    }
+    try {
+      const base = `https://raw.githubusercontent.com/camthink-ai/NeoMind-Extensions/main/extensions/${encodeURIComponent(extension.id)}/`
+      const resolved = new URL(cleaned.replace(/^\.?\//, ""), base)
+      return resolved.protocol === "https:" ? resolved.href : undefined
+    } catch {
+      return undefined
+    }
   }
+
+  const safeHomepage = sanitizeSafeLinkUrl(extension.homepage)
 
   return (
     <div className="flex flex-col h-full">
@@ -558,9 +613,9 @@ function ExtensionDetailView({
         <div className="flex items-center gap-4 mt-2 text-sm text-muted-foreground flex-wrap">
           <span>by {extension.author}</span>
           <span>{extension.license}</span>
-          {extension.homepage && (
+          {safeHomepage && (
             <a
-              href={extension.homepage}
+              href={safeHomepage}
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-1 hover:text-primary"
@@ -672,17 +727,26 @@ function ExtensionDetailView({
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 components={{
-                  img: ({ node: _node, ...props }) => (
-                    <img {...props} src={resolveReadmeUrl(props.src)} alt={props.alt || 'image'} />
-                  ),
-                  a: ({ node: _node, ...props }) => (
-                    <a
-                      {...props}
-                      href={resolveReadmeUrl(props.href)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    />
-                  ),
+                  img: ({ node: _node, ...props }) => {
+                    const safeSrc = resolveReadmeUrl(props.src, "image")
+                    if (!safeSrc) return null
+                    return <img {...props} src={safeSrc} alt={props.alt || 'image'} />
+                  },
+                  a: ({ node: _node, ...props }) => {
+                    const safeHref = resolveReadmeUrl(props.href, "link")
+                    if (!safeHref) {
+                      return <span>{props.children}</span>
+                    }
+                    const isAnchor = safeHref.startsWith("#")
+                    return (
+                      <a
+                        {...props}
+                        href={safeHref}
+                        target={isAnchor ? undefined : "_blank"}
+                        rel={isAnchor ? undefined : "noopener noreferrer"}
+                      />
+                    )
+                  },
                 }}
               >
                 {readme}

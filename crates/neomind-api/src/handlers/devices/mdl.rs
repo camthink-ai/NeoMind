@@ -279,22 +279,26 @@ fn parse_downlink_commands(example: &str) -> Result<Vec<CommandDefinition>, Erro
 /// Parse a single JSON object from the beginning of a string.
 /// Returns the parsed value and the remaining unparsed string.
 fn parse_one_json(input: &str) -> Result<(serde_json::Value, &str), String> {
-    let mut chars = input.chars().peekable();
-    let mut depth = 0;
+    let mut depth = 0usize;
     let mut in_string = false;
     let mut escape_next = false;
-    let mut start_idx = None;
-    let mut end_idx = 0;
+    let mut start_idx: Option<usize> = None;
+    let mut end_idx: Option<usize> = None;
 
-    // Skip leading whitespace and count how many we skipped
-    let leading_ws = input.chars().take_while(|c| c.is_whitespace()).count();
+    for (idx, c) in input.char_indices() {
+        if start_idx.is_none() {
+            if c.is_whitespace() {
+                continue;
+            }
+            if c == '{' || c == '[' {
+                start_idx = Some(idx);
+                depth = 1;
+                continue;
+            } else {
+                return Err("No JSON object found".to_string());
+            }
+        }
 
-    // Skip the same whitespace in the iterator
-    for _ in 0..leading_ws {
-        chars.next();
-    }
-
-    for (i, c) in chars.enumerate() {
         if escape_next {
             escape_next = false;
             continue;
@@ -304,20 +308,16 @@ fn parse_one_json(input: &str) -> Result<(serde_json::Value, &str), String> {
             '\\' if in_string => {
                 escape_next = true;
             }
-            '"' if !escape_next => {
+            '"' => {
                 in_string = !in_string;
             }
             '{' | '[' if !in_string => {
-                if depth == 0 {
-                    // Store the actual position in the original string
-                    start_idx = Some(leading_ws + i);
-                }
                 depth += 1;
             }
             '}' | ']' if !in_string => {
                 depth -= 1;
                 if depth == 0 {
-                    end_idx = leading_ws + i + 1;
+                    end_idx = Some(idx + c.len_utf8());
                     break;
                 }
             }
@@ -326,11 +326,7 @@ fn parse_one_json(input: &str) -> Result<(serde_json::Value, &str), String> {
     }
 
     let start = start_idx.ok_or("No JSON object found")?;
-    let end = if end_idx == 0 {
-        return Err("Unclosed JSON object".to_string());
-    } else {
-        end_idx
-    };
+    let end = end_idx.ok_or_else(|| "Unclosed JSON object".to_string())?;
 
     let json_str = &input[start..end];
     let json_value: serde_json::Value =
@@ -1112,5 +1108,23 @@ mod tests {
         assert!(commands[0].payload_template.contains(r#""params": {"#));
         assert!(commands[0].payload_template.contains("${{brightness}}"));
         assert!(commands[0].payload_template.contains("${{color}}"));
+    }
+
+    #[test]
+    fn test_parse_one_json_multibyte_cjk_no_panic() {
+        // Multi-byte UTF-8 keys, values, and leading CJK ideographic space must not panic
+        let input = "\u{3000}{\"动作\": \"开启\", \"描述\": \"客厅主灯\"} {\"动作\": \"关闭\", \"备注\": \"夜间模式\"}";
+        let (first, rest1) = parse_one_json(input).expect("first CJK JSON object");
+        assert_eq!(first["动作"], "开启");
+        assert_eq!(first["描述"], "客厅主灯");
+
+        let (second, rest2) = parse_one_json(rest1).expect("second CJK JSON object");
+        assert_eq!(second["动作"], "关闭");
+        assert_eq!(second["备注"], "夜间模式");
+        assert_eq!(rest2.trim(), "");
+
+        // Also verify parse_downlink_commands end-to-end with concatenated CJK JSON objects
+        let commands = parse_downlink_commands(input).expect("parse CJK downlink commands");
+        assert_eq!(commands.len(), 2);
     }
 }

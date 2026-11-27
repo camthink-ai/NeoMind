@@ -510,27 +510,177 @@ pub async fn get_extension_pages_handler(
     ok(all_pages)
 }
 
+/// Maximum allowed static asset size served from an extension directory (16 MiB).
+const MAX_EXTENSION_ASSET_BYTES: u64 = 16 * 1024 * 1024;
+
+/// Resolve and validate an extension asset path strictly within `ext_dir/frontend/`
+/// or `ext_dir/assets/`.
+///
+/// Rejects path traversal (`..`, `.`), backslashes, leading slashes, NUL bytes,
+/// and any attempt to reach private extension directories (`data/`, `config/`,
+/// `binaries/`, `models/`, `manifest.json`). Fails closed on canonicalization
+/// errors so symlinks escaping the allowed subtree can never be served.
+async fn resolve_extension_asset_path(
+    ext_dir: &std::path::Path,
+    asset_path: &str,
+) -> Result<std::path::PathBuf, ErrorResponse> {
+    if asset_path.is_empty()
+        || asset_path.contains('\0')
+        || asset_path.contains('\\')
+        || asset_path.starts_with('/')
+        || asset_path.contains("..")
+    {
+        return Err(ErrorResponse::bad_request("Invalid asset path"));
+    }
+
+    let mut segments = asset_path.split('/');
+    let Some(first_seg) = segments.next() else {
+        return Err(ErrorResponse::bad_request("Invalid asset path"));
+    };
+
+    if first_seg.is_empty()
+        || first_seg == "."
+        || first_seg == ".."
+        || segments.any(|seg| seg.is_empty() || seg == "." || seg == "..")
+    {
+        return Err(ErrorResponse::bad_request("Invalid asset path"));
+    }
+
+    // Explicitly block private extension subtrees and manifest.json.
+    if matches!(
+        first_seg,
+        "data" | "config" | "binaries" | "models" | "manifest.json"
+    ) {
+        return Err(ErrorResponse::bad_request("Invalid asset path"));
+    }
+
+    // Map strictly into ext_dir/frontend/ or ext_dir/assets/.
+    // Manifests declare bundle_path either prefixed with `frontend/` / `assets/`
+    // or relative to `frontend/` (e.g. `dist/bundle.js`).
+    let (allowed_dir, candidate_file) = match first_seg {
+        "frontend" => {
+            let rest = asset_path
+                .strip_prefix("frontend/")
+                .filter(|r| !r.is_empty())
+                .ok_or_else(|| ErrorResponse::bad_request("Invalid asset path"))?;
+            let dir = ext_dir.join("frontend");
+            let file = dir.join(rest);
+            (dir, file)
+        }
+        "assets" => {
+            let rest = asset_path
+                .strip_prefix("assets/")
+                .filter(|r| !r.is_empty())
+                .ok_or_else(|| ErrorResponse::bad_request("Invalid asset path"))?;
+            let dir = ext_dir.join("assets");
+            let file = dir.join(rest);
+            (dir, file)
+        }
+        _ => {
+            let dir = ext_dir.join("frontend");
+            let file = dir.join(asset_path);
+            (dir, file)
+        }
+    };
+
+    // Fail closed on canonicalize errors: both the allowed root and target file
+    // must exist and canonicalize, and the resolved file must stay inside the
+    // canonical allowed subtree (defeating symlink escapes).
+    let Ok(real_allowed_dir) = tokio::fs::canonicalize(&allowed_dir).await else {
+        return Err(ErrorResponse::not_found("Asset not found"));
+    };
+    let Ok(real_file) = tokio::fs::canonicalize(&candidate_file).await else {
+        return Err(ErrorResponse::not_found("Asset not found"));
+    };
+
+    if !real_file.starts_with(&real_allowed_dir) {
+        return Err(ErrorResponse::bad_request("Invalid asset path"));
+    }
+
+    Ok(real_file)
+}
+
+/// Serve a validated asset from `ext_dir` (factored out for direct unit testing).
+async fn serve_extension_asset_from_dir(
+    ext_dir: &std::path::Path,
+    asset_path: &str,
+) -> Result<axum::response::Response, ErrorResponse> {
+    use axum::body::Body;
+    use axum::http::{header, StatusCode};
+
+    let real_file = resolve_extension_asset_path(ext_dir, asset_path).await?;
+
+    let metadata = tokio::fs::metadata(&real_file)
+        .await
+        .map_err(|_| ErrorResponse::not_found("Asset not found"))?;
+    if !metadata.is_file() {
+        return Err(ErrorResponse::not_found("Asset not found"));
+    }
+    if metadata.len() > MAX_EXTENSION_ASSET_BYTES {
+        return Err(ErrorResponse::bad_request(format!(
+            "Asset exceeds maximum size of {} bytes",
+            MAX_EXTENSION_ASSET_BYTES
+        )));
+    }
+
+    // Read file asynchronously (never block the tokio runtime with std::fs::read).
+    let content = tokio::fs::read(&real_file)
+        .await
+        .map_err(|e| ErrorResponse::internal(format!("Failed to read asset: {}", e)))?;
+    if content.len() as u64 > MAX_EXTENSION_ASSET_BYTES {
+        return Err(ErrorResponse::bad_request(format!(
+            "Asset exceeds maximum size of {} bytes",
+            MAX_EXTENSION_ASSET_BYTES
+        )));
+    }
+
+    // Determine content type based on file extension (case-insensitive).
+    let ext_lower = real_file
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase());
+    let mime_type = match ext_lower.as_deref() {
+        Some("js" | "cjs" | "mjs") => "application/javascript",
+        Some("json") => "application/json",
+        Some("css") => "text/css",
+        Some("html" | "htm") => "text/html",
+        Some("svg") => "image/svg+xml",
+        Some("png") => "image/png",
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("woff") => "font/woff",
+        Some("woff2") => "font/woff2",
+        Some("ttf") => "font/ttf",
+        _ => "application/octet-stream",
+    };
+
+    // Build response. Use no-cache so the client always revalidates:
+    // extension bundles change on every rebuild and a stale max-age cache
+    // (the previous "public, max-age=3600") made iterating in dev painful —
+    // Tauri WKWebView would serve a 1-hour-stale bundle even after we just
+    // dropped a new one in place. Bundle is small (tens of KB); re-fetch on
+    // each navigation is negligible.
+    let mut builder = axum::response::Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, mime_type)
+        .header(header::CACHE_CONTROL, "no-cache")
+        .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff");
+
+    if matches!(ext_lower.as_deref(), Some("html" | "htm" | "svg")) {
+        builder = builder.header(header::CONTENT_SECURITY_POLICY, "sandbox");
+    }
+
+    builder
+        .body(Body::from(content))
+        .map_err(|e| ErrorResponse::internal(format!("Failed to build response: {}", e)))
+}
+
 /// GET /api/extensions/:id/assets/*
 /// Serve static assets from extension directory.
 pub async fn serve_extension_asset_handler(
     Path((id, asset_path)): Path<(String, String)>,
 ) -> Result<axum::response::Response, ErrorResponse> {
-    use axum::body::Body;
-    use axum::http::{header, StatusCode};
-
-    // Prevent directory traversal AND absolute-path escape via asset_path.
-    // `PathBuf::join` REPLACES the base when the argument is absolute — an
-    // asset_path of "/etc/passwd" (no ".." anywhere) sailed through the old
-    // check and served the file. Reject absolute paths, dot segments, and
-    // verify the resolved file stays inside the extension dir.
     validate_extension_id(&id)?;
-    if asset_path.contains("..")
-        || asset_path.starts_with('/')
-        || asset_path.starts_with('\\')
-        || asset_path.split('/').any(|seg| seg == ".")
-    {
-        return Err(ErrorResponse::bad_request("Invalid asset path"));
-    }
 
     // Extension directory is always data/extensions/{id}
     let data_dir = neomind_core::paths::data_dir()
@@ -540,66 +690,7 @@ pub async fn serve_extension_asset_handler(
         .join("extensions")
         .join(&id);
 
-    let asset_file = ext_dir.join(&asset_path);
-
-    // Check if file exists
-    if !asset_file.exists() {
-        return Err(ErrorResponse::not_found("Asset not found"));
-    }
-    // Belt-and-suspenders: the resolved file MUST live under the extension
-    // dir (canonicalized comparison defeats every remaining join trick).
-    if let (Ok(real_file), Ok(real_dir)) = (
-        std::fs::canonicalize(&asset_file),
-        std::fs::canonicalize(&ext_dir),
-    ) {
-        if !real_file.starts_with(&real_dir) {
-            return Err(ErrorResponse::bad_request("Invalid asset path"));
-        }
-    }
-
-    // Read file content
-    let content = match std::fs::read(&asset_file) {
-        Ok(c) => c,
-        Err(e) => {
-            return Err(ErrorResponse::internal(format!(
-                "Failed to read asset: {}",
-                e
-            )))
-        }
-    };
-
-    // Determine content type based on file extension
-    let mime_type = asset_file
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| match ext {
-            "js" | "cjs" | "mjs" => "application/javascript",
-            "json" => "application/json",
-            "css" => "text/css",
-            "html" => "text/html",
-            "svg" => "image/svg+xml",
-            "png" => "image/png",
-            "jpg" | "jpeg" => "image/jpeg",
-            "gif" => "image/gif",
-            "woff" => "font/woff",
-            "woff2" => "font/woff2",
-            "ttf" => "font/ttf",
-            _ => "application/octet-stream",
-        })
-        .unwrap_or("application/octet-stream");
-
-    // Build response. Use no-cache so the client always revalidates:
-    // extension bundles change on every rebuild and a stale max-age cache
-    // (the previous "public, max-age=3600") made iterating in dev painful —
-    // Tauri WKWebView would serve a 1-hour-stale bundle even after we just
-    // dropped a new one in place. Bundle is small (tens of KB); re-fetch on
-    // each navigation is negligible.
-    axum::response::Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, mime_type)
-        .header(header::CACHE_CONTROL, "no-cache")
-        .body(Body::from(content))
-        .map_err(|e| ErrorResponse::internal(format!("Failed to build response: {}", e)))
+    serve_extension_asset_from_dir(&ext_dir, &asset_path).await
 }
 
 /// GET /api/extensions/dashboard-components
@@ -629,4 +720,107 @@ pub async fn get_all_dashboard_components_handler(
     }
 
     ok(all_components)
+}
+
+#[cfg(test)]
+mod asset_security_tests {
+    use super::*;
+    use axum::http::header;
+
+    #[tokio::test]
+    async fn rejects_private_dirs_manifest_and_traversal() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ext_dir = tmp.path();
+
+        std::fs::create_dir_all(ext_dir.join("data")).unwrap();
+        std::fs::write(ext_dir.join("data/license.key"), "SECRET-KEY").unwrap();
+        std::fs::create_dir_all(ext_dir.join("config")).unwrap();
+        std::fs::write(ext_dir.join("config/x.json"), "{}").unwrap();
+        std::fs::create_dir_all(ext_dir.join("models")).unwrap();
+        std::fs::write(ext_dir.join("models/a.onnx"), b"onnx").unwrap();
+        std::fs::create_dir_all(ext_dir.join("binaries")).unwrap();
+        std::fs::write(ext_dir.join("binaries/ext.so"), b"elf").unwrap();
+        std::fs::write(ext_dir.join("manifest.json"), r#"{"id":"demo"}"#).unwrap();
+        std::fs::create_dir_all(ext_dir.join("frontend/dist")).unwrap();
+        std::fs::write(ext_dir.join("frontend/dist/bundle.js"), "console.log(1);").unwrap();
+        std::fs::write(ext_dir.join("frontend/page.html"), "<html></html>").unwrap();
+        std::fs::create_dir_all(ext_dir.join("assets")).unwrap();
+        std::fs::write(ext_dir.join("assets/logo.svg"), "<svg></svg>").unwrap();
+
+        for forbidden in [
+            "data/license.key",
+            "config/x.json",
+            "models/a.onnx",
+            "binaries/ext.so",
+            "manifest.json",
+            "../manifest.json",
+            "frontend/../data/license.key",
+            "assets/../config/x.json",
+            "/etc/passwd",
+            "frontend\\dist\\bundle.js",
+            "frontend/dist/bundle.js\0.png",
+        ] {
+            assert!(
+                serve_extension_asset_from_dir(ext_dir, forbidden)
+                    .await
+                    .is_err(),
+                "must reject asset path: {forbidden}"
+            );
+        }
+
+        // Legitimate frontend/ prefixed path
+        let resp = serve_extension_asset_from_dir(ext_dir, "frontend/dist/bundle.js")
+            .await
+            .expect("frontend/dist/bundle.js must resolve");
+        assert_eq!(
+            resp.headers()
+                .get(header::X_CONTENT_TYPE_OPTIONS)
+                .and_then(|v| v.to_str().ok()),
+            Some("nosniff")
+        );
+        assert!(resp.headers().get(header::CONTENT_SECURITY_POLICY).is_none());
+
+        // Legitimate relative-to-frontend path (matches manifest bundle_path: "dist/bundle.js")
+        let resp_rel = serve_extension_asset_from_dir(ext_dir, "dist/bundle.js")
+            .await
+            .expect("dist/bundle.js relative to frontend/ must resolve");
+        assert_eq!(
+            resp_rel
+                .headers()
+                .get(header::X_CONTENT_TYPE_OPTIONS)
+                .and_then(|v| v.to_str().ok()),
+            Some("nosniff")
+        );
+
+        // Legitimate assets/ SVG gets nosniff + sandbox CSP
+        let resp_svg = serve_extension_asset_from_dir(ext_dir, "assets/logo.svg")
+            .await
+            .expect("assets/logo.svg must resolve");
+        assert_eq!(
+            resp_svg
+                .headers()
+                .get(header::X_CONTENT_TYPE_OPTIONS)
+                .and_then(|v| v.to_str().ok()),
+            Some("nosniff")
+        );
+        assert_eq!(
+            resp_svg
+                .headers()
+                .get(header::CONTENT_SECURITY_POLICY)
+                .and_then(|v| v.to_str().ok()),
+            Some("sandbox")
+        );
+
+        // HTML also gets sandbox CSP
+        let resp_html = serve_extension_asset_from_dir(ext_dir, "frontend/page.html")
+            .await
+            .expect("frontend/page.html must resolve");
+        assert_eq!(
+            resp_html
+                .headers()
+                .get(header::CONTENT_SECURITY_POLICY)
+                .and_then(|v| v.to_str().ok()),
+            Some("sandbox")
+        );
+    }
 }

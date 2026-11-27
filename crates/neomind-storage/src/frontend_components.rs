@@ -145,6 +145,9 @@ pub struct MarketComponentEntry {
     pub manifest_url: String,
     /// URL to the component's `bundle.js` on GitHub.
     pub bundle_url: String,
+    /// Optional SHA-256 hex digest of `bundle.js` for integrity verification.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bundle_sha256: Option<String>,
 }
 
 /// Top-level structure of the marketplace `index.json`.
@@ -176,6 +179,40 @@ pub struct FrontendComponentStore {
 }
 
 impl FrontendComponentStore {
+    /// Validate a component ID strictly (`[a-zA-Z0-9_-]`, 1..=128 chars).
+    pub fn validate_id(id: &str) -> Result<(), Error> {
+        if id.is_empty()
+            || id.len() > 128
+            || !id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            return Err(Error::InvalidInput(format!(
+                "Invalid component ID '{}': must be 1-128 ASCII alphanumeric, '-' or '_' characters",
+                id
+            )));
+        }
+        Ok(())
+    }
+
+    /// Resolve a component directory inside `base_dir` with canonical containment.
+    fn component_dir(&self, id: &str) -> Result<PathBuf, Error> {
+        Self::validate_id(id)?;
+        let canonical_base = fs::canonicalize(&self.base_dir)?;
+        let dir = canonical_base.join(id);
+        if dir.exists() {
+            let canonical_dir = fs::canonicalize(&dir)?;
+            if !canonical_dir.starts_with(&canonical_base) || canonical_dir == canonical_base {
+                return Err(Error::InvalidInput(format!(
+                    "Component path escapes store directory for ID '{}'",
+                    id
+                )));
+            }
+            return Ok(canonical_dir);
+        }
+        Ok(dir)
+    }
+
     /// Open (or create) the store at the given base directory.
     pub fn open(base_dir: impl Into<PathBuf>) -> Result<Self, Error> {
         let base_dir = base_dir.into();
@@ -185,12 +222,20 @@ impl FrontendComponentStore {
 
     /// Install a component by writing its manifest and bundle bytes.
     pub fn install(&self, manifest: &ComponentManifest, bundle_bytes: &[u8]) -> Result<(), Error> {
-        let dir = self.base_dir.join(&manifest.id);
+        let dir = self.component_dir(&manifest.id)?;
         fs::create_dir_all(&dir)?;
+        let canonical_base = fs::canonicalize(&self.base_dir)?;
+        let canonical_dir = fs::canonicalize(&dir)?;
+        if !canonical_dir.starts_with(&canonical_base) || canonical_dir == canonical_base {
+            return Err(Error::InvalidInput(format!(
+                "Component path escapes store directory for ID '{}'",
+                manifest.id
+            )));
+        }
 
         let manifest_json = serde_json::to_string_pretty(manifest)?;
-        crate::atomic_write::write(&dir.join(MANIFEST_FILE), manifest_json)?;
-        crate::atomic_write::write(&dir.join(BUNDLE_FILE), bundle_bytes)?;
+        crate::atomic_write::write(&canonical_dir.join(MANIFEST_FILE), manifest_json)?;
+        crate::atomic_write::write(&canonical_dir.join(BUNDLE_FILE), bundle_bytes)?;
 
         Ok(())
     }
@@ -227,25 +272,40 @@ impl FrontendComponentStore {
     ///
     /// Returns `Ok(None)` if the component directory or manifest does not exist.
     pub fn load_manifest(&self, id: &str) -> Result<Option<ComponentManifest>, Error> {
-        let manifest_path = self.base_dir.join(id).join(MANIFEST_FILE);
+        let dir = self.component_dir(id)?;
+        let manifest_path = dir.join(MANIFEST_FILE);
         if !manifest_path.exists() {
             return Ok(None);
         }
-        Self::read_manifest_file(&manifest_path)
+        let canonical_base = fs::canonicalize(&self.base_dir)?;
+        let canonical_manifest = fs::canonicalize(&manifest_path)?;
+        if !canonical_manifest.starts_with(&canonical_base) {
+            return Err(Error::InvalidInput(format!(
+                "Manifest path escapes store directory for ID '{}'",
+                id
+            )));
+        }
+        Self::read_manifest_file(&canonical_manifest)
     }
 
     /// Check whether a component with the given ID is installed.
     pub fn exists(&self, id: &str) -> bool {
-        self.base_dir.join(id).join(MANIFEST_FILE).exists()
+        let Ok(dir) = self.component_dir(id) else {
+            return false;
+        };
+        dir.join(MANIFEST_FILE).exists()
     }
 
     /// Get the filesystem path to a component's bundle file.
     ///
     /// Returns `None` if the component is not installed.
     pub fn get_bundle_path(&self, id: &str) -> Option<PathBuf> {
-        let path = self.base_dir.join(id).join(BUNDLE_FILE);
-        if path.exists() {
-            Some(path)
+        let dir = self.component_dir(id).ok()?;
+        let path = dir.join(BUNDLE_FILE);
+        let canonical_base = fs::canonicalize(&self.base_dir).ok()?;
+        let canonical_path = fs::canonicalize(&path).ok()?;
+        if canonical_path.starts_with(&canonical_base) && canonical_path.is_file() {
+            Some(canonical_path)
         } else {
             None
         }
@@ -253,7 +313,7 @@ impl FrontendComponentStore {
 
     /// Delete a component (removes the entire component directory).
     pub fn delete(&self, id: &str) -> Result<(), Error> {
-        let dir = self.base_dir.join(id);
+        let dir = self.component_dir(id)?;
         if dir.exists() {
             fs::remove_dir_all(&dir)?;
         }

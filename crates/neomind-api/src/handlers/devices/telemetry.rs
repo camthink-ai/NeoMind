@@ -12,6 +12,13 @@ use crate::handlers::{
 };
 use crate::models::ErrorResponse;
 
+/// Maximum metrics per request to prevent resource exhaustion.
+const MAX_METRICS_PER_REQUEST: usize = 50;
+/// Maximum metrics per request in `compress=true` mode.
+const MAX_COMPRESS_METRICS: usize = 10;
+/// Maximum points queried per metric in `compress=true` mode.
+const MAX_COMPRESS_POINTS_PER_METRIC: usize = 50_000;
+
 /// Transform-generated metric namespaces.
 /// Cached for performance - avoids recreating this array on every request.
 static TRANSFORM_NAMESPACES: OnceLock<[&str; 5]> = OnceLock::new();
@@ -288,12 +295,17 @@ pub async fn get_device_telemetry_handler(
     }
 
     // Limit metrics per request to prevent resource exhaustion
-    const MAX_METRICS_PER_REQUEST: usize = 50;
-    if target_metrics.len() > MAX_METRICS_PER_REQUEST {
+    let max_metrics = if compress {
+        MAX_COMPRESS_METRICS
+    } else {
+        MAX_METRICS_PER_REQUEST
+    };
+    if target_metrics.len() > max_metrics {
         return Err(ErrorResponse::bad_request(format!(
-            "Too many metrics requested: {} (max {})",
+            "Too many metrics requested: {} (max {}{})",
             target_metrics.len(),
-            MAX_METRICS_PER_REQUEST
+            max_metrics,
+            if compress { " in compress mode" } else { "" }
         )));
     }
 
@@ -408,9 +420,16 @@ pub async fn get_device_telemetry_handler(
 
                     // Use inner_store() to query raw storage DataPoints (serde_json::Value)
                     // directly, avoiding MetricValue→serde_json::Value round-trip conversion.
+                    // Cap points per metric so compress=true cannot exhaust memory.
                     let store = telemetry.inner_store();
                     match store
-                        .query_range(&device_source_id, &metric_name, start, end, None)
+                        .query_range(
+                            &device_source_id,
+                            &metric_name,
+                            start,
+                            end,
+                            Some(MAX_COMPRESS_POINTS_PER_METRIC),
+                        )
                         .await
                     {
                         Ok(result) => {
@@ -817,13 +836,16 @@ pub async fn get_device_telemetry_summary_handler(
     Path(device_id): Path<String>,
     Query(params): Query<HashMap<String, String>>,
 ) -> HandlerResult<serde_json::Value> {
-    // Default to last 24 hours (timestamps in seconds)
+    // Default to last 24 hours (timestamps in seconds), clamped to 1..=720h
     let end = chrono::Utc::now().timestamp();
     let start = params
         .get("hours")
         .and_then(|s| s.parse::<i64>().ok())
-        .map(|h| end - h * 3600)
-        .unwrap_or_else(|| end - 86400);
+        .map(|h| {
+            let clamped = h.clamp(1, 30 * 24);
+            end.saturating_sub(clamped.saturating_mul(3600))
+        })
+        .unwrap_or_else(|| end.saturating_sub(86400));
 
     // Unified source_id for storage queries
     let device_source_id = format!("device:{}", device_id);
@@ -1027,15 +1049,19 @@ pub async fn get_device_telemetry_summary_handler(
         }
     }
 
-    let metric_info: Vec<(String, (String, String, String, bool))> =
+    let mut metric_info: Vec<(String, (String, String, String, bool))> =
         metric_info_map.into_iter().collect();
+    if metric_info.len() > MAX_METRICS_PER_REQUEST {
+        metric_info.sort_by(|a, b| a.0.cmp(&b.0));
+        metric_info.truncate(MAX_METRICS_PER_REQUEST);
+    }
 
     let _summary_data: HashMap<String, serde_json::Value> = HashMap::new();
 
     // [fan-out] Per-metric work runs CONCURRENTLY: the sequential loop did
     // 2N redb round-trips (aggregate + latest) — N×2×latency on every
     // summary request. latest() stays per metric (it piggybacks the
-    // aggregate result branch below).
+    // aggregate result branch below). Bounded by telemetry_query_semaphore.
     let metric_futures: Vec<_> = metric_info
         .iter()
         .map(|(metric_name, info)| {
@@ -1044,7 +1070,19 @@ pub async fn get_device_telemetry_summary_handler(
             let metric_name = metric_name.clone();
             let info = info.clone();
             let device_id = device_id.clone();
+            let semaphore = state.telemetry_query_semaphore.clone();
             async move {
+                let _permit = match semaphore.acquire().await {
+                    Ok(p) => p,
+                    Err(e) => {
+                        tracing::warn!(
+                            "telemetry semaphore acquire failed for summary metric {}: {}",
+                            metric_name,
+                            e
+                        );
+                        return (metric_name, None);
+                    }
+                };
                 let entry = build_summary_entry(
                     &state,
                     &device_source_id,
@@ -1156,7 +1194,8 @@ pub async fn get_device_command_history_handler(
     let limit = params
         .get("limit")
         .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(50);
+        .unwrap_or(50)
+        .clamp(1, 500);
 
     // Get command history from DeviceService
     let commands = state

@@ -232,21 +232,22 @@ export class ChatWebSocket {
       // while the new connection is healthy.)
       if (this.ws !== event.target) return
       this.notifyConnection(false)
-      // Only stop reconnecting on auth rejection (4001)
-      // Reconnect on everything else including normal close (server restart)
-      // Code 4000 is used for token change - we DO want to reconnect
-      if (event.code === 4001) {
-        // Auth error - stop reconnecting. Dropping queued messages is the
-        // right call (they will never authenticate), but it must be VISIBLE:
+      // Stop reconnecting on auth rejection (4001) or insufficient permission (4003).
+      // Reconnect on everything else including normal close (server restart).
+      // Code 4000 is used for token change - we DO want to reconnect.
+      if (event.code === 4001 || event.code === 4003) {
+        // Auth/permission error - stop reconnecting. Dropping queued messages is
+        // the right call (they will never succeed), but it must be VISIBLE:
         // the old silent clear left the user's bubble looking delivered
         // forever. Surface what was lost through the state channel the UI
         // already renders (same pattern as the pending-limit eviction).
+        const failureLabel = event.code === 4003 ? 'Access denied' : 'Authentication failed'
         if (this.pendingMessages.length > 0) {
           const droppedCount = this.pendingMessages.length
           const previews = this.pendingMessages
             .map(m => (typeof m.message === 'string' ? m.message.slice(0, 50) : '(non-text)'))
             .join('", "')
-          console.warn(`[WebSocket] Auth error, dropping ${droppedCount} queued message(s)`)
+          console.warn(`[WebSocket] ${failureLabel} (${event.code}), dropping ${droppedCount} queued message(s)`)
           for (const dropped of this.pendingMessages) {
             if (dropped.clientRequestId) {
               this.settleReceiveAck(dropped.clientRequestId, {
@@ -260,7 +261,7 @@ export class ChatWebSocket {
           this.setState({
             ...this.currentState,
             status: 'disconnected',
-            errorMessage: `Authentication failed — ${droppedCount} queued message${droppedCount > 1 ? 's were' : ' was'} not sent: "${previews}"`,
+            errorMessage: `${failureLabel} — ${droppedCount} queued message${droppedCount > 1 ? 's were' : ' was'} not sent: "${previews}"`,
           })
         } else {
           this.setState({ status: 'disconnected' })

@@ -104,6 +104,15 @@ impl ApiClient {
         }
     }
 
+    /// Whether 401 retry is allowed to refresh from the local redb database.
+    ///
+    /// Never refresh when an explicit API key was supplied OR when talking to a
+    /// non-loopback remote host (prevents exfiltrating local admin credentials
+    /// to an untrusted remote server that responds with 401).
+    fn should_refresh_api_key_on_401(&self) -> bool {
+        !self.explicit_api_key && is_loopback_base_url(&self.base_url)
+    }
+
     /// Refresh the API key on 401 retry.
     ///
     /// Bypasses env var and credential file — those sources were already used
@@ -146,7 +155,10 @@ impl ApiClient {
                 .await
                 .map_err(Self::map_reqwest_error)?;
             let status = resp.status();
-            if status.as_u16() == 401 && attempt < MAX_RETRIES {
+            if status.as_u16() == 401
+                && attempt < MAX_RETRIES
+                && self.should_refresh_api_key_on_401()
+            {
                 self.refresh_api_key();
                 continue;
             }
@@ -182,7 +194,10 @@ impl ApiClient {
                 .await
                 .map_err(Self::map_reqwest_error)?;
             let status = resp.status();
-            if status.as_u16() == 401 && attempt < MAX_RETRIES {
+            if status.as_u16() == 401
+                && attempt < MAX_RETRIES
+                && self.should_refresh_api_key_on_401()
+            {
                 self.refresh_api_key();
                 continue;
             }
@@ -234,7 +249,10 @@ impl ApiClient {
                 .await
                 .map_err(Self::map_reqwest_error)?;
             let status = resp.status();
-            if status.as_u16() == 401 && attempt < MAX_RETRIES {
+            if status.as_u16() == 401
+                && attempt < MAX_RETRIES
+                && self.should_refresh_api_key_on_401()
+            {
                 self.refresh_api_key();
                 continue;
             }
@@ -267,7 +285,10 @@ impl ApiClient {
                 .await
                 .map_err(Self::map_reqwest_error)?;
             let status = resp.status();
-            if status.as_u16() == 401 && attempt < MAX_RETRIES {
+            if status.as_u16() == 401
+                && attempt < MAX_RETRIES
+                && self.should_refresh_api_key_on_401()
+            {
                 self.refresh_api_key();
                 continue;
             }
@@ -303,7 +324,10 @@ impl ApiClient {
                 .await
                 .map_err(Self::map_reqwest_error)?;
             let status = resp.status();
-            if status.as_u16() == 401 && attempt < MAX_RETRIES {
+            if status.as_u16() == 401
+                && attempt < MAX_RETRIES
+                && self.should_refresh_api_key_on_401()
+            {
                 self.refresh_api_key();
                 continue;
             }
@@ -339,7 +363,10 @@ impl ApiClient {
                 .await
                 .map_err(Self::map_reqwest_error)?;
             let status = resp.status();
-            if status.as_u16() == 401 && attempt < MAX_RETRIES {
+            if status.as_u16() == 401
+                && attempt < MAX_RETRIES
+                && self.should_refresh_api_key_on_401()
+            {
                 self.refresh_api_key();
                 continue;
             }
@@ -375,7 +402,10 @@ impl ApiClient {
                 .await
                 .map_err(Self::map_reqwest_error)?;
             let status = resp.status();
-            if status.as_u16() == 401 && attempt < MAX_RETRIES {
+            if status.as_u16() == 401
+                && attempt < MAX_RETRIES
+                && self.should_refresh_api_key_on_401()
+            {
                 self.refresh_api_key();
                 continue;
             }
@@ -415,7 +445,10 @@ impl ApiClient {
                 .await
                 .map_err(Self::map_reqwest_error)?;
             let status = resp.status();
-            if status.as_u16() == 401 && attempt < MAX_RETRIES {
+            if status.as_u16() == 401
+                && attempt < MAX_RETRIES
+                && self.should_refresh_api_key_on_401()
+            {
                 self.refresh_api_key();
                 continue;
             }
@@ -475,7 +508,10 @@ impl ApiClient {
                 .await
                 .map_err(Self::map_reqwest_error)?;
             let status = resp.status();
-            if status.as_u16() == 401 && attempt < MAX_RETRIES {
+            if status.as_u16() == 401
+                && attempt < MAX_RETRIES
+                && self.should_refresh_api_key_on_401()
+            {
                 self.refresh_api_key();
                 continue;
             }
@@ -532,7 +568,10 @@ impl ApiClient {
                 .await
                 .map_err(Self::map_reqwest_error)?;
             let status = resp.status();
-            if status.as_u16() == 401 && attempt < MAX_RETRIES {
+            if status.as_u16() == 401
+                && attempt < MAX_RETRIES
+                && self.should_refresh_api_key_on_401()
+            {
                 self.refresh_api_key();
                 continue;
             }
@@ -557,6 +596,27 @@ impl ApiClient {
             return unwrap_api_envelope(resp_body);
         }
         anyhow::bail!("API request failed after retry — is the server running? Try: neomind health")
+    }
+}
+
+/// Returns true only when `url` targets a loopback host (`localhost`, `127.0.0.1`, `::1`).
+pub(crate) fn is_loopback_base_url(url: &str) -> bool {
+    let Ok(parsed) = reqwest::Url::parse(url.trim()) else {
+        return false;
+    };
+    let Some(host) = parsed.host_str() else {
+        return false;
+    };
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    let unbracketed = host
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .unwrap_or(host);
+    match unbracketed.parse::<std::net::IpAddr>() {
+        Ok(ip) => ip.is_loopback(),
+        Err(_) => false,
     }
 }
 
@@ -1054,6 +1114,105 @@ mod tests {
             .expect_err("HTTP 200 embedded success:false must fail")
             .to_string();
         assert!(err.contains("Extension not found"), "got: {err}");
+
+        server.await.unwrap();
+    }
+
+    #[test]
+    fn test_is_loopback_base_url() {
+        for loopback in [
+            "http://localhost:9375/api",
+            "https://LOCALHOST/api",
+            "http://127.0.0.1:9375/api",
+            "http://[::1]:9375/api",
+        ] {
+            assert!(
+                is_loopback_base_url(loopback),
+                "expected loopback: {loopback}"
+            );
+        }
+        for remote in [
+            "https://api.example.com/api",
+            "http://192.168.1.10:9375/api",
+            "http://localhost.evil.com:9375/api",
+            "http://127.0.0.1.evil.com/api",
+            "http://localhost@evil.com/api",
+            "not-a-url",
+        ] {
+            assert!(
+                !is_loopback_base_url(remote),
+                "expected non-loopback: {remote}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_remote_and_explicit_key_never_trigger_refresh_on_401() {
+        let remote_implicit = ApiClient::with_base_url("https://remote.example.com/api");
+        assert!(
+            !remote_implicit.should_refresh_api_key_on_401(),
+            "remote base URL must never refresh from local redb"
+        );
+
+        let local_explicit = ApiClient::with_base_url_and_key(
+            "http://127.0.0.1:9375/api",
+            Some("nmk_explicit_key".to_string()),
+        );
+        assert!(
+            !local_explicit.should_refresh_api_key_on_401(),
+            "explicit API key must never be overwritten by local redb refresh"
+        );
+
+        let local_implicit = ApiClient::with_base_url("http://localhost:9375/api");
+        assert!(
+            local_implicit.should_refresh_api_key_on_401(),
+            "implicit loopback client may refresh from local redb"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_explicit_api_key_401_does_not_retry_or_refresh() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_clone = hits.clone();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            hits_clone.fetch_add(1, Ordering::SeqCst);
+            let mut buf = [0u8; 2048];
+            let _ = socket.read(&mut buf).await;
+            let body = r#"{"success":false,"error":{"message":"Unauthorized"}}"#;
+            let resp = format!(
+                "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            socket.write_all(resp.as_bytes()).await.unwrap();
+        });
+
+        let client = ApiClient::with_base_url_and_key(
+            &format!("http://{addr}/api"),
+            Some("nmk_explicit_only".to_string()),
+        );
+        let err = client.get("/devices").await.unwrap_err().to_string();
+        assert!(err.contains("401"), "got: {err}");
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            1,
+            "explicit API key must not retry 401 with refreshed redb key"
+        );
+        assert_eq!(
+            client.api_key.read().unwrap().as_deref(),
+            Some("nmk_explicit_only"),
+            "explicit API key must remain unchanged"
+        );
 
         server.await.unwrap();
     }

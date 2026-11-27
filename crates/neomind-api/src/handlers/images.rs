@@ -107,9 +107,8 @@ async fn serve_image_request(data_dir: &std::path::Path, path: &str) -> Response
         return (StatusCode::NOT_FOUND, "image not found").into_response();
     }
 
-    // 5. Read bytes (could use tokio fs, but images are small — sync read in
-    //    blocking task is fine).
-    let bytes = match tokio::task::spawn_blocking(move || std::fs::read(&file_path)).await {
+    // 5. Read bytes from canonicalized path (closes TOCTOU window).
+    let bytes = match tokio::task::spawn_blocking(move || std::fs::read(&canon_file)).await {
         Ok(Ok(b)) => b,
         Ok(Err(_)) => return (StatusCode::NOT_FOUND, "image not found").into_response(),
         Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "read failed").into_response(),
@@ -118,14 +117,24 @@ async fn serve_image_request(data_dir: &std::path::Path, path: &str) -> Response
     // 6. Derive Content-Type from extension.
     let content_type = mime_from_ext(filename);
 
-    // 7. Build response with immutable cache headers.
+    // 7. Build response with hardened cache and content headers.
     let mut resp = bytes.into_response();
     resp.headers_mut()
         .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
     resp.headers_mut().insert(
-        header::CACHE_CONTROL,
-        HeaderValue::from_static("public, max-age=2592000, immutable"),
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
     );
+    resp.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, max-age=2592000, immutable"),
+    );
+    if content_type == "application/octet-stream" {
+        resp.headers_mut().insert(
+            header::CONTENT_DISPOSITION,
+            HeaderValue::from_static("attachment"),
+        );
+    }
     resp
 }
 
@@ -192,6 +201,7 @@ fn mime_from_ext(name: &str) -> &'static str {
         "gif" => "image/gif",
         "bmp" => "image/bmp",
         "tiff" => "image/tiff",
+        "bin" => "application/octet-stream",
         _ => "image/jpeg",
     }
 }
@@ -331,5 +341,45 @@ mod tests {
         std::fs::create_dir_all(dir.path().join("images")).unwrap();
         let resp = serve_image_request(dir.path(), "nope.png").await;
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn hardened_headers_and_bin_disposition() {
+        let dir = tempfile::tempdir().unwrap();
+        let images = dir.path().join("images");
+        std::fs::create_dir_all(&images).unwrap();
+        std::fs::write(images.join("photo.png"), b"\x89PNG").unwrap();
+        std::fs::write(images.join("raw.bin"), b"\x00\x01\x02").unwrap();
+
+        let png_resp = serve_image_request(dir.path(), "photo.png").await;
+        assert_eq!(png_resp.status(), StatusCode::OK);
+        assert_eq!(
+            png_resp.headers().get(header::X_CONTENT_TYPE_OPTIONS).unwrap(),
+            "nosniff"
+        );
+        assert_eq!(
+            png_resp.headers().get(header::CACHE_CONTROL).unwrap(),
+            "private, max-age=2592000, immutable"
+        );
+        assert!(png_resp.headers().get(header::CONTENT_DISPOSITION).is_none());
+
+        let bin_resp = serve_image_request(dir.path(), "raw.bin").await;
+        assert_eq!(bin_resp.status(), StatusCode::OK);
+        assert_eq!(
+            bin_resp.headers().get(header::CONTENT_TYPE).unwrap(),
+            "application/octet-stream"
+        );
+        assert_eq!(
+            bin_resp.headers().get(header::CONTENT_DISPOSITION).unwrap(),
+            "attachment"
+        );
+        assert_eq!(
+            bin_resp.headers().get(header::X_CONTENT_TYPE_OPTIONS).unwrap(),
+            "nosniff"
+        );
+        assert_eq!(
+            bin_resp.headers().get(header::CACHE_CONTROL).unwrap(),
+            "private, max-age=2592000, immutable"
+        );
     }
 }

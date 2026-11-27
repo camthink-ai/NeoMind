@@ -363,6 +363,21 @@ impl AuthUserState {
             if let Ok(persisted) = std::fs::read_to_string(&secret_path) {
                 let trimmed = persisted.trim();
                 if !trimmed.is_empty() {
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        if let Err(e) = std::fs::set_permissions(
+                            &secret_path,
+                            std::fs::Permissions::from_mode(0o600),
+                        ) {
+                            tracing::warn!(
+                                category = "auth",
+                                error = %e,
+                                path = %secret_path,
+                                "Failed to enforce 0600 permissions on existing JWT secret file"
+                            );
+                        }
+                    }
                     return trimmed.to_string();
                 }
             }
@@ -928,9 +943,9 @@ impl AuthUserState {
         if hash.starts_with("$2") {
             bcrypt::verify(password, hash).unwrap_or(false)
         } else {
-            // Legacy SHA-256 hash - verify and migrate on next login
+            // Legacy SHA-256 hash - constant-time verify; login() upgrades to bcrypt.
             let legacy_hash = Self::hash_password_legacy(password);
-            legacy_hash == hash
+            crate::auth::constant_time_eq_str(&legacy_hash, hash)
         }
     }
 
@@ -1203,17 +1218,33 @@ impl AuthUserState {
 
     /// Login user and return token.
     pub async fn login(&self, username: &str, password: &str) -> Result<LoginResponse, AuthError> {
-        // Clone user data before releasing lock
-        let (user_id, user_role, user_created_at) = {
+        // Clone candidate user before releasing the read lock so slow bcrypt
+        // work never stalls writers, and run a dummy bcrypt verify on unknown
+        // usernames to mitigate timing-based username enumeration.
+        let candidate = {
             let users = self.users.read().await;
-            let user = users.get(username).ok_or(AuthError::InvalidCredentials)?;
+            users.get(username).cloned()
+        };
 
-            if !user.active {
-                return Err(AuthError::UserDisabled);
-            }
+        let Some(user) = candidate else {
+            let _ = bcrypt::verify(password, dummy_bcrypt_hash());
+            return Err(AuthError::InvalidCredentials);
+        };
 
+        // Verify password BEFORE checking `user.active` so disabled accounts do
+        // not act as an unauthenticated account-existence/status oracle.
+        let (user_id, user_role, user_created_at, needs_bcrypt_upgrade) =
             if Self::verify_password(password, &user.password_hash) {
-                (user.id.clone(), user.role.clone(), user.created_at)
+                if !user.active {
+                    return Err(AuthError::UserDisabled);
+                }
+                let needs_upgrade = !user.password_hash.starts_with("$2");
+                (
+                    user.id.clone(),
+                    user.role.clone(),
+                    user.created_at,
+                    needs_upgrade,
+                )
             } else {
                 // Cache-staleness rescue: the offline CLI (`neomind user
                 // reset-password`) rewrites the DB hash directly — the
@@ -1230,11 +1261,14 @@ impl AuthUserState {
                         if dbu.password_hash != user.password_hash
                             && Self::verify_password(password, &dbu.password_hash) =>
                     {
+                        if !dbu.active {
+                            return Err(AuthError::UserDisabled);
+                        }
                         let id = dbu.id.clone();
                         let role = dbu.role.clone();
                         let created = dbu.created_at;
+                        let needs_upgrade = !dbu.password_hash.starts_with("$2");
                         let new_hash = dbu.password_hash;
-                        drop(users);
                         let mut users = self.users.write().await;
                         if let Some(u) = users.get_mut(username) {
                             u.password_hash = new_hash;
@@ -1244,17 +1278,53 @@ impl AuthUserState {
                             username = %username,
                             "Login cache rescued from DB — offline password reset applied without restart"
                         );
-                        (id, role, created)
+                        (id, role, created, needs_upgrade)
                     }
                     _ => return Err(AuthError::InvalidCredentials),
                 }
+            };
+
+        // Automatically upgrade verified legacy SHA-256 hashes to bcrypt.
+        let upgraded_hash = if needs_bcrypt_upgrade {
+            match Self::hash_password(password) {
+                Ok(h) => Some(h),
+                Err(e) => {
+                    tracing::warn!(
+                        category = "auth",
+                        username = %username,
+                        error = %e,
+                        "Failed to upgrade legacy SHA-256 password hash to bcrypt"
+                    );
+                    None
+                }
             }
+        } else {
+            None
         };
 
-        // Update last login
+        // Update last login (and persist upgraded bcrypt hash if applicable)
         let mut users = self.users.write().await;
         if let Some(u) = users.get_mut(username) {
             u.last_login = Some(chrono::Utc::now().timestamp());
+            if let Some(new_hash) = upgraded_hash {
+                let mut persisted = u.clone();
+                persisted.password_hash = new_hash.clone();
+                if let Err(e) = Self::save_user_to_db(self.db_path, &persisted) {
+                    tracing::warn!(
+                        category = "auth",
+                        username = %username,
+                        error = %e,
+                        "Failed to persist upgraded bcrypt password hash"
+                    );
+                } else {
+                    u.password_hash = new_hash;
+                    info!(
+                        category = "auth",
+                        username = %username,
+                        "Upgraded legacy SHA-256 password hash to bcrypt on login"
+                    );
+                }
+            }
         }
         drop(users);
 
@@ -1507,28 +1577,54 @@ impl IntoResponse for AuthError {
     }
 }
 
-/// Client IP for auth throttling: prefer the proxy headers (production sits
-/// behind nginx, where the socket address is always the proxy itself and a
-/// per-IP key would rate-limit every user as one client), fall back to the
-/// socket address.
-///
-/// Trust caveat: a *direct*-connection attacker can forge these headers to
-/// mint fresh per-IP keys. That defeats the IP half of the login throttle,
-/// but the per-username half — the one that protects a single account from
-/// distributed guessing — is keyed off the username and unaffected.
-pub fn client_ip_for_throttle(headers: &HeaderMap, addr: &std::net::SocketAddr) -> String {
-    if let Some(xff) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
-        if let Some(first) = xff.split(',').next() {
-            let first = first.trim();
-            if !first.is_empty() {
-                return first.to_string();
+/// Lazily generated dummy bcrypt hash at `bcrypt::DEFAULT_COST` used on unknown
+/// usernames during login so response timing matches valid-username lookups.
+fn dummy_bcrypt_hash() -> &'static str {
+    static DUMMY: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        bcrypt::hash("__neomind_dummy_timing_guard__", bcrypt::DEFAULT_COST)
+            .expect("dummy bcrypt hash generation")
+    });
+    DUMMY.as_str()
+}
+
+/// Check whether `peer` is a trusted reverse proxy (loopback or explicitly
+/// listed in `NEOMIND_TRUSTED_PROXIES`, comma-separated IP addresses).
+fn is_trusted_proxy(peer: &std::net::IpAddr) -> bool {
+    if peer.is_loopback() {
+        return true;
+    }
+    if let Ok(raw) = std::env::var("NEOMIND_TRUSTED_PROXIES") {
+        for entry in raw.split(',') {
+            let trimmed = entry.trim();
+            if let Ok(trusted_ip) = trimmed.parse::<std::net::IpAddr>() {
+                if trusted_ip == *peer {
+                    return true;
+                }
             }
         }
     }
-    if let Some(rip) = headers.get("x-real-ip").and_then(|v| v.to_str().ok()) {
-        let rip = rip.trim();
-        if !rip.is_empty() {
-            return rip.to_string();
+    false
+}
+
+/// Client IP for auth throttling: only trust proxy forwarding headers
+/// (`X-Forwarded-For` / `X-Real-IP`) when the direct peer IP is loopback or
+/// explicitly listed in `NEOMIND_TRUSTED_PROXIES`. Direct non-proxy callers
+/// always use their socket address so spoofed headers cannot bypass IP throttling.
+pub fn client_ip_for_throttle(headers: &HeaderMap, addr: &std::net::SocketAddr) -> String {
+    if is_trusted_proxy(&addr.ip()) {
+        if let Some(xff) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+            if let Some(first) = xff.split(',').next() {
+                let first = first.trim();
+                if !first.is_empty() {
+                    return first.to_string();
+                }
+            }
+        }
+        if let Some(rip) = headers.get("x-real-ip").and_then(|v| v.to_str().ok()) {
+            let rip = rip.trim();
+            if !rip.is_empty() {
+                return rip.to_string();
+            }
         }
     }
     addr.ip().to_string()
@@ -2082,5 +2178,80 @@ mod revocation_persistence_tests {
             + usize::from(matches!(r2, Err(AuthError::UserExists)));
         assert_eq!(ok_count, 1, "exactly one registration must succeed");
         assert_eq!(exists_count, 1, "the losing registration must return UserExists");
+    }
+
+    #[test]
+    fn client_ip_for_throttle_respects_trusted_proxies() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "203.0.113.50, 10.0.0.1".parse().unwrap());
+
+        // Loopback peer is trusted -> uses X-Forwarded-For
+        let loopback: std::net::SocketAddr = "127.0.0.1:12345".parse().unwrap();
+        assert_eq!(client_ip_for_throttle(&headers, &loopback), "203.0.113.50");
+
+        // Untrusted non-loopback peer -> ignores spoofed X-Forwarded-For
+        std::env::remove_var("NEOMIND_TRUSTED_PROXIES");
+        let untrusted: std::net::SocketAddr = "198.51.100.7:54321".parse().unwrap();
+        assert_eq!(client_ip_for_throttle(&headers, &untrusted), "198.51.100.7");
+
+        // Explicitly trusted proxy in NEOMIND_TRUSTED_PROXIES -> uses X-Forwarded-For
+        std::env::set_var("NEOMIND_TRUSTED_PROXIES", "10.0.0.2, 198.51.100.7");
+        assert_eq!(client_ip_for_throttle(&headers, &untrusted), "203.0.113.50");
+        std::env::remove_var("NEOMIND_TRUSTED_PROXIES");
+    }
+
+    #[tokio::test]
+    async fn disabled_user_checks_active_only_after_password_verification() {
+        let auth = AuthUserState::new_with_memory_store();
+        auth.register("disabled_user", "CorrectPass123", UserRole::User)
+            .await
+            .unwrap();
+        {
+            let mut users = auth.users.write().await;
+            users.get_mut("disabled_user").unwrap().active = false;
+        }
+
+        // Wrong password must return InvalidCredentials (not UserDisabled)
+        assert!(matches!(
+            auth.login("disabled_user", "WrongPass999").await,
+            Err(AuthError::InvalidCredentials)
+        ));
+        // Correct password returns UserDisabled
+        assert!(matches!(
+            auth.login("disabled_user", "CorrectPass123").await,
+            Err(AuthError::UserDisabled)
+        ));
+    }
+
+    #[tokio::test]
+    async fn legacy_sha256_password_upgrades_to_bcrypt_on_login() {
+        let auth = AuthUserState::new_with_memory_store();
+        let legacy_hash = AuthUserState::hash_password_legacy("LegacyPass123");
+        {
+            let mut users = auth.users.write().await;
+            users.insert(
+                "legacy_user".to_string(),
+                User {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    username: "legacy_user".to_string(),
+                    password_hash: legacy_hash.clone(),
+                    role: UserRole::User,
+                    created_at: chrono::Utc::now().timestamp(),
+                    last_login: None,
+                    active: true,
+                },
+            );
+        }
+
+        assert!(auth.login("legacy_user", "WrongPass").await.is_err());
+        assert!(auth.login("legacy_user", "LegacyPass123").await.is_ok());
+
+        let users = auth.users.read().await;
+        let upgraded = &users.get("legacy_user").unwrap().password_hash;
+        assert!(
+            upgraded.starts_with("$2"),
+            "legacy SHA-256 hash must upgrade to bcrypt on login, got: {upgraded}"
+        );
+        assert!(bcrypt::verify("LegacyPass123", upgraded).unwrap());
     }
 }

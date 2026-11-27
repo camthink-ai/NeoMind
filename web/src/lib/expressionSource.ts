@@ -11,10 +11,12 @@
  * Evaluation happens client-side: refs resolve to live store telemetry
  * (latest) or fetched history aligned forward-fill (timeseries).
  *
- * Security: refs are substituted with numeric literals first; the remainder
- * must then consist ONLY of numbers, operators, and whitelisted function
- * names — anything else (identifiers, strings, member access) is rejected
- * before `new Function` sees it.
+ * Security: refs are substituted with numeric literals first, and the
+ * resulting expression is parsed and evaluated by a self-contained
+ * recursive-descent parser (no `eval` / `new Function`). Only numbers,
+ * arithmetic/comparison/boolean operators, and whitelisted function names
+ * are accepted — anything else (arbitrary identifiers, strings, member
+ * access) is rejected.
  */
 
 export interface ExprPoint {
@@ -31,7 +33,339 @@ const REF_CANONICAL = /device:([A-Za-z0-9_-]+):([A-Za-z0-9_.-]+)/g
 // Sugar `<id>.<field>` — must NOT match the tail of a canonical
 // `device:<id>:<field>` (its `field` contains dots after a colon).
 const REF_SUGAR = /(^|[^:A-Za-z0-9_])([A-Za-z][A-Za-z0-9_-]*)\.([A-Za-z][A-Za-z0-9_.-]*)/g
-const FN_NAMES = ['avg', 'sum', 'min', 'max', 'abs', 'round', 'floor', 'ceil', 'sqrt', 'pow']
+
+const WHITELISTED_FNS: Record<string, (...args: number[]) => number> = {
+  avg: (...a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0),
+  sum: (...a) => a.reduce((x, y) => x + y, 0),
+  min: (...a) => (a.length ? Math.min(...a) : NaN),
+  max: (...a) => (a.length ? Math.max(...a) : NaN),
+  abs: Math.abs,
+  round: Math.round,
+  floor: Math.floor,
+  ceil: Math.ceil,
+  sqrt: Math.sqrt,
+  pow: Math.pow,
+}
+
+type Token =
+  | { type: 'number'; value: number }
+  | { type: 'ident'; value: string }
+  | { type: 'op'; value: string }
+  | { type: 'lparen' }
+  | { type: 'rparen' }
+  | { type: 'comma' }
+  | { type: 'question' }
+  | { type: 'colon' }
+  | { type: 'eof' }
+
+const TWO_CHAR_OPS = new Set(['<=', '>=', '==', '!=', '&&', '||'])
+const SINGLE_CHAR_OPS = new Set(['+', '-', '*', '/', '%', '<', '>', '!'])
+const MAX_PARSE_DEPTH = 64
+
+function tokenize(input: string): Token[] {
+  const tokens: Token[] = []
+  let i = 0
+  const n = input.length
+
+  while (i < n) {
+    const ch = input[i]
+    if (/\s/.test(ch)) {
+      i++
+      continue
+    }
+
+    // Number literal (integer, decimal, optional scientific notation)
+    if (/[0-9]/.test(ch) || (ch === '.' && i + 1 < n && /[0-9]/.test(input[i + 1]))) {
+      const start = i
+      while (i < n && /[0-9]/.test(input[i])) i++
+      if (i < n && input[i] === '.') {
+        i++
+        while (i < n && /[0-9]/.test(input[i])) i++
+      }
+      if (i < n && (input[i] === 'e' || input[i] === 'E')) {
+        const expStart = i
+        i++
+        if (i < n && (input[i] === '+' || input[i] === '-')) i++
+        const digitStart = i
+        while (i < n && /[0-9]/.test(input[i])) i++
+        if (i === digitStart) {
+          throw new Error(`expression contains disallowed token: "${input.slice(start, expStart + 1)}"`)
+        }
+      }
+      const raw = input.slice(start, i)
+      const num = Number(raw)
+      if (!Number.isFinite(num)) {
+        throw new Error(`invalid number literal: "${raw}"`)
+      }
+      tokens.push({ type: 'number', value: num })
+      continue
+    }
+
+    // Identifier (only whitelisted function names or boolean literals)
+    if (/[A-Za-z_]/.test(ch)) {
+      const start = i
+      while (i < n && /[A-Za-z0-9_]/.test(input[i])) i++
+      const ident = input.slice(start, i)
+      if (
+        ident !== 'true' &&
+        ident !== 'false' &&
+        !Object.prototype.hasOwnProperty.call(WHITELISTED_FNS, ident)
+      ) {
+        throw new Error(`expression contains disallowed identifier: "${ident.slice(0, 40)}"`)
+      }
+      tokens.push({ type: 'ident', value: ident })
+      continue
+    }
+
+    // Two-character operators
+    if (i + 1 < n) {
+      const pair = input.slice(i, i + 2)
+      if (TWO_CHAR_OPS.has(pair)) {
+        tokens.push({ type: 'op', value: pair })
+        i += 2
+        continue
+      }
+    }
+
+    // Single-character operators and punctuation
+    if (SINGLE_CHAR_OPS.has(ch)) {
+      tokens.push({ type: 'op', value: ch })
+      i++
+      continue
+    }
+    if (ch === '(') {
+      tokens.push({ type: 'lparen' })
+      i++
+      continue
+    }
+    if (ch === ')') {
+      tokens.push({ type: 'rparen' })
+      i++
+      continue
+    }
+    if (ch === ',') {
+      tokens.push({ type: 'comma' })
+      i++
+      continue
+    }
+    if (ch === '?') {
+      tokens.push({ type: 'question' })
+      i++
+      continue
+    }
+    if (ch === ':') {
+      tokens.push({ type: 'colon' })
+      i++
+      continue
+    }
+
+    throw new Error(`expression contains disallowed tokens: "${input.slice(i).trim().slice(0, 40)}"`)
+  }
+
+  tokens.push({ type: 'eof' })
+  return tokens
+}
+
+class ExprParser {
+  private pos = 0
+  private depth = 0
+
+  constructor(private readonly tokens: Token[]) {}
+
+  private peek(): Token {
+    return this.tokens[this.pos] ?? { type: 'eof' }
+  }
+
+  private consume(): Token {
+    const tok = this.peek()
+    if (tok.type !== 'eof') this.pos++
+    return tok
+  }
+
+  private matchOp(...ops: string[]): string | null {
+    const tok = this.peek()
+    if (tok.type === 'op' && ops.includes(tok.value)) {
+      this.pos++
+      return tok.value
+    }
+    return null
+  }
+
+  private enter(): void {
+    this.depth++
+    if (this.depth > MAX_PARSE_DEPTH) {
+      throw new Error('expression exceeds maximum nesting depth')
+    }
+  }
+
+  private leave(): void {
+    this.depth--
+  }
+
+  parse(): number {
+    const result = this.parseTernary()
+    if (this.peek().type !== 'eof') {
+      throw new Error('unexpected trailing tokens in expression')
+    }
+    return result
+  }
+
+  private parseTernary(): number {
+    this.enter()
+    try {
+      const cond = this.parseLogicalOr()
+      if (this.peek().type === 'question') {
+        this.consume()
+        const whenTrue = this.parseTernary()
+        if (this.peek().type !== 'colon') {
+          throw new Error('expected ":" in conditional expression')
+        }
+        this.consume()
+        const whenFalse = this.parseTernary()
+        return cond !== 0 ? whenTrue : whenFalse
+      }
+      return cond
+    } finally {
+      this.leave()
+    }
+  }
+
+  private parseLogicalOr(): number {
+    let left = this.parseLogicalAnd()
+    while (this.matchOp('||')) {
+      const right = this.parseLogicalAnd()
+      left = left !== 0 || right !== 0 ? 1 : 0
+    }
+    return left
+  }
+
+  private parseLogicalAnd(): number {
+    let left = this.parseEquality()
+    while (this.matchOp('&&')) {
+      const right = this.parseEquality()
+      left = left !== 0 && right !== 0 ? 1 : 0
+    }
+    return left
+  }
+
+  private parseEquality(): number {
+    let left = this.parseComparison()
+    let op: string | null
+    while ((op = this.matchOp('==', '!='))) {
+      const right = this.parseComparison()
+      left = op === '==' ? (left === right ? 1 : 0) : (left !== right ? 1 : 0)
+    }
+    return left
+  }
+
+  private parseComparison(): number {
+    let left = this.parseAdditive()
+    let op: string | null
+    while ((op = this.matchOp('<', '<=', '>', '>='))) {
+      const right = this.parseAdditive()
+      switch (op) {
+        case '<':
+          left = left < right ? 1 : 0
+          break
+        case '<=':
+          left = left <= right ? 1 : 0
+          break
+        case '>':
+          left = left > right ? 1 : 0
+          break
+        case '>=':
+          left = left >= right ? 1 : 0
+          break
+      }
+    }
+    return left
+  }
+
+  private parseAdditive(): number {
+    let left = this.parseMultiplicative()
+    let op: string | null
+    while ((op = this.matchOp('+', '-'))) {
+      const right = this.parseMultiplicative()
+      left = op === '+' ? left + right : left - right
+    }
+    return left
+  }
+
+  private parseMultiplicative(): number {
+    let left = this.parseUnary()
+    let op: string | null
+    while ((op = this.matchOp('*', '/', '%'))) {
+      const right = this.parseUnary()
+      if (op === '*') left = left * right
+      else if (op === '/') left = left / right
+      else left = left % right
+    }
+    return left
+  }
+
+  private parseUnary(): number {
+    const op = this.matchOp('+', '-', '!')
+    if (op) {
+      this.enter()
+      try {
+        const operand = this.parseUnary()
+        if (op === '+') return +operand
+        if (op === '-') return -operand
+        return operand === 0 ? 1 : 0
+      } finally {
+        this.leave()
+      }
+    }
+    return this.parsePrimary()
+  }
+
+  private parsePrimary(): number {
+    const tok = this.peek()
+    if (tok.type === 'number') {
+      this.consume()
+      return tok.value
+    }
+
+    if (tok.type === 'lparen') {
+      this.consume()
+      const val = this.parseTernary()
+      if (this.peek().type !== 'rparen') {
+        throw new Error('expected closing ")"')
+      }
+      this.consume()
+      return val
+    }
+
+    if (tok.type === 'ident') {
+      this.consume()
+      if (tok.value === 'true') return 1
+      if (tok.value === 'false') return 0
+      const fn = WHITELISTED_FNS[tok.value]
+      if (!fn) {
+        throw new Error(`expression contains disallowed identifier: "${tok.value}"`)
+      }
+      if (this.peek().type !== 'lparen') {
+        throw new Error(`expected "(" after function "${tok.value}"`)
+      }
+      this.consume()
+      const args: number[] = []
+      if (this.peek().type !== 'rparen') {
+        args.push(this.parseTernary())
+        while (this.peek().type === 'comma') {
+          this.consume()
+          args.push(this.parseTernary())
+        }
+      }
+      if (this.peek().type !== 'rparen') {
+        throw new Error(`expected closing ")" for function "${tok.value}"`)
+      }
+      this.consume()
+      return fn(...args)
+    }
+
+    throw new Error('unexpected token in expression')
+  }
+}
 
 /** All refs in canonical form `device:<id>:<field>` (deduped, order of first use). */
 export function parseExprRefs(expr: string): string[] {
@@ -58,7 +392,7 @@ export function refParts(ref: string): { id: string; field: string } | null {
  */
 export function evalExpression(expr: string, values: Record<string, number>): ExprResult {
   const refs = parseExprRefs(expr)
-  let js = expr
+  let substituted = expr
   const sorted = [...refs].sort((a, b) => b.length - a.length)
   const missing: string[] = []
   for (const ref of sorted) {
@@ -69,38 +403,15 @@ export function evalExpression(expr: string, values: Record<string, number>): Ex
       continue
     }
     // Replace BOTH spellings of this ref with the numeric literal.
-    js = js.split(ref).join(`(${v})`).split(sugar).join(`(${v})`)
+    substituted = substituted.split(ref).join(`(${v})`).split(sugar).join(`(${v})`)
   }
   if (missing.length > 0) {
     return { value: null, error: `unresolved refs: ${missing.join(', ')}` }
   }
 
-  // Safety gate: strip whitelisted fn names + digits, then only operators may
-  // remain. Identifiers (incl. member access like `window.x`), strings,
-  // backticks, `=>`, `[` — all rejected here.
-  let residue = js
-  for (const fn of FN_NAMES) residue = residue.split(fn).join('')
-  residue = residue.replace(/[0-9.]/g, '')
-  if (!/^[+\-*/(),%\s]*$/.test(residue)) {
-    return { value: null, error: `expression contains disallowed tokens: "${residue.trim().slice(0, 40)}"` }
-  }
-
   try {
-    const fns: Record<string, (...args: number[]) => number> = {
-      avg: (...a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0),
-      sum: (...a) => a.reduce((x, y) => x + y, 0),
-      min: (...a) => Math.min(...a),
-      max: (...a) => Math.max(...a),
-      abs: Math.abs,
-      round: Math.round,
-      floor: Math.floor,
-      ceil: Math.ceil,
-      sqrt: Math.sqrt,
-      pow: Math.pow,
-    }
-     
-    const fn = new Function(...FN_NAMES, `"use strict"; return (${js});`)
-    const out = fn(...FN_NAMES.map((n) => fns[n]))
+    const tokens = tokenize(substituted)
+    const out = new ExprParser(tokens).parse()
     if (typeof out !== 'number' || !Number.isFinite(out)) {
       return { value: null, error: 'expression did not evaluate to a finite number' }
     }

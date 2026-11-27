@@ -172,11 +172,11 @@ fn parse_frontmatter(yaml: &str) -> Result<SkillMetadata, ParseError> {
                     current_section = "";
                 }
                 "priority" => {
-                    priority = value.parse().unwrap_or(50);
+                    priority = value.parse::<u32>().unwrap_or(50).clamp(0, 100);
                     current_section = "";
                 }
                 "token_budget" => {
-                    token_budget = value.parse().unwrap_or(500);
+                    token_budget = value.parse::<usize>().unwrap_or(500).clamp(100, 4000);
                     current_section = "";
                 }
 
@@ -418,5 +418,18 @@ Step 2: delete"#;
         assert!(!skill.metadata.triggers.keywords.is_empty());
         assert!(!skill.metadata.triggers.tool_target.is_empty());
         assert!(!skill.body.is_empty());
+    }
+
+    #[test]
+    fn test_priority_and_token_budget_clamped() {
+        let high = "---\nid: hi\nname: Hi\npriority: 9999\ntoken_budget: 999999\n---\nBody";
+        let skill_hi = parse_skill(high).unwrap();
+        assert_eq!(skill_hi.metadata.priority, 100);
+        assert_eq!(skill_hi.metadata.token_budget, 4000);
+
+        let low = "---\nid: lo\nname: Lo\npriority: 0\ntoken_budget: 5\n---\nBody";
+        let skill_lo = parse_skill(low).unwrap();
+        assert_eq!(skill_lo.metadata.priority, 0);
+        assert_eq!(skill_lo.metadata.token_budget, 100);
     }
 }

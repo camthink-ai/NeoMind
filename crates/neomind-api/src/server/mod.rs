@@ -57,7 +57,88 @@ pub fn http_bind_port() -> u16 {
     neomind_core::advertise::http_listen_port()
 }
 
+/// Handle for triggering graceful shutdown of an embedded server (e.g. Tauri desktop).
+///
+/// Wraps [`tokio_util::sync::CancellationToken`] so embedding binaries do not need
+/// a direct `tokio-util` dependency.
+#[derive(Clone, Debug, Default)]
+pub struct ShutdownHandle {
+    token: tokio_util::sync::CancellationToken,
+}
+
+impl ShutdownHandle {
+    /// Create a new shutdown handle.
+    pub fn new() -> Self {
+        Self {
+            token: tokio_util::sync::CancellationToken::new(),
+        }
+    }
+
+    /// Trigger graceful server shutdown. Idempotent.
+    pub fn trigger(&self) {
+        self.token.cancel();
+    }
+
+    /// Returns `true` if shutdown has already been triggered.
+    pub fn is_triggered(&self) -> bool {
+        self.token.is_cancelled()
+    }
+
+    /// Return a clone of the underlying cancellation token.
+    pub fn token(&self) -> tokio_util::sync::CancellationToken {
+        self.token.clone()
+    }
+
+    /// Consume this handle and return the underlying cancellation token.
+    pub fn into_token(self) -> tokio_util::sync::CancellationToken {
+        self.token
+    }
+}
+
+impl From<tokio_util::sync::CancellationToken> for ShutdownHandle {
+    fn from(token: tokio_util::sync::CancellationToken) -> Self {
+        Self { token }
+    }
+}
+
+/// Create a new [`ShutdownHandle`] for controlling [`start_server_with_shutdown`].
+pub fn new_shutdown_handle() -> ShutdownHandle {
+    ShutdownHandle::new()
+}
+
+/// Compute the TLS proxy bind address from the bound HTTP listener address.
+///
+/// Keeps the TLS listener bound to the same IP as the HTTP listener (e.g.
+/// `127.0.0.1` when Desktop LAN access is disabled or `NEOMIND_HOST=127.0.0.1`),
+/// never widening a loopback-only deployment to `0.0.0.0`.
+fn tls_proxy_bind_addr(http_bound: SocketAddr, tls_port: u16) -> SocketAddr {
+    SocketAddr::new(http_bound.ip(), tls_port)
+}
+
+/// Compute the loopback/local upstream target address for the TLS proxy.
+fn tls_proxy_target_addr(http_bound: SocketAddr) -> SocketAddr {
+    let target_ip = match http_bound.ip() {
+        std::net::IpAddr::V4(ip) if ip.is_unspecified() => {
+            std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
+        }
+        std::net::IpAddr::V6(ip) if ip.is_unspecified() => {
+            std::net::IpAddr::V6(std::net::Ipv6Addr::LOCALHOST)
+        }
+        ip => ip,
+    };
+    SocketAddr::new(target_ip, http_bound.port())
+}
+
 pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
+    run_with_shutdown(bind, tokio_util::sync::CancellationToken::new()).await
+}
+
+/// Run the web server on `bind` until either an OS shutdown signal / test deadline
+/// fires or `external_shutdown` is cancelled.
+pub async fn run_with_shutdown(
+    bind: SocketAddr,
+    external_shutdown: tokio_util::sync::CancellationToken,
+) -> anyhow::Result<()> {
     // rustls 0.23 has no auto-selected process CryptoProvider; install ring
     // up front (idempotent) — the CLI `serve` path reaches run() directly and
     // would otherwise panic on first TLS use (e.g. the TLS proxy below).
@@ -300,12 +381,13 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
             .ok()
             .and_then(|p| p.parse().ok())
             .unwrap_or(9376);
-        let target = format!("127.0.0.1:{}", bound_addr.port());
+        let tls_bind = tls_proxy_bind_addr(bound_addr, tls_port);
+        let target = tls_proxy_target_addr(bound_addr).to_string();
         let tls_shutdown = state.shutdown_token.clone();
         tokio::spawn(async move {
-            match run_tls_proxy(&cert, &key, tls_port, &target, tls_shutdown).await {
-                Ok(()) => tracing::info!(port = tls_port, "TLS proxy stopped cleanly"),
-                Err(e) => tracing::error!(error = %e, port = tls_port, "TLS proxy terminated"),
+            match run_tls_proxy(&cert, &key, tls_bind, &target, tls_shutdown).await {
+                Ok(()) => tracing::info!(listen = %tls_bind, "TLS proxy stopped cleanly"),
+                Err(e) => tracing::error!(error = %e, listen = %tls_bind, "TLS proxy terminated"),
             }
         });
     }
@@ -1053,7 +1135,12 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
         app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )
     .with_graceful_shutdown(async move {
-        crate::shutdown::shutdown_signal_or_test_deadline().await;
+        tokio::select! {
+            _ = crate::shutdown::shutdown_signal_or_test_deadline() => {}
+            _ = external_shutdown.cancelled() => {
+                tracing::info!("Received external shutdown signal, starting graceful shutdown");
+            }
+        }
         // Cancel shutdown token immediately so long-lived WS/SSE streams and
         // background tasks close promptly, letting `axum::serve` drain quickly.
         shutdown_token.cancel();
@@ -1175,6 +1262,18 @@ fn spawn_backup_scheduler(
 /// Binds to 0.0.0.0 to allow LAN access.
 /// Port can be configured via config.toml [server] section or NEOMIND_PORT env var.
 pub async fn start_server() -> anyhow::Result<()> {
+    start_server_with_shutdown(tokio_util::sync::CancellationToken::new()).await
+}
+
+/// Start the server with default configuration and an external shutdown trigger.
+///
+/// Accepts either a [`tokio_util::sync::CancellationToken`] or a [`ShutdownHandle`].
+/// Cancelling the trigger drains Axum gracefully and runs full resource cleanup
+/// (flushing telemetry, stopping extensions, DataPush, IM bridges, device adapters,
+/// and `llama-server`).
+pub async fn start_server_with_shutdown(
+    external_shutdown: impl Into<ShutdownHandle>,
+) -> anyhow::Result<()> {
     // rustls 0.23 (via reqwest's rustls-tls-...-no-provider build) does NOT
     // auto-select a process-level CryptoProvider. Install ring before any TLS
     // use (MQTT adapter, HTTPS LLM calls) or the first TLS op panics:
@@ -1182,21 +1281,21 @@ pub async fn start_server() -> anyhow::Result<()> {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let (host, port) = crate::config::get_server_config();
     let bind: SocketAddr = format!("{}:{}", host, port).parse()?;
-    run(bind).await
+    run_with_shutdown(bind, external_shutdown.into().into_token()).await
 }
 
 // ============================================================================
 // TLS reverse proxy (secure-context enablement for LAN deployments)
 // ============================================================================
 
-/// In-process TLS front: accepts rustls connections on `port`, forwards them
-/// byte-for-byte to the plaintext listener at `target` (loopback). Same
+/// In-process TLS front: accepts rustls connections on `bind`, forwards them
+/// byte-for-byte to the plaintext listener at `target`. Same
 /// TCP_NODELAY-on-listener trick as the main listener — WS push latency
 /// depends on it.
 async fn run_tls_proxy(
     cert_pem: &str,
     key_pem: &str,
-    port: u16,
+    bind: SocketAddr,
     target: &str,
     shutdown_token: tokio_util::sync::CancellationToken,
 ) -> anyhow::Result<()> {
@@ -1216,7 +1315,7 @@ async fn run_tls_proxy(
         .with_single_cert(certs, key)?;
     let acceptor = tokio_rustls::TlsAcceptor::from(std::sync::Arc::new(config));
 
-    let addr: SocketAddr = format!("0.0.0.0:{port}").parse()?;
+    let addr = bind;
     let socket = socket2::Socket::new(
         socket2::Domain::for_address(addr),
         socket2::Type::STREAM,
@@ -1234,11 +1333,11 @@ async fn run_tls_proxy(
     socket.set_nonblocking(true)?;
     let listener = tokio::net::TcpListener::from_std(socket.into())?;
 
-    tracing::info!(port, %target, "TLS proxy listening (secure-context front)");
+    tracing::info!(listen = %addr, %target, "TLS proxy listening (secure-context front)");
     loop {
         let (stream, _peer) = tokio::select! {
             _ = shutdown_token.cancelled() => {
-                tracing::info!(port, "TLS proxy shutting down");
+                tracing::info!(listen = %addr, "TLS proxy shutting down");
                 return Ok(());
             }
             res = listener.accept() => res?,
@@ -1259,5 +1358,64 @@ async fn run_tls_proxy(
             let mut tls = tls;
             let _ = tokio::io::copy_bidirectional(&mut tls, &mut upstream).await;
         });
+    }
+}
+
+#[cfg(test)]
+mod server_tests {
+    use super::*;
+
+    #[test]
+    fn tls_proxy_matches_http_bind_ip() {
+        let loopback: SocketAddr = "127.0.0.1:9375".parse().unwrap();
+        assert_eq!(
+            tls_proxy_bind_addr(loopback, 9376),
+            "127.0.0.1:9376".parse::<SocketAddr>().unwrap()
+        );
+        assert_eq!(
+            tls_proxy_target_addr(loopback),
+            "127.0.0.1:9375".parse::<SocketAddr>().unwrap()
+        );
+
+        let all_v4: SocketAddr = "0.0.0.0:9375".parse().unwrap();
+        assert_eq!(
+            tls_proxy_bind_addr(all_v4, 9376),
+            "0.0.0.0:9376".parse::<SocketAddr>().unwrap()
+        );
+        assert_eq!(
+            tls_proxy_target_addr(all_v4),
+            "127.0.0.1:9375".parse::<SocketAddr>().unwrap()
+        );
+
+        let v6_loopback: SocketAddr = "[::1]:9375".parse().unwrap();
+        assert_eq!(
+            tls_proxy_bind_addr(v6_loopback, 9376),
+            "[::1]:9376".parse::<SocketAddr>().unwrap()
+        );
+        assert_eq!(
+            tls_proxy_target_addr(v6_loopback),
+            "[::1]:9375".parse::<SocketAddr>().unwrap()
+        );
+
+        let all_v6: SocketAddr = "[::]:9375".parse().unwrap();
+        assert_eq!(
+            tls_proxy_bind_addr(all_v6, 9376),
+            "[::]:9376".parse::<SocketAddr>().unwrap()
+        );
+        assert_eq!(
+            tls_proxy_target_addr(all_v6),
+            "[::1]:9375".parse::<SocketAddr>().unwrap()
+        );
+    }
+
+    #[test]
+    fn shutdown_handle_triggers_underlying_token() {
+        let handle = new_shutdown_handle();
+        let token = handle.token();
+        assert!(!handle.is_triggered());
+        assert!(!token.is_cancelled());
+        handle.trigger();
+        assert!(handle.is_triggered());
+        assert!(token.is_cancelled());
     }
 }

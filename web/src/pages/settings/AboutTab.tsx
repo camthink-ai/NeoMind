@@ -277,6 +277,8 @@ export function AboutTab() {
   const { t } = useTranslation(["common", "settings"])
   const { handleError, showSuccess } = useErrorHandler()
   const { updateInfo, setUpdateDialogOpen, setServerUpgradeDialogOpen } = useAppStore()
+  const isAdmin = useAppStore((s) => s.user?.role === "admin")
+  const canCheckUpdate = isTauriEnv() || isAdmin
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null)
   const [appVersion, setAppVersion] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -406,35 +408,37 @@ export function AboutTab() {
             <div className="font-mono text-2xl md:text-3xl font-semibold text-foreground leading-none">
               [{heroVersion}]
             </div>
-            {/* Update entry point in BOTH environments: Tauri opens the
-                desktop OTA dialog; a browser session (server deployment)
-                opens the server self-upgrade dialog. */}
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              aria-label={updateTitle}
-              title={updateTitle}
-              onClick={() => {
-                if (!updateInfo?.available) {
-                  handleCheckForUpdates()
-                } else if (isTauriEnv()) {
-                  setUpdateDialogOpen(true)
-                } else {
-                  setServerUpgradeDialogOpen(true)
-                }
-              }}
-              disabled={checkingUpdate}
-            >
-              {checkingUpdate ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : updateInfo?.available ? (
-                <ArrowUpCircle className="h-4 w-4 text-info" />
-              ) : updateInfo ? (
-                <CheckCircle2 className="h-4 w-4 text-success" />
-              ) : (
-                <RefreshCw className="h-4 w-4 text-muted-foreground" />
-              )}
-            </Button>
+            {/* Update entry point: Tauri opens the desktop OTA dialog; in
+                browser mode (server deployment), server upgrade check/install
+                is Admin-only. */}
+            {canCheckUpdate && (
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                aria-label={updateTitle}
+                title={updateTitle}
+                onClick={() => {
+                  if (!updateInfo?.available) {
+                    handleCheckForUpdates()
+                  } else if (isTauriEnv()) {
+                    setUpdateDialogOpen(true)
+                  } else {
+                    setServerUpgradeDialogOpen(true)
+                  }
+                }}
+                disabled={checkingUpdate}
+              >
+                {checkingUpdate ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : updateInfo?.available ? (
+                  <ArrowUpCircle className="h-4 w-4 text-info" />
+                ) : updateInfo ? (
+                  <CheckCircle2 className="h-4 w-4 text-success" />
+                ) : (
+                  <RefreshCw className="h-4 w-4 text-muted-foreground" />
+                )}
+              </Button>
+            )}
           </div>
         </div>
       </div>
@@ -544,18 +548,19 @@ export function AboutTab() {
                     <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       {t("settings:processUsage")}
                     </h3>
-                    {/* Manual refresh — the data-dir number is cached
-                        server-side and only recomputed on demand. */}
-                    <button
-                      type="button"
-                      onClick={refreshDataDir}
-                      disabled={refreshingDataDir}
-                      title={t("common:refresh")}
-                      aria-label={t("common:refresh")}
-                      className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted-30 hover:text-foreground disabled:opacity-50"
-                    >
-                      <RefreshCw className={`h-3.5 w-3.5 ${refreshingDataDir ? "animate-spin" : ""}`} />
-                    </button>
+                    {/* Manual refresh — Admin-only POST /api/stats/data-dir/refresh. */}
+                    {isAdmin && (
+                      <button
+                        type="button"
+                        onClick={refreshDataDir}
+                        disabled={refreshingDataDir}
+                        title={t("common:refresh")}
+                        aria-label={t("common:refresh")}
+                        className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted-30 hover:text-foreground disabled:opacity-50"
+                      >
+                        <RefreshCw className={`h-3.5 w-3.5 ${refreshingDataDir ? "animate-spin" : ""}`} />
+                      </button>
+                    )}
                   </div>
                   <div className="rounded-lg border bg-card px-4">
                     <div className="divide-y divide-border">
@@ -705,7 +710,8 @@ export function AboutTab() {
                 <Badge variant="secondary" className="font-mono">
                   {versionTag || "---"}
                 </Badge>
-                {updateInfo?.available &&
+                {canCheckUpdate &&
+                  updateInfo?.available &&
                   updateInfo.version !== systemInfo?.version && (
                     <Badge
                       variant="default"

@@ -502,13 +502,6 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             "/api/mentions/resolve",
             post(crate::handlers::mentions::resolve_mentions_handler),
         )
-        // Skills API (protected - write operations)
-        .route("/api/skills", post(skills::create_skill_handler))
-        .route("/api/skills/reload", post(skills::reload_skills_handler))
-        .route(
-            "/api/skills/:id",
-            put(skills::update_skill_handler).delete(skills::delete_skill_handler),
-        )
         // P0.3: Pending stream state management (for recovery after disconnection)
         .route(
             "/api/sessions/:id/pending",
@@ -532,13 +525,9 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             "/api/operations/:id",
             get(operations::get_operation_handler),
         )
-        // Devices API
+        // Devices API (BLE provisioning requires Admin below)
         .route("/api/devices", get(devices::list_devices_handler))
         .route("/api/devices", post(devices::add_device_handler))
-        .route(
-            "/api/devices/ble-provision",
-            post(devices::ble_provision_handler),
-        )
         .route("/api/devices/:id", get(devices::get_device_handler))
         .route("/api/devices/:id", put(devices::update_device_handler))
         .route("/api/devices/:id", delete(devices::delete_device_handler))
@@ -588,12 +577,7 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             "/api/device-types/:id",
             delete(devices::delete_device_type_handler),
         )
-        // Device Type Import from Cloud API
-        .route(
-            "/api/device-types/cloud/import",
-            post(devices::import_cloud_device_types_handler),
-        )
-        // MDL Generation API
+        // MDL Generation API (cloud device-type import requires Admin below)
         .route(
             "/api/devices/generate-mdl",
             post(devices::generate_mdl_handler),
@@ -935,38 +919,24 @@ pub fn create_router_with_state(state: ServerState) -> Router {
                     delete(agents::delete_user_message),
                 ),
         )
-        // System Memory API (Markdown-based)
+        // System Memory API (read-only; mutations require Admin below)
         .route("/api/memory", get(memory::get_all_memory))
         .route("/api/memory/export", get(memory::export_all))
         .route("/api/memory/stats", get(memory::get_stats))
-        .route(
-            "/api/memory/config",
-            get(memory::get_config).put(memory::update_config),
-        )
-        .route("/api/memory/compress", post(memory::trigger_compress))
+        .route("/api/memory/config", get(memory::get_config))
         .route(
             "/api/memory/category/:category",
-            get(memory::get_category).put(memory::update_category),
+            get(memory::get_category),
         )
         .route(
             "/api/memory/:source_type/:id",
-            get(memory::get_memory_content)
-                .put(memory::update_memory_content)
-                .delete(memory::delete_memory_file),
+            get(memory::get_memory_content),
         )
-        // New file-based memory API (2-file layout)
-        .route(
-            "/api/memory/file/:target",
-            get(memory::get_memory_file).put(memory::update_memory_file),
-        )
-        // Custom memory files API
+        // New file-based memory API (2-file layout, read-only)
+        .route("/api/memory/file/:target", get(memory::get_memory_file))
+        // Custom memory files API (read-only)
         .route("/api/memory/custom", get(memory::list_custom_files))
-        .route(
-            "/api/memory/custom/:name",
-            get(memory::get_custom_file)
-                .put(memory::update_custom_file)
-                .delete(memory::delete_custom_file),
-        )
+        .route("/api/memory/custom/:name", get(memory::get_custom_file))
         // MQTT Management API
         .route("/api/mqtt/status", get(mqtt::get_mqtt_status_handler))
         .route(
@@ -1334,6 +1304,38 @@ pub fn create_router_with_state(state: ServerState) -> Router {
                 )
                 // Config import (admin-only)
                 .route("/api/config/import", post(config::import_config_handler))
+                // BLE provisioning & cloud device-type import (admin-only)
+                .route(
+                    "/api/devices/ble-provision",
+                    post(devices::ble_provision_handler),
+                )
+                .route(
+                    "/api/device-types/cloud/import",
+                    post(devices::import_cloud_device_types_handler),
+                )
+                // Skills mutating operations (admin-only; GET & /match remain accessible)
+                .route("/api/skills", post(skills::create_skill_handler))
+                .route("/api/skills/reload", post(skills::reload_skills_handler))
+                .route(
+                    "/api/skills/:id",
+                    put(skills::update_skill_handler).delete(skills::delete_skill_handler),
+                )
+                // System Memory mutating operations (admin-only; GET endpoints remain accessible)
+                .route("/api/memory/config", put(memory::update_config))
+                .route("/api/memory/compress", post(memory::trigger_compress))
+                .route(
+                    "/api/memory/category/:category",
+                    put(memory::update_category),
+                )
+                .route(
+                    "/api/memory/:source_type/:id",
+                    put(memory::update_memory_content).delete(memory::delete_memory_file),
+                )
+                .route("/api/memory/file/:target", put(memory::update_memory_file))
+                .route(
+                    "/api/memory/custom/:name",
+                    put(memory::update_custom_file).delete(memory::delete_custom_file),
+                )
                 // System Settings mutating operations (admin-only)
                 .route("/api/settings/timezone", put(settings::update_timezone))
                 .route(
@@ -1758,6 +1760,19 @@ mod rbac_tests {
             (Method::DELETE, "/api/frontend-components/c1"),
             (Method::GET, "/api/auth/keys"),
             (Method::POST, "/api/auth/keys"),
+            (Method::PUT, "/api/memory/config"),
+            (Method::POST, "/api/memory/compress"),
+            (Method::PUT, "/api/memory/file/user"),
+            (Method::PUT, "/api/memory/custom/notes"),
+            (Method::DELETE, "/api/memory/custom/notes"),
+            (Method::PUT, "/api/memory/agent/a1"),
+            (Method::DELETE, "/api/memory/agent/a1"),
+            (Method::POST, "/api/skills"),
+            (Method::POST, "/api/skills/reload"),
+            (Method::PUT, "/api/skills/custom-1"),
+            (Method::DELETE, "/api/skills/custom-1"),
+            (Method::POST, "/api/devices/ble-provision"),
+            (Method::POST, "/api/device-types/cloud/import"),
         ] {
             assert_eq!(
                 send_req(&app, method.clone(), path, Some(&user_tok)).await,
@@ -1770,6 +1785,24 @@ mod rbac_tests {
                 "Non-wildcard API key must be forbidden from {method} {path}"
             );
         }
+
+        // Read-only memory & skills endpoints remain accessible to non-admin users.
+        assert_eq!(
+            send_req(&app, Method::GET, "/api/skills", Some(&user_tok)).await,
+            StatusCode::OK
+        );
+        assert_ne!(
+            send_req(&app, Method::POST, "/api/skills/match", Some(&user_tok)).await,
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            send_req(&app, Method::GET, "/api/memory/config", Some(&user_tok)).await,
+            StatusCode::OK
+        );
+        assert_eq!(
+            send_req(&app, Method::GET, "/api/memory/stats", Some(&user_tok)).await,
+            StatusCode::OK
+        );
 
         // 4. Admin JWT & wildcard API key pass admin middleware.
         // (`GET /api/im-bridges` returns 503 in test state because IM router isn't started,

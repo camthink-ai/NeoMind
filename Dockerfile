@@ -202,16 +202,25 @@ RUN set -eu; \
       none) echo "NEOMIND_BUNDLE_MODEL=none — no model pre-bundled";; \
       lfm25-2.6b) \
         d=/app/data/models/lfm25-2.6b; mkdir -p "$d"; \
-        curl -fsSL -o "$d/lfm25-2.6b-qad_q4_0.gguf" https://huggingface.co/LiquidAI/LFM2.5-2.6B-GGUF/resolve/main/LFM2.5-2.6B-QAD-Q4_0.gguf; \
-        printf '{"id":"lfm25-2.6b","version":"1.0","file_name":"lfm25-2.6b-qad_q4_0.gguf","sha256":"a247afd6414918eac8e520a9e6137dc271235461ecbe1180462221d5b8d40b03","quant":"qad_q4_0"}' > "$d/manifest.json";; \
+        f="$d/lfm25-2.6b-qad_q4_0.gguf"; \
+        sha="a247afd6414918eac8e520a9e6137dc271235461ecbe1180462221d5b8d40b03"; \
+        curl -fsSL -o "$f" https://huggingface.co/LiquidAI/LFM2.5-2.6B-GGUF/resolve/main/LFM2.5-2.6B-QAD-Q4_0.gguf; \
+        echo "$sha  $f" | sha256sum -c -; \
+        printf '{"id":"lfm25-2.6b","version":"1.0","file_name":"lfm25-2.6b-qad_q4_0.gguf","sha256":"%s","quant":"qad_q4_0"}' "$sha" > "$d/manifest.json";; \
       qwen3.5-4b) \
         d=/app/data/models/qwen3.5-4b; mkdir -p "$d"; \
-        curl -fsSL -o "$d/qwen3.5-4b-q4_k_m.gguf" https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf; \
-        printf '{"id":"qwen3.5-4b","version":"1.0","file_name":"qwen3.5-4b-q4_k_m.gguf","sha256":"00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4","quant":"q4_k_m"}' > "$d/manifest.json";; \
+        f="$d/qwen3.5-4b-q4_k_m.gguf"; \
+        sha="00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4"; \
+        curl -fsSL -o "$f" https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf; \
+        echo "$sha  $f" | sha256sum -c -; \
+        printf '{"id":"qwen3.5-4b","version":"1.0","file_name":"qwen3.5-4b-q4_k_m.gguf","sha256":"%s","quant":"q4_k_m"}' "$sha" > "$d/manifest.json";; \
       gemma4-e2b) \
         d=/app/data/models/gemma4-e2b; mkdir -p "$d"; \
-        curl -fsSL -o "$d/gemma-4-E2B_q4_0-it.qat.gguf" https://huggingface.co/google/gemma-4-E2B-it-qat-q4_0-gguf/resolve/main/gemma-4-E2B_q4_0-it.gguf; \
-        printf '{"id":"gemma4-e2b","version":"1.0","file_name":"gemma-4-E2B_q4_0-it.qat.gguf","sha256":"fa401b55b07ee70a54c6dae3903c783a6e65064312529ea57175cb5f8dec6634","quant":"qat_q4_0"}' > "$d/manifest.json";; \
+        f="$d/gemma-4-E2B_q4_0-it.qat.gguf"; \
+        sha="fa401b55b07ee70a54c6dae3903c783a6e65064312529ea57175cb5f8dec6634"; \
+        curl -fsSL -o "$f" https://huggingface.co/google/gemma-4-E2B-it-qat-q4_0-gguf/resolve/main/gemma-4-E2B_q4_0-it.gguf; \
+        echo "$sha  $f" | sha256sum -c -; \
+        printf '{"id":"gemma4-e2b","version":"1.0","file_name":"gemma-4-E2B_q4_0-it.qat.gguf","sha256":"%s","quant":"qat_q4_0"}' "$sha" > "$d/manifest.json";; \
       *) echo "Unknown NEOMIND_BUNDLE_MODEL: $id" >&2; exit 1;; \
     esac; \
     chown -R neomind:neomind /app/data

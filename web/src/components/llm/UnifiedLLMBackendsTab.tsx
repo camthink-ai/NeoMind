@@ -335,6 +335,7 @@ export function UnifiedLLMBackendsTab({
 }: UnifiedLLMBackendsTabProps) {
   const { t } = useTranslation(['plugins', 'common'])
   const { handleError } = useErrorHandler()
+  const isAdmin = useStore((s) => s.user?.role === 'admin')
   const [view, setView] = useState<View>('list')
   const [loading, setLoading] = useState(true)
   const [backendTypes, setBackendTypes] = useState<BackendTypeDefinition[]>([])
@@ -744,8 +745,8 @@ export function UnifiedLLMBackendsTab({
               </div>
             </div>
 
-            {/* Inline Actions */}
-            {builtinStatus.server_state !== 'downloading' && (
+            {/* Inline Actions — Admin only */}
+            {isAdmin && builtinStatus.server_state !== 'downloading' && (
               <div className="flex shrink-0 flex-wrap items-center gap-1.5">
                 {!builtinStatus.installed ? (
                   <Button size="sm" onClick={() => handleBuiltinAction('download')} disabled={!!builtinBusyAction}>
@@ -855,9 +856,10 @@ export function UnifiedLLMBackendsTab({
               {builtinStatus.installed && builtinStatus.server_state !== 'downloading' && (
                 <button
                   type="button"
-                  disabled={!!builtinBusyAction}
+                  disabled={!isAdmin || !!builtinBusyAction}
                   title={`${t('plugins:llm.builtinEngineSettings')} · ${gpuTitle(builtinStatus.gpu_offload) ?? ''}`}
                   onClick={() => {
+                    if (!isAdmin) return
                     const cur = builtinStatus.ctx_override ?? builtinStatus.ctx ?? builtinStatus.default_ctx ?? 32768
                     const presets = BUILTIN_CTX_PRESETS
                     const onPreset = presets.includes(cur)
@@ -872,7 +874,7 @@ export function UnifiedLLMBackendsTab({
                     setKvInput(builtinStatus.kv_cache === 'f16' ? 'f16' : 'q8_0')
                     setCtxDialogOpen(true)
                   }}
-                  className="inline-flex h-7 min-h-0 max-w-full items-center gap-1.5 rounded-lg border border-border bg-muted-20 px-2.5 text-muted-foreground transition-colors hover:bg-muted-30 hover:text-foreground disabled:opacity-50"
+                  className="inline-flex h-7 min-h-0 max-w-full items-center gap-1.5 rounded-lg border border-border bg-muted-20 px-2.5 text-muted-foreground transition-colors hover:bg-muted-30 hover:text-foreground disabled:cursor-default disabled:opacity-75 disabled:hover:bg-muted-20 disabled:hover:text-muted-foreground"
                 >
                   <span className="font-medium text-foreground">{t('plugins:llm.builtinMainEngine')}</span>
                   <span className="truncate font-mono text-[11px]">
@@ -880,15 +882,17 @@ export function UnifiedLLMBackendsTab({
                     {builtinStatus.kv_cache && ` · ${builtinStatus.kv_cache}`}
                     {gpuSeg(builtinStatus.gpu_offload)}
                   </span>
-                  <Settings2 className="h-3 w-3 shrink-0 opacity-65" />
+                  {isAdmin && <Settings2 className="h-3 w-3 shrink-0 opacity-65" />}
                 </button>
               )}
 
               {builtinStatus.installed && builtinStatus.server_state !== 'downloading' && builtinStatus.companion && (
                 <button
                   type="button"
+                  disabled={!isAdmin}
                   title={`${t('plugins:llm.companionSettings')} · ${builtinStatus.companion.name}`}
                   onClick={() => {
+                    if (!isAdmin) return
                     const cur = builtinStatus.companion?.ctx ?? 32768
                     const onPreset = BUILTIN_CTX_PRESETS.includes(cur)
                     setVlmCustomMode(!onPreset)
@@ -901,7 +905,7 @@ export function UnifiedLLMBackendsTab({
                     setVlmKvInput('q8_0')
                     setVlmDialogOpen(true)
                   }}
-                  className="inline-flex h-7 min-h-0 max-w-full items-center gap-1.5 rounded-lg border border-border bg-muted-20 px-2.5 text-muted-foreground transition-colors hover:bg-muted-30 hover:text-foreground"
+                  className="inline-flex h-7 min-h-0 max-w-full items-center gap-1.5 rounded-lg border border-border bg-muted-20 px-2.5 text-muted-foreground transition-colors hover:bg-muted-30 hover:text-foreground disabled:cursor-default disabled:opacity-75 disabled:hover:bg-muted-20 disabled:hover:text-muted-foreground"
                 >
                   <span
                     className={cn(
@@ -913,16 +917,20 @@ export function UnifiedLLMBackendsTab({
                   <span className="max-w-[140px] truncate font-mono text-[11px]">
                     {builtinStatus.companion.name}
                   </span>
-                  <Settings2 className="h-3 w-3 shrink-0 opacity-65" />
+                  {isAdmin && <Settings2 className="h-3 w-3 shrink-0 opacity-65" />}
                 </button>
               )}
 
               {builtinStatus.runtime && (
                 <button
                   type="button"
+                  disabled={!isAdmin}
                   title={builtinStatus.runtime.active.path ?? t('plugins:llm.runtimeSettings')}
-                  onClick={() => setRuntimeDialogOpen(true)}
-                  className="inline-flex h-7 min-h-0 max-w-full items-center gap-1.5 rounded-lg border border-border bg-muted-20 px-2.5 text-muted-foreground transition-colors hover:bg-muted-30 hover:text-foreground"
+                  onClick={() => {
+                    if (!isAdmin) return
+                    setRuntimeDialogOpen(true)
+                  }}
+                  className="inline-flex h-7 min-h-0 max-w-full items-center gap-1.5 rounded-lg border border-border bg-muted-20 px-2.5 text-muted-foreground transition-colors hover:bg-muted-30 hover:text-foreground disabled:cursor-default disabled:opacity-75 disabled:hover:bg-muted-20 disabled:hover:text-muted-foreground"
                 >
                   <span className="font-medium text-foreground">{t('plugins:llm.runtimeLabel')}</span>
                   <span className="truncate font-mono text-[11px]">
@@ -930,13 +938,13 @@ export function UnifiedLLMBackendsTab({
                   </span>
                   {builtinStatus.runtime.upgrading ? (
                     <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
-                  ) : builtinStatus.runtime.update_available ? (
+                  ) : isAdmin && builtinStatus.runtime.update_available ? (
                     <span className="rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-medium leading-none text-primary-foreground">
                       {t('plugins:llm.runtimeUpdateBadge')}
                     </span>
-                  ) : (
+                  ) : isAdmin ? (
                     <Settings2 className="h-3 w-3 shrink-0 opacity-65" />
-                  )}
+                  ) : null}
                 </button>
               )}
             </div>
@@ -989,19 +997,21 @@ export function UnifiedLLMBackendsTab({
             title={t('plugins:llm.noBackends')}
             description={t('plugins:llm.noBackendsDesc')}
           />
-          <div className="mt-2 flex flex-col items-center gap-3">
-            <Button size="lg" onClick={() => {
-              setWizardStartInPicker(false)
-              setWizardOpen(true)
-            }}>
-              <Download className="mr-2 h-4 w-4" />
-              {t('plugins:llm.emptyStateDownloadBuiltin')}
-            </Button>
-            <Button variant="secondary" onClick={handleAddOwnBackend}>
-              <Server className="mr-2 h-4 w-4" />
-              {t('plugins:llm.emptyStateAddOwnBackend')}
-            </Button>
-          </div>
+          {isAdmin && (
+            <div className="mt-2 flex flex-col items-center gap-3">
+              <Button size="lg" onClick={() => {
+                setWizardStartInPicker(false)
+                setWizardOpen(true)
+              }}>
+                <Download className="mr-2 h-4 w-4" />
+                {t('plugins:llm.emptyStateDownloadBuiltin')}
+              </Button>
+              <Button variant="secondary" onClick={handleAddOwnBackend}>
+                <Server className="mr-2 h-4 w-4" />
+                {t('plugins:llm.emptyStateAddOwnBackend')}
+              </Button>
+            </div>
+          )}
         {wizardElement}
         {runtimeDialogElement}
         {/* This branch returns early — the shared dialogs below must be
@@ -1034,7 +1044,7 @@ export function UnifiedLLMBackendsTab({
             first-run wizard (spec §7). Deliberately a banner, not an auto-open,
             to avoid surprising the user. Gated on builtinStatus being present
             so servers without the /api/builtin-llm endpoints never show it. */}
-        {instances.length === 0 && builtinStatus && !builtinStatus.installed && (
+        {isAdmin && instances.length === 0 && builtinStatus && !builtinStatus.installed && (
           <Card className="mb-4 border-primary">
             <CardContent className="p-5">
               <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-center">
@@ -1587,13 +1597,15 @@ export function UnifiedLLMBackendsTab({
               <p className="text-sm text-muted-foreground mb-4">
                 {t('plugins:llm.configureToStart', { name: displayName })}
               </p>
-              <Button onClick={() => {
-                setEditingInstance(null)
-                if (isCloudAi) { setCloudAddOpen(true) } else { setConfigDialogOpen(true) }
-              }}>
-                <Server className="mr-2 h-4 w-4" />
-                {t('plugins:llm.addInstance2', { name: displayName })}
-              </Button>
+              {isAdmin && (
+                <Button onClick={() => {
+                  setEditingInstance(null)
+                  if (isCloudAi) { setCloudAddOpen(true) } else { setConfigDialogOpen(true) }
+                }}>
+                  <Server className="mr-2 h-4 w-4" />
+                  {t('plugins:llm.addInstance2', { name: displayName })}
+                </Button>
+              )}
             </CardContent>
           </Card>
         ) : (
@@ -1663,50 +1675,52 @@ export function UnifiedLLMBackendsTab({
                           )
                         })()}
                       </div>
-                      <div className="flex items-center gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 w-8 p-0 sm:h-8 sm:w-8"
-                          onClick={() => handleTest(instance.id)}
-                        >
-                          <TestTube className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 w-8 p-0 sm:h-8 sm:w-8"
-                          onClick={() => {
-                            if (isCloudAi) {
-                              // Cloud AI edits go through the add dialog in
-                              // edit mode — its protocol select doubles as
-                              // the backend_type switcher.
-                              setCloudEditTarget({
-                                id: instance.id,
-                                name: instance.name,
-                                backend_type: instance.plugin_type,
-                                endpoint: String(instance.config?.endpoint ?? ''),
-                                model: String(instance.config?.model ?? ''),
-                                api_key_configured: !!(instance as { api_key_configured?: boolean }).api_key_configured,
-                              })
-                              setCloudAddOpen(true)
-                            } else {
-                              setEditingInstance(instance)
-                              setConfigDialogOpen(true)
-                            }
-                          }}
-                        >
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 w-8 p-0 text-error hover:text-error sm:h-8 sm:w-8"
-                          onClick={() => handleDelete(instance.id)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
+                      {isAdmin && (
+                        <div className="flex items-center gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 w-8 p-0 sm:h-8 sm:w-8"
+                            onClick={() => handleTest(instance.id)}
+                          >
+                            <TestTube className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 w-8 p-0 sm:h-8 sm:w-8"
+                            onClick={() => {
+                              if (isCloudAi) {
+                                // Cloud AI edits go through the add dialog in
+                                // edit mode — its protocol select doubles as
+                                // the backend_type switcher.
+                                setCloudEditTarget({
+                                  id: instance.id,
+                                  name: instance.name,
+                                  backend_type: instance.plugin_type,
+                                  endpoint: String(instance.config?.endpoint ?? ''),
+                                  model: String(instance.config?.model ?? ''),
+                                  api_key_configured: !!(instance as { api_key_configured?: boolean }).api_key_configured,
+                                })
+                                setCloudAddOpen(true)
+                              } else {
+                                setEditingInstance(instance)
+                                setConfigDialogOpen(true)
+                              }
+                            }}
+                          >
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 w-8 p-0 text-error hover:text-error sm:h-8 sm:w-8"
+                            onClick={() => handleDelete(instance.id)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      )}
                     </div>
                   </CardHeader>
 
@@ -1736,8 +1750,8 @@ export function UnifiedLLMBackendsTab({
           </div>
         )}
 
-        {/* Add Instance Button */}
-        {pluginInstances.length > 0 && (
+        {/* Add Instance Button — Admin only */}
+        {isAdmin && pluginInstances.length > 0 && (
           <div className="mt-4">
             <Button onClick={() => {
               setEditingInstance(null)

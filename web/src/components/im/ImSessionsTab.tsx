@@ -8,16 +8,19 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Send, RotateCcw } from 'lucide-react'
+import { Card, CardContent } from '@/components/ui/card'
 import { ResponsiveTable, EmptyState, LoadingState } from '@/components/shared'
 import { confirm } from '@/hooks/use-confirm'
 import { useErrorHandler } from '@/hooks/useErrorHandler'
 import { notifySuccess } from '@/lib/notify'
 import { api, type ImBridge, type ImSession } from '@/lib/api'
 import { formatTimestamp } from '@/lib/utils/format'
+import { useStore } from '@/store'
 
 export function ImSessionsTab() {
   const { t } = useTranslation()
   const { handleError } = useErrorHandler()
+  const isAdmin = useStore((s) => s.user?.role === 'admin')
 
   const [loading, setLoading] = useState(true)
   const [bridge, setBridge] = useState<ImBridge | null>(null)
@@ -28,6 +31,12 @@ export function ImSessionsTab() {
   // Single load cycle: bridge discovery + session fetch together, so there is
   // no intermediate render that would flash the "no sessions" empty state.
   const loadAll = useCallback(async () => {
+    if (!isAdmin) {
+      setLoading(false)
+      setBridge(null)
+      setSessions([])
+      return
+    }
     setLoading(true)
     try {
       const res = await api.listImBridges()
@@ -46,7 +55,7 @@ export function ImSessionsTab() {
     } finally {
       setLoading(false)
     }
-  }, [handleError])
+  }, [handleError, isAdmin])
 
   useEffect(() => {
     loadAll()
@@ -77,6 +86,22 @@ export function ImSessionsTab() {
     } finally {
       setResetting(null)
     }
+  }
+
+  if (!isAdmin) {
+    return (
+      <Card className="border-dashed bg-muted-20">
+        <CardContent className="py-10">
+          <EmptyState
+            title={t('messages.im.adminOnlyTitle', 'Administrator Access Required')}
+            description={t(
+              'messages.im.adminOnlyDesc',
+              'Only administrators can view and manage IM bridge sessions.',
+            )}
+          />
+        </CardContent>
+      </Card>
+    )
   }
 
   // Initial load: bridge unknown yet → page skeleton.

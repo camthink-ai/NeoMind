@@ -80,6 +80,10 @@ fn adaptive_rate_limit() -> u32 {
     clamped as u32
 }
 
+/// Upper bound on tracked client buckets in `RateLimiter.clients` to prevent
+/// unbounded memory growth when an attacker rotates client keys/headers.
+const MAX_RATE_LIMIT_CLIENTS: usize = 10_000;
+
 /// Rate limiter state - uses DashMap for lock-free concurrent access.
 #[derive(Clone)]
 pub struct RateLimiter {
@@ -122,6 +126,28 @@ impl RateLimiter {
     pub fn check_rate_limit(&self, client_key: &str) -> Result<(), RateLimitExceeded> {
         let now = Instant::now();
         let window_start = now - self.config.per_duration;
+
+        // Enforce a hard cap on distinct tracked client buckets so rotating
+        // headers/session IDs cannot exhaust memory.
+        if !self.clients.contains_key(client_key) && self.clients.len() >= MAX_RATE_LIMIT_CLIENTS {
+            self.cleanup_old_entries();
+            if self.clients.len() >= MAX_RATE_LIMIT_CLIENTS {
+                let excess = self.clients.len().saturating_sub(MAX_RATE_LIMIT_CLIENTS);
+                let target_evict = excess + (MAX_RATE_LIMIT_CLIENTS / 10).max(1);
+                let mut entries: Vec<(String, Instant)> = self
+                    .clients
+                    .iter()
+                    .map(|r| {
+                        let last = r.value().history.last().copied().unwrap_or(window_start);
+                        (r.key().clone(), last)
+                    })
+                    .collect();
+                entries.sort_by_key(|(_, ts)| *ts);
+                for (k, _) in entries.into_iter().take(target_evict) {
+                    self.clients.remove(&k);
+                }
+            }
+        }
 
         // DashMap entry API - acquires lock only on this specific bucket
         let mut entry = self
@@ -349,5 +375,23 @@ mod tests {
         let h3 = hash_string("different");
         assert_eq!(h1, h2);
         assert_ne!(h1, h3);
+    }
+
+    #[test]
+    fn test_rate_limiter_caps_client_map_size() {
+        let limiter = RateLimiter::with_config(RateLimitConfig {
+            max_requests: 10,
+            per_duration: Duration::from_secs(60),
+            warn_interval: Duration::from_secs(5),
+        });
+        for i in 0..(MAX_RATE_LIMIT_CLIENTS + 250) {
+            assert!(limiter.check_rate_limit(&format!("session:{i}")).is_ok());
+        }
+        assert!(
+            limiter.clients.len() <= MAX_RATE_LIMIT_CLIENTS,
+            "client map len {} must not exceed cap {}",
+            limiter.clients.len(),
+            MAX_RATE_LIMIT_CLIENTS
+        );
     }
 }

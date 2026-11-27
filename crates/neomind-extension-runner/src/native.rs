@@ -435,9 +435,17 @@ impl NativeExtensionBridge {
     }
 
     pub(crate) fn call_json0(&self, func: JsonFn0) -> Result<serde_json::Value, String> {
+        // Keep the Arc<Library> alive inside the spawned FFI closure so that if
+        // this call times out and the thread is detached, dropping
+        // NativeExtensionBridge cannot dlclose() the library while the thread
+        // is still executing inside it (prevents dlclose UAF).
+        let lib = Arc::clone(&self._library);
         let SendPtr(ptr) = safe_ffi_call_with_timeout(
             "call_json0",
-            AssertUnwindSafe(move || unsafe { SendPtr(func()) }),
+            AssertUnwindSafe(move || {
+                let _keep_alive = lib;
+                unsafe { SendPtr(func()) }
+            }),
         )?;
         self.read_json_ptr(ptr)
     }
@@ -449,9 +457,13 @@ impl NativeExtensionBridge {
     ) -> Result<serde_json::Value, String> {
         let bytes = serde_json::to_vec(input)
             .map_err(|e| format!("Failed to serialize native bridge input: {}", e))?;
+        let lib = Arc::clone(&self._library);
         let SendPtr(ptr) = safe_ffi_call_with_timeout(
             "call_json1",
-            AssertUnwindSafe(move || unsafe { SendPtr(func(bytes.as_ptr(), bytes.len())) }),
+            AssertUnwindSafe(move || {
+                let _keep_alive = lib;
+                unsafe { SendPtr(func(bytes.as_ptr(), bytes.len())) }
+            }),
         )?;
         self.read_json_ptr(ptr)
     }

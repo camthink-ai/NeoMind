@@ -17,15 +17,17 @@ services:
     image: ghcr.io/ggml-org/llama.cpp:server
     container_name: llama-init
     restart: "no"
-    entrypoint: ["/bin/sh", "/scripts/llama-init.sh"]
+    entrypoint: ["/bin/bash", "/scripts/llama-init.sh"]
     volumes:
       - ./deploy/llama-init.sh:/scripts/llama-init.sh:ro
       - llama-models:/models
     environment:
       - LLAMA_MODEL_URL=${LLAMA_MODEL_URL:-https://huggingface.co/google/gemma-4-E2B-it-qat-q4_0-gguf/resolve/main/gemma-4-E2B_q4_0-it.gguf}
       - LLAMA_MODEL_FILE=${LLAMA_MODEL_FILE:-gemma-4-E2B_q4_0-it.gguf}
+      - LLAMA_MODEL_SHA256=${LLAMA_MODEL_SHA256:-}
       - LLAMA_MMPROJ_URL=${LLAMA_MMPROJ_URL:-https://huggingface.co/google/gemma-4-E2B-it-qat-q4_0-gguf/resolve/main/gemma-4-E2B-it-mmproj.gguf}
       - LLAMA_MMPROJ_FILE=${LLAMA_MMPROJ_FILE:-gemma-4-E2B-it-mmproj.gguf}
+      - LLAMA_MMPROJ_SHA256=${LLAMA_MMPROJ_SHA256:-}
       - LLAMA_MODEL_DIR=/models
 
   llama:
@@ -36,7 +38,7 @@ services:
       llama-init:
         condition: service_completed_successfully
     ports:
-      - "${LLAMA_PORT:-8080}:8080"
+      - "127.0.0.1:${LLAMA_PORT:-8080}:8080"
     volumes:
       - llama-models:/models
     command: >

@@ -89,11 +89,31 @@ pub async fn rate_limit_middleware(
         return next.run(request).await;
     }
 
+    // 1. Enforce an aggregate per-IP floor so rotating `X-Session-Id` or fake
+    //    `Authorization` / `X-API-Key` headers cannot bypass rate limiting.
+    if let Some(ci) = connect_info.as_ref() {
+        let ip_key = format!("agg:ip:{}", ci.0.ip());
+        if let Err(e) = state.rate_limiter.check_rate_limit(&ip_key) {
+            if e.should_log() {
+                tracing::warn!(
+                    category = "rate_limit",
+                    client = %ip_key,
+                    wait_seconds = e.wait_seconds,
+                    "Aggregate per-IP rate limit exceeded"
+                );
+            }
+            return e.into_response();
+        }
+    }
+
     let client_id = extract_client_id(request.headers(), connect_info.as_ref());
 
-    match state.rate_limiter.check_rate_limit(&client_id) {
-        Ok(_) => next.run(request).await,
-        Err(e) => {
+    // Skip a redundant second check when `client_id` already fell back to raw IP.
+    let is_raw_ip_key = connect_info
+        .as_ref()
+        .is_some_and(|ci| client_id == format!("ip:{}", ci.0.ip()));
+    if !is_raw_ip_key {
+        if let Err(e) = state.rate_limiter.check_rate_limit(&client_id) {
             if e.should_log() {
                 tracing::warn!(
                     category = "rate_limit",
@@ -102,9 +122,11 @@ pub async fn rate_limit_middleware(
                     "Rate limit exceeded"
                 );
             }
-            e.into_response()
+            return e.into_response();
         }
     }
+
+    next.run(request).await
 }
 
 /// Webhook-specific rate-limit middleware.

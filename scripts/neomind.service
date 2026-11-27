@@ -25,7 +25,7 @@ StartLimitInterval=60
 
 # Environment
 Environment="RUST_LOG=info"
-Environment="NEOMIND_DATA_DIR=/var/lib/neomind"
+Environment="NEOMIND_DATA_DIR=/var/lib/neomind/data"
 
 # Security settings
 # Note: web-triggered upgrades (About 页 → check for updates) do NOT relax
@@ -43,7 +43,9 @@ RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 
 # Resource limits
 LimitNOFILE=65536
-MemoryMax=2G
+# Bundled llama-server (2-4B GGUF models) + server RSS requires headroom above
+# 2G; raise further or comment out if running larger local models.
+MemoryMax=8G
 
 [Install]
 WantedBy=multi-user.target

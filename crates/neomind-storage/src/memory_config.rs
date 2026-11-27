@@ -97,7 +97,36 @@ impl Default for MemoryConfig {
     }
 }
 
+/// Maximum allowed character limit for persistent memory files (USER/KNOWLEDGE/PROCEDURES).
+pub const MAX_PERSISTENT_CHAR_LIMIT: usize = 100_000;
+/// Maximum allowed character limit for agent/custom memory files.
+pub const MAX_AGENT_CHAR_LIMIT: usize = 200_000;
+/// Minimum session temp file TTL in days.
+pub const MIN_TEMP_FILE_TTL_DAYS: u64 = 1;
+/// Maximum session temp file TTL in days.
+pub const MAX_TEMP_FILE_TTL_DAYS: u64 = 3650;
+/// Minimum refresh interval for system context inventory in seconds.
+pub const MIN_SYSTEM_CONTEXT_INTERVAL_SECS: u64 = 60;
+/// Minimum interval for LLM summarization in seconds.
+pub const MIN_SUMMARY_INTERVAL_SECS: u64 = 600;
+
 impl MemoryConfig {
+    /// Clamp numeric bounds to safe limits to prevent memory exhaustion,
+    /// `chrono::Duration::days` overflow panics, or tight background-task loops.
+    pub fn clamp_bounds(&mut self) {
+        self.user_char_limit = self.user_char_limit.min(MAX_PERSISTENT_CHAR_LIMIT);
+        self.knowledge_char_limit = self.knowledge_char_limit.min(MAX_PERSISTENT_CHAR_LIMIT);
+        self.procedures_char_limit = self.procedures_char_limit.min(MAX_PERSISTENT_CHAR_LIMIT);
+        self.agent_char_limit = self.agent_char_limit.min(MAX_AGENT_CHAR_LIMIT);
+        self.temp_file_ttl_days = self
+            .temp_file_ttl_days
+            .clamp(MIN_TEMP_FILE_TTL_DAYS, MAX_TEMP_FILE_TTL_DAYS);
+        self.system_context_interval_secs = self
+            .system_context_interval_secs
+            .max(MIN_SYSTEM_CONTEXT_INTERVAL_SECS);
+        self.summary_interval_secs = self.summary_interval_secs.max(MIN_SUMMARY_INTERVAL_SECS);
+    }
+
     /// Configuration file path
     pub fn config_file() -> std::path::PathBuf {
         neomind_core::paths::store_path("memory_config.json")
@@ -109,10 +138,12 @@ impl MemoryConfig {
         if !path.exists() {
             return Self::default();
         }
-        std::fs::read_to_string(path)
+        let mut cfg: Self = std::fs::read_to_string(path)
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        cfg.clamp_bounds();
+        cfg
     }
 
     /// Save configuration to file

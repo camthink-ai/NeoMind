@@ -13,6 +13,7 @@ import { confirm } from '@/hooks/use-confirm'
 import { useErrorHandler } from '@/hooks/useErrorHandler'
 import { notifySuccess, notifyError } from '@/lib/notify'
 import { api, type ImBridge, type ImInvite, type ImInviteCreated } from '@/lib/api'
+import { useStore } from '@/store'
 import { cn } from '@/lib/utils'
 import { IM_PLATFORMS, getPlatformDef, type ImPlatformDef, type ImPlatformField } from './platforms'
 import { copyToClipboard } from '@/lib/clipboard'
@@ -67,6 +68,7 @@ function statusBadge(status: string): { label: string; className: string } {
 export function ImBridgesTab() {
   const { t, i18n } = useTranslation(['settings', 'common'])
   const { handleError } = useErrorHandler()
+  const isAdmin = useStore((s) => s.user?.role === 'admin')
 
   // Resolve a per-locale docs map to one URL (zh* → zh, anything else → en,
   // falling back to en). Same convention as the notification-channel editor.
@@ -94,10 +96,18 @@ export function ImBridgesTab() {
   const [generating, setGenerating] = useState(false)
 
   useEffect(() => {
+    if (!isAdmin) {
+      setLoading(false)
+      return
+    }
     loadBridges()
-  }, [])
+  }, [isAdmin])
 
   const loadBridges = async () => {
+    if (!isAdmin) {
+      setLoading(false)
+      return
+    }
     setLoading(true)
     try {
       const res = await api.listImBridges()
@@ -234,6 +244,21 @@ export function ImBridgesTab() {
     } catch (error) {
       handleError(error, { operation: 'Remove allowed chat' })
     }
+  }
+
+  if (!isAdmin) {
+    return (
+      <Card className="border-dashed bg-muted-20">
+        <CardContent className="py-10">
+          <EmptyState
+            title={t('settings:im.adminOnlyTitle', { defaultValue: 'Administrator Access Required' })}
+            description={t('settings:im.adminOnlyDesc', {
+              defaultValue: 'Only administrators can view and configure IM bridges.',
+            })}
+          />
+        </CardContent>
+      </Card>
+    )
   }
 
   if (loading) {

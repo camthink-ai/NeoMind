@@ -122,12 +122,12 @@ export function useUpdateCheck(options: UpdateCheckOptions = {}): UseUpdateCheck
     // the same updateInfo slice that drives the About badge; no auto-open
     // dialog — the About page's server-upgrade dialog opens on demand.
     if (!(window as any).__TAURI_INTERNALS__) {
-      // Skip silently when not logged in yet: the 24h auto-check fires on
-      // app mount, and on the login page an unauthenticated call would 401
-      // and surface a "Missing Authorization header" toast (observed in
-      // browser-driven testing). Manual checks from About only happen
-      // post-login, so this guard costs nothing there.
+      // Skip silently when not logged in yet or not an Admin: the 24h auto-check
+      // fires on app mount, and server upgrade endpoints are Admin-only (calling
+      // them unauthenticated or as User/Viewer would 401/403 and toast).
       if (!tokenManager.getToken()) return
+      const currentUser = useAppStore.getState().user ?? tokenManager.getUser()
+      if (currentUser?.role !== 'admin') return
 
       try {
         setUpdateStatus('checking')

@@ -55,59 +55,71 @@ pub(crate) unsafe extern "C" fn runner_native_capability_invoke(
         .into_raw()
     };
 
-    if input_ptr.is_null() || input_len == 0 {
-        return error_json("empty native capability bridge input".to_string());
-    }
-
-    // Cap input size to prevent OOM from malicious extensions (1 MB)
-    const MAX_CAPABILITY_INPUT: usize = 1024 * 1024;
-    if input_len > MAX_CAPABILITY_INPUT {
-        return error_json(format!(
-            "capability input too large: {} bytes (max {})",
-            input_len, MAX_CAPABILITY_INPUT
-        ));
-    }
-
-    let input_bytes = std::slice::from_raw_parts(input_ptr, input_len);
-    let input = match serde_json::from_slice::<serde_json::Value>(input_bytes) {
-        Ok(value) => value,
-        Err(error) => {
-            return error_json(format!("invalid native capability bridge json: {}", error))
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if input_ptr.is_null() || input_len == 0 {
+            return error_json("empty native capability bridge input".to_string());
         }
-    };
 
-    let capability = input
-        .get("capability")
-        .and_then(|value| value.as_str())
-        .unwrap_or_default();
-    let params = input.get("params").cloned().unwrap_or_else(|| json!({}));
+        // Cap input size to prevent OOM from malicious extensions (1 MB)
+        const MAX_CAPABILITY_INPUT: usize = 1024 * 1024;
+        if input_len > MAX_CAPABILITY_INPUT {
+            return error_json(format!(
+                "capability input too large: {} bytes (max {})",
+                input_len, MAX_CAPABILITY_INPUT
+            ));
+        }
 
-    // Validate capability name against allowlist
-    if !ALLOWED_CAPABILITIES.contains(&capability) {
-        error!(
-            capability = %capability,
-            "Rejected capability invocation: name not in allowlist"
-        );
-        return error_json(format!("capability not allowed: {}", capability));
+        let input_bytes = std::slice::from_raw_parts(input_ptr, input_len);
+        let input = match serde_json::from_slice::<serde_json::Value>(input_bytes) {
+            Ok(value) => value,
+            Err(error) => {
+                return error_json(format!("invalid native capability bridge json: {}", error))
+            }
+        };
+
+        let capability = input
+            .get("capability")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+        let params = input.get("params").cloned().unwrap_or_else(|| json!({}));
+
+        // Validate capability name against allowlist
+        if !ALLOWED_CAPABILITIES.contains(&capability) {
+            error!(
+                capability = %capability,
+                "Rejected capability invocation: name not in allowlist"
+            );
+            return error_json(format!("capability not allowed: {}", capability));
+        }
+
+        let Some(ipc_client) = GLOBAL_NATIVE_IPC_CLIENT.get() else {
+            return error_json("native capability IPC client is not initialized".to_string());
+        };
+
+        let response = ipc_client.invoke(capability, &params);
+        std::ffi::CString::new(response.to_string())
+            .unwrap_or_else(|_| {
+                std::ffi::CString::new(
+                    "{\"success\":false,\"error\":\"failed to serialize native capability response\"}",
+                )
+                .expect("fallback error JSON is valid ASCII")
+            })
+            .into_raw()
+    }));
+
+    match result {
+        Ok(ptr) => ptr,
+        Err(_) => {
+            error!("runner_native_capability_invoke panicked across FFI boundary");
+            error_json("runner capability bridge panicked".to_string())
+        }
     }
-
-    let Some(ipc_client) = GLOBAL_NATIVE_IPC_CLIENT.get() else {
-        return error_json("native capability IPC client is not initialized".to_string());
-    };
-
-    let response = ipc_client.invoke(capability, &params);
-    std::ffi::CString::new(response.to_string())
-        .unwrap_or_else(|_| {
-            std::ffi::CString::new(
-                "{\"success\":false,\"error\":\"failed to serialize native capability response\"}",
-            )
-            .expect("fallback error JSON is valid ASCII")
-        })
-        .into_raw()
 }
 
 pub(crate) unsafe extern "C" fn runner_native_capability_free(ptr: *mut c_char) {
-    if !ptr.is_null() {
-        let _ = std::ffi::CString::from_raw(ptr);
-    }
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if !ptr.is_null() {
+            let _ = std::ffi::CString::from_raw(ptr);
+        }
+    }));
 }
