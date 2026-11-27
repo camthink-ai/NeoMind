@@ -1220,9 +1220,11 @@ impl ServerState {
         }
         match crate::ai_agent_runtime::build_hosted_runtime(agents.agent_store.clone(), host_deps) {
             Ok(runtime) => {
-                runtime.start();
+                // Defer starting the 1s Cron/Interval scheduler until
+                // `start_agent_manager()` runs in server startup after LLM,
+                // tools, extensions, broker, and `init_agent_events()` are ready.
                 *clean_slate_holder.write().await = Some(runtime);
-                tracing::info!("Clean-slate HostedAiAgentRuntime ready");
+                tracing::info!("Clean-slate HostedAiAgentRuntime built (scheduler deferred until startup)");
             }
             Err(e) => {
                 tracing::warn!(
@@ -2529,9 +2531,19 @@ impl ServerState {
                     device_id,
                     metric,
                     value,
+                    is_virtual,
                     ..
                 } = event
                 {
+                    // Skip virtual metrics (`ai:*`, `transform:*`) — VirtualMetricPublisher
+                    // already writes them under their canonical namespace and evaluates rules,
+                    // so re-inserting them here would pollute `device:ai:*` keys.
+                    if is_virtual.unwrap_or(false)
+                        || device_id.starts_with("ai:")
+                        || device_id.starts_with("transform:")
+                    {
+                        continue;
+                    }
                     tracing::debug!(
                         "Received device metric: {} {} = {:?}",
                         device_id,
@@ -3239,13 +3251,28 @@ impl ServerState {
                 Box::pin(async move {
                     let guard = clean_slate.read().await;
                     let rt = guard.as_ref()?;
-                    rt.list().into_iter().find_map(|(spec, _)| {
-                        matches!(
-                            rt.runtime_status(&spec.id),
-                            Some(neomind_ai_agent::AgentStatus::Active)
-                        )
-                        .then_some(spec.id)
-                    })
+                    let agents = rt.list();
+                    // Prefer an Active agent; fall back to Completed (e.g. a V2
+                    // Manual agent that completed its last run) so IM routing
+                    // doesn't fail when only Manual agents exist.
+                    agents
+                        .iter()
+                        .find_map(|(spec, _)| {
+                            matches!(
+                                rt.runtime_status(&spec.id),
+                                Some(neomind_ai_agent::AgentStatus::Active)
+                            )
+                            .then(|| spec.id.clone())
+                        })
+                        .or_else(|| {
+                            agents.into_iter().find_map(|(spec, _)| {
+                                matches!(
+                                    rt.runtime_status(&spec.id),
+                                    Some(neomind_ai_agent::AgentStatus::Completed)
+                                )
+                                .then_some(spec.id)
+                            })
+                        })
                 })
             });
 
@@ -3447,26 +3474,22 @@ impl ServerState {
             }
         };
 
-        let rt_for_status = runtime.clone();
-
-        // Cleanup agents stuck in Executing status on startup (V2 runtime only).
-        tokio::spawn(async move {
-            for (spec, _) in rt_for_status.list() {
-                if !matches!(
-                    rt_for_status.runtime_status(&spec.id),
-                    Some(neomind_ai_agent::AgentStatus::Executing)
-                ) {
-                    continue;
-                }
-                tracing::warn!(
-                    agent_id = %spec.id,
-                    agent_name = %spec.name,
-                    "Agent stuck in Executing status on startup, resetting to Active"
-                );
-                let _ =
-                    rt_for_status.set_agent_status(&spec.id, neomind_ai_agent::AgentStatus::Active);
+        // Cleanup agents stuck in Executing status on startup synchronously so
+        // they are recovered BEFORE `start_agent_manager()` starts the scheduler.
+        for (spec, _) in runtime.list() {
+            if !matches!(
+                runtime.runtime_status(&spec.id),
+                Some(neomind_ai_agent::AgentStatus::Executing)
+            ) {
+                continue;
             }
-        });
+            tracing::warn!(
+                agent_id = %spec.id,
+                agent_name = %spec.name,
+                "Agent stuck in Executing status on startup, resetting to Active"
+            );
+            let _ = runtime.set_agent_status(&spec.id, neomind_ai_agent::AgentStatus::Active);
+        }
 
         let bridge = Arc::new(crate::agent_events::AgentEventBridge::new(runtime));
 
@@ -3483,8 +3506,17 @@ impl ServerState {
                         is_virtual,
                         ..
                     } => {
-                        // Virtual metrics must NOT re-trigger event agents
-                        // (feedback-loop guard).
+                        // Upstream AI agent published metrics (`ai:{agent_id}:{field}`)
+                        // route to downstream Event agents subscribing to `ai` sources.
+                        // Self-trigger and storm guards are enforced inside `AgentEventBridge`.
+                        if let Some(agent_id) = device_id.strip_prefix("ai:") {
+                            bridge
+                                .check_and_trigger("ai", agent_id, &metric, timestamp)
+                                .await;
+                            continue;
+                        }
+                        // Other virtual metrics (e.g. transform outputs) must NOT
+                        // re-trigger device event agents (feedback-loop guard).
                         if is_virtual.unwrap_or(false) {
                             tracing::debug!(
                                 device_id = %device_id,

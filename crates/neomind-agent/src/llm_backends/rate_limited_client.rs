@@ -258,32 +258,28 @@ impl RateLimitedClient {
         }
     }
 
-    /// Parse Retry-After header from response.
+    /// Parse Retry-After header from response (capped at 60s so a single 429
+    /// response cannot stall backend concurrency permits for hours).
     fn parse_retry_after(&self, response: &Response) -> Option<Duration> {
-        // Try Retry-After header (seconds)
-        if let Some(retry_after) = response.headers().get("Retry-After") {
-            if let Ok(seconds) = retry_after.to_str() {
-                if let Ok(secs) = seconds.parse::<u64>() {
-                    return Some(Duration::from_secs(secs));
-                }
-            }
-        }
-
-        // Try Retry-After from HTTP date
-        if let Some(retry_after) = response.headers().get("Retry-After") {
-            if let Ok(date_str) = retry_after.to_str() {
-                if let Ok(date) = parse_http_date(date_str) {
-                    let now = Instant::now();
-                    let wait = date.saturating_duration_since(now);
-                    if wait > Duration::ZERO {
-                        return Some(wait);
-                    }
-                }
-            }
-        }
-
-        None
+        let raw = response.headers().get("Retry-After")?.to_str().ok()?;
+        parse_retry_after_header_value(raw)
     }
+}
+
+const MAX_RETRY_AFTER: Duration = Duration::from_secs(60);
+
+fn parse_retry_after_header_value(raw: &str) -> Option<Duration> {
+    if let Ok(secs) = raw.trim().parse::<u64>() {
+        return Some(std::cmp::min(Duration::from_secs(secs), MAX_RETRY_AFTER));
+    }
+    if let Ok(date) = parse_http_date(raw) {
+        let now = Instant::now();
+        let wait = date.saturating_duration_since(now);
+        if wait > Duration::ZERO {
+            return Some(std::cmp::min(wait, MAX_RETRY_AFTER));
+        }
+    }
+    None
 }
 
 impl Clone for RateLimitedClient {
@@ -360,5 +356,18 @@ mod tests {
 
         let elapsed = now.elapsed();
         assert!(elapsed >= Duration::from_millis(90));
+    }
+
+    #[test]
+    fn test_retry_after_is_capped_at_60s() {
+        assert_eq!(
+            parse_retry_after_header_value("12"),
+            Some(Duration::from_secs(12))
+        );
+        assert_eq!(
+            parse_retry_after_header_value("3600"),
+            Some(Duration::from_secs(60))
+        );
+        assert_eq!(parse_retry_after_header_value("not-a-number"), None);
     }
 }

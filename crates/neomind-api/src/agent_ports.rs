@@ -205,9 +205,23 @@ impl HostLlmPort {
     ) -> AgentResult<LlmResponse> {
         let sem_key = request.backend_id.as_deref().unwrap_or("default");
         let sem = self.backend_semaphore(sem_key);
+        const PERMIT_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
+        const PER_ROUND_LLM_TIMEOUT: Duration = Duration::from_secs(120);
+        const TOTAL_LLM_RUN_BUDGET: Duration = Duration::from_secs(300);
+        let run_deadline = Instant::now() + TOTAL_LLM_RUN_BUDGET;
         let _permit = tokio::select! {
             _ = cancel.cancelled() => return Err(AgentError::Cancelled),
-            p = sem.acquire_owned() => p.map_err(|_| AgentError::Llm("backend semaphore closed".into()))?,
+            res = tokio::time::timeout(PERMIT_WAIT_TIMEOUT, sem.acquire_owned()) => {
+                match res {
+                    Ok(Ok(p)) => p,
+                    Ok(Err(_)) => return Err(AgentError::Llm("backend semaphore closed".into())),
+                    Err(_) => return Err(AgentError::Llm(format!(
+                        "LLM backend '{}' busy: permit wait timed out after {}s",
+                        sem_key,
+                        PERMIT_WAIT_TIMEOUT.as_secs()
+                    ))),
+                }
+            }
         };
         let manager =
             neomind_agent::get_instance_manager().map_err(|e| AgentError::Llm(e.to_string()))?;
@@ -380,9 +394,27 @@ impl HostLlmPort {
                 tools: round_tools.clone(),
             };
 
+            let remaining_budget = run_deadline.saturating_duration_since(Instant::now());
+            if remaining_budget.is_zero() {
+                return Err(AgentError::Llm(format!(
+                    "LLM execution exceeded total budget ({}s)",
+                    TOTAL_LLM_RUN_BUDGET.as_secs()
+                )));
+            }
+            let round_timeout = remaining_budget.min(PER_ROUND_LLM_TIMEOUT);
+
             let first_result = tokio::select! {
                 _ = cancel.cancelled() => return Err(AgentError::Cancelled),
-                result = runtime.generate(input.clone()) => result,
+                res = tokio::time::timeout(round_timeout, runtime.generate(input.clone())) => {
+                    match res {
+                        Ok(r) => r,
+                        Err(_) => return Err(AgentError::Llm(format!(
+                            "LLM round {} timed out after {}s",
+                            round + 1,
+                            round_timeout.as_secs()
+                        ))),
+                    }
+                }
             };
 
             let output = match first_result {
@@ -399,10 +431,22 @@ impl HostLlmPort {
                         _ = cancel.cancelled() => return Err(AgentError::Cancelled),
                         _ = tokio::time::sleep(Duration::from_millis(200)) => {}
                     }
+                    let retry_timeout = run_deadline
+                        .saturating_duration_since(Instant::now())
+                        .min(PER_ROUND_LLM_TIMEOUT);
+                    if retry_timeout.is_zero() {
+                        return Err(AgentError::Llm("LLM execution exceeded total budget".into()));
+                    }
                     tokio::select! {
                         _ = cancel.cancelled() => return Err(AgentError::Cancelled),
-                        result = runtime.generate(input) => {
-                            result.map_err(|e| AgentError::Llm(e.to_string()))?
+                        res = tokio::time::timeout(retry_timeout, runtime.generate(input)) => {
+                            match res {
+                                Ok(result) => result.map_err(|e| AgentError::Llm(e.to_string()))?,
+                                Err(_) => return Err(AgentError::Llm(format!(
+                                    "LLM retry timed out after {}s",
+                                    retry_timeout.as_secs()
+                                ))),
+                            }
                         }
                     }
                 }
@@ -444,10 +488,19 @@ impl HostLlmPort {
                         stream: false,
                         tools: None,
                     };
+                    let retry_timeout = run_deadline
+                        .saturating_duration_since(Instant::now())
+                        .min(PER_ROUND_LLM_TIMEOUT);
+                    if retry_timeout.is_zero() {
+                        return Err(AgentError::Llm("LLM execution exceeded total budget".into()));
+                    }
                     tokio::select! {
                         _ = cancel.cancelled() => return Err(AgentError::Cancelled),
-                        result = runtime.generate(retry_input) => {
-                            result.map_err(|e| AgentError::Llm(e.to_string()))?
+                        res = tokio::time::timeout(retry_timeout, runtime.generate(retry_input)) => {
+                            match res {
+                                Ok(result) => result.map_err(|e| AgentError::Llm(e.to_string()))?,
+                                Err(_) => return Err(AgentError::Llm("LLM compacted retry timed out".into())),
+                            }
                         }
                     }
                 }
@@ -487,9 +540,21 @@ impl HostLlmPort {
                         stream: false,
                         tools: None,
                     };
-                    let json_res = tokio::select! {
-                        _ = cancel.cancelled() => return Err(AgentError::Cancelled),
-                        result = runtime.generate(json_input) => result,
+                    let json_timeout = run_deadline
+                        .saturating_duration_since(Instant::now())
+                        .min(PER_ROUND_LLM_TIMEOUT);
+                    let json_res = if json_timeout.is_zero() {
+                        Err(LlmError::Timeout(0))
+                    } else {
+                        tokio::select! {
+                            _ = cancel.cancelled() => return Err(AgentError::Cancelled),
+                            res = tokio::time::timeout(json_timeout, runtime.generate(json_input)) => {
+                                match res {
+                                    Ok(r) => r,
+                                    Err(_) => Err(LlmError::Timeout(json_timeout.as_secs())),
+                                }
+                            }
+                        }
                     };
                     final_text = match json_res {
                         Ok(out) if !out.text.trim().is_empty() => out.text,
@@ -1433,11 +1498,13 @@ impl SourceReadPort for HostSourceReadPort {
         let freshness = params.get("_freshness").cloned();
 
         // Prefer durable metric storage when the operation names a metric field.
-        if let Ok(Some(point)) = self
-            .deps
-            .extension_metrics
-            .query_latest(&source_id, operation)
-            .await
+        if let Ok(Ok(Some(point))) = tokio::time::timeout(
+            timeout,
+            self.deps
+                .extension_metrics
+                .query_latest(&source_id, operation),
+        )
+        .await
         {
             let value = apply_ext_freshness_to_point(&freshness, &point, now_ms, operation);
             return Ok(SourceReadResult {
@@ -1473,8 +1540,12 @@ impl SourceReadPort for HostSourceReadPort {
         }
 
         // Command path — must be declared ReadOnly (blocks dry_run writes).
-        self.ensure_readonly_command(extension_id, operation)
-            .await?;
+        tokio::time::timeout(timeout, self.ensure_readonly_command(extension_id, operation))
+            .await
+            .map_err(|_| AgentError::Source {
+                key: extension_id.into(),
+                reason: "extension command capability check timed out".into(),
+            })??;
 
         let result = tokio::time::timeout(
             timeout,
@@ -1619,14 +1690,15 @@ impl HostSourceReadPort {
                 now_ms,
             );
             let _ = self.deps.telemetry.flush();
-            let sample_ts = self
-                .deps
-                .telemetry
-                .latest(source_key, field)
-                .await
-                .ok()
-                .flatten()
-                .map(|p| p.timestamp);
+            let sample_ts = tokio::time::timeout(
+                timeout,
+                self.deps.telemetry.latest(source_key, field),
+            )
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+            .flatten()
+            .map(|p| p.timestamp);
             let (start_q, end_q) = storage_range_for_series(lookback_secs, now_ms, sample_ts);
             let points = tokio::time::timeout(
                 timeout,
@@ -1871,14 +1943,19 @@ impl SideEffectPort for HostSideEffectPort {
         params: &serde_json::Value,
         _execution_id: &str,
     ) -> AgentResult<SideEffectReceipt> {
+        const SIDE_EFFECT_TIMEOUT: Duration = Duration::from_secs(30);
         self.invoke_count.fetch_add(1, Ordering::SeqCst);
 
         if let Some(ext_id) = destination.strip_prefix("extension:") {
             // Extension Ok = Accepted, not device ACK.
-            self.extension_registry
-                .execute_command(ext_id, action, params)
-                .await
-                .map_err(|e| AgentError::Other(e.to_string()))?;
+            tokio::time::timeout(
+                SIDE_EFFECT_TIMEOUT,
+                self.extension_registry
+                    .execute_command(ext_id, action, params),
+            )
+            .await
+            .map_err(|_| AgentError::Other("extension command timed out after 30s".into()))?
+            .map_err(|e| AgentError::Other(e.to_string()))?;
             return Ok(SideEffectReceipt::Accepted);
         }
 
@@ -1886,32 +1963,45 @@ impl SideEffectPort for HostSideEffectPort {
         let map = json_to_string_map(params);
 
         if self.device_service.get_device(device_id).is_some() {
-            let (_value, delivery) = self
-                .device_service
-                .send_command_reported(device_id, action, map)
-                .await
-                .map_err(|e| AgentError::Other(e.to_string()))?;
+            let (_value, delivery) = tokio::time::timeout(
+                SIDE_EFFECT_TIMEOUT,
+                self.device_service
+                    .send_command_reported(device_id, action, map),
+            )
+            .await
+            .map_err(|_| AgentError::Other("device command timed out after 30s".into()))?
+            .map_err(|e| AgentError::Other(e.to_string()))?;
             return Ok(receipt_from_command_delivery(delivery));
         }
 
-        if self
-            .extension_registry
-            .get_info(destination)
-            .await
-            .is_some()
+        if tokio::time::timeout(
+            SIDE_EFFECT_TIMEOUT,
+            self.extension_registry.get_info(destination),
+        )
+        .await
+        .ok()
+        .flatten()
+        .is_some()
         {
-            self.extension_registry
-                .execute_command(destination, action, params)
-                .await
-                .map_err(|e| AgentError::Other(e.to_string()))?;
+            tokio::time::timeout(
+                SIDE_EFFECT_TIMEOUT,
+                self.extension_registry
+                    .execute_command(destination, action, params),
+            )
+            .await
+            .map_err(|_| AgentError::Other("extension command timed out after 30s".into()))?
+            .map_err(|e| AgentError::Other(e.to_string()))?;
             return Ok(SideEffectReceipt::Accepted);
         }
 
-        let (_value, delivery) = self
-            .device_service
-            .send_command_reported(device_id, action, map)
-            .await
-            .map_err(|e| AgentError::Other(e.to_string()))?;
+        let (_value, delivery) = tokio::time::timeout(
+            SIDE_EFFECT_TIMEOUT,
+            self.device_service
+                .send_command_reported(device_id, action, map),
+        )
+        .await
+        .map_err(|_| AgentError::Other("device command timed out after 30s".into()))?
+        .map_err(|e| AgentError::Other(e.to_string()))?;
         Ok(receipt_from_command_delivery(delivery))
     }
 }

@@ -758,7 +758,16 @@ fn extract_event_data(
             is_virtual,
             ..
         } => {
-            let source_id = format!("device:{}:{}", device_id, metric);
+            // Preserve canonical namespaces (`ai:{agent_id}`, `transform:{id}`, `extension:{id}`)
+            // emitted via VirtualMetricPublisher instead of double-prefixing `device:`.
+            let source_id = if device_id.starts_with("ai:")
+                || device_id.starts_with("transform:")
+                || device_id.starts_with("extension:")
+            {
+                format!("{}:{}", device_id, metric)
+            } else {
+                format!("device:{}:{}", device_id, metric)
+            };
             let val = metric_to_json(value);
             Some((source_id, val, *timestamp, is_virtual.unwrap_or(false)))
         }
@@ -1576,5 +1585,43 @@ mod tests {
 
         scheduler.stop_all().await;
         _sink.abort();
+    }
+
+    #[test]
+    fn extract_event_data_preserves_canonical_virtual_namespaces() {
+        let ai_ev = neomind_core::NeoMindEvent::DeviceMetric {
+            device_id: "ai:agent-123".into(),
+            metric: "risk_score".into(),
+            value: neomind_core::MetricValue::float(0.95),
+            timestamp: 1_700_000_000,
+            quality: None,
+            is_virtual: Some(true),
+        };
+        let (source_id, _, _, is_virtual) = extract_event_data(&ai_ev).unwrap();
+        assert_eq!(source_id, "ai:agent-123:risk_score");
+        assert!(is_virtual);
+
+        let tr_ev = neomind_core::NeoMindEvent::DeviceMetric {
+            device_id: "transform:t1".into(),
+            metric: "avg_temp".into(),
+            value: neomind_core::MetricValue::float(22.5),
+            timestamp: 1_700_000_001,
+            quality: None,
+            is_virtual: Some(true),
+        };
+        let (source_id, _, _, _) = extract_event_data(&tr_ev).unwrap();
+        assert_eq!(source_id, "transform:t1:avg_temp");
+
+        let dev_ev = neomind_core::NeoMindEvent::DeviceMetric {
+            device_id: "sensor-1".into(),
+            metric: "temp".into(),
+            value: neomind_core::MetricValue::float(21.0),
+            timestamp: 1_700_000_002,
+            quality: None,
+            is_virtual: None,
+        };
+        let (source_id, _, _, is_virtual) = extract_event_data(&dev_ev).unwrap();
+        assert_eq!(source_id, "device:sensor-1:temp");
+        assert!(!is_virtual);
     }
 }

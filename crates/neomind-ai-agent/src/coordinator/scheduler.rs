@@ -1,7 +1,8 @@
 //! Pure Cron / Interval ticker — only submits when due.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use chrono::{TimeZone, Utc};
@@ -14,13 +15,21 @@ use crate::model::{AgentStatus, TriggerSpec};
 use crate::ports::ClockPort;
 use crate::store::InMemoryAgentStore;
 
+/// Maximum deterministic startup stagger (ms) for overdue Interval agents on
+/// process restart, preventing a thundering herd against the LLM concurrency
+/// pool while keeping direct `tick_once()` unit tests deterministic.
+const STARTUP_STAGGER_MAX_MS: i64 = 5_000;
+
 /// 1s tick loop that submits Active Cron/Interval agents via the shared submit port.
 pub struct AgentScheduler {
     submit: Arc<dyn AgentSubmitPort>,
     store: InMemoryAgentStore,
     clock: Arc<dyn ClockPort>,
-    /// Last fire timestamp (ms) per agent — used for Interval spacing and Cron window.
+    /// Last fire timestamp (ms) per `{agent_id}:{config_version}` — used for
+    /// Interval spacing and Cron window.
     last_fired: Mutex<HashMap<String, i64>>,
+    /// Timestamp (ms) when `start()` began ticking (0 for direct `tick_once()` calls).
+    started_at_ms: AtomicI64,
     cancel: CancellationToken,
 }
 
@@ -35,12 +44,15 @@ impl AgentScheduler {
             store,
             clock,
             last_fired: Mutex::new(HashMap::new()),
+            started_at_ms: AtomicI64::new(0),
             cancel: CancellationToken::new(),
         }
     }
 
     /// Spawn the 1s tick loop. Idempotent cancel via [`Self::stop`].
     pub fn start(self: Arc<Self>) {
+        self.started_at_ms
+            .store(self.clock.now_ms(), Ordering::Relaxed);
         let cancel = self.cancel.clone();
         tokio::spawn(async move {
             tracing::info!("clean-slate agent scheduler started (1s tick)");
@@ -69,6 +81,20 @@ impl AgentScheduler {
     pub async fn tick_once(&self) {
         let now = self.clock.now_ms();
         let specs = self.store.list_specs();
+
+        // Prune stale `last_fired` entries for deleted agents or superseded
+        // `config_version`s so memory stays bounded over long uptimes.
+        {
+            let live_keys: HashSet<String> = specs
+                .iter()
+                .map(|s| format!("{}:{}", s.id, s.config_version))
+                .collect();
+            let mut g = self.last_fired.lock().expect("last_fired");
+            if !g.is_empty() {
+                g.retain(|k, _| live_keys.contains(k));
+            }
+        }
+
         for spec in specs {
             let Ok(runtime) = self.store.get_runtime(&spec.id) else {
                 continue;
@@ -84,7 +110,7 @@ impl AgentScheduler {
             } else {
                 match &spec.trigger {
                     TriggerSpec::Interval { every_secs } => {
-                        self.interval_due(&fire_key, *every_secs, now, &runtime)
+                        self.interval_due(&spec.id, &fire_key, *every_secs, now, &runtime)
                     }
                     TriggerSpec::Cron { expr, timezone } => {
                         self.cron_due(&fire_key, expr, timezone, now)
@@ -118,6 +144,7 @@ impl AgentScheduler {
     fn interval_due(
         &self,
         agent_id: &str,
+        fire_key: &str,
         every_secs: u64,
         now: i64,
         runtime: &crate::model::AgentRuntimeRecord,
@@ -126,12 +153,28 @@ impl AgentScheduler {
             return false;
         }
         let period_ms = (every_secs as i64).saturating_mul(1000);
-        let last = self
+        let in_mem_last = self
             .last_fired
             .lock()
             .expect("last_fired")
-            .get(agent_id)
-            .copied()
+            .get(fire_key)
+            .copied();
+
+        // On cold start (`start()` set `started_at_ms` and this agent has not
+        // fired in this process yet), spread overdue Interval agents across
+        // `[0, STARTUP_STAGGER_MAX_MS)` deterministically by agent_id so dozens
+        // of overdue agents do not storm the LLM backend on the exact first tick.
+        if in_mem_last.is_none() {
+            let started_at = self.started_at_ms.load(Ordering::Relaxed);
+            if started_at > 0 {
+                let stagger_ms = startup_stagger_ms(agent_id);
+                if now.saturating_sub(started_at) < stagger_ms {
+                    return false;
+                }
+            }
+        }
+
+        let last = in_mem_last
             .or(runtime.stats.last_execution_at)
             .unwrap_or(0);
         now.saturating_sub(last) >= period_ms
@@ -172,5 +215,28 @@ impl AgentScheduler {
             return next <= until;
         }
         false
+    }
+}
+
+/// Deterministic `0..STARTUP_STAGGER_MAX_MS` startup offset derived from `agent_id`.
+fn startup_stagger_ms(agent_id: &str) -> i64 {
+    let mut hash: u64 = 14695981039346656037;
+    for b in agent_id.as_bytes() {
+        hash ^= *b as u64;
+        hash = hash.wrapping_mul(1099511628211);
+    }
+    (hash % (STARTUP_STAGGER_MAX_MS as u64)) as i64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn startup_stagger_is_deterministic_and_bounded() {
+        let a1 = startup_stagger_ms("agent-alpha");
+        let a2 = startup_stagger_ms("agent-alpha");
+        assert_eq!(a1, a2);
+        assert!((0..STARTUP_STAGGER_MAX_MS).contains(&a1));
     }
 }

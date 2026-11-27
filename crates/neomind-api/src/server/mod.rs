@@ -652,7 +652,12 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
             // Initialize extension event subscription
             bg_state.init_extension_event_subscription().await;
 
-            // Initialize AI Agent manager.
+            // Initialize AI Agent event listener and recover any stuck Executing
+            // agents BEFORE starting the 1s Cron/Interval scheduler so no tick
+            // fires before event subscriptions and runtime recovery are ready.
+            bg_state.init_agent_events().await;
+
+            // Initialize AI Agent manager (starts the 1s Cron/Interval scheduler).
             // A failure here means the scheduler never starts: all scheduled and
             // event-triggered agents silently stop running (HTTP/health stay green).
             // Log at error! so it is visible — do not swallow with `let _ =`.
@@ -676,9 +681,6 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
                     "Failed to start IM router — inbound IM messages will not be processed"
                 );
             }
-
-            // Initialize AI Agent event listener
-            bg_state.init_agent_events().await;
 
             // Auto-register a reachable llama.cpp server (if none exists yet),
             // then refresh capabilities from /props for all llama.cpp backends.

@@ -536,14 +536,16 @@ impl RuleValidator {
     /// (production). See SimpleRuleBuilderSplit cooldown hint for soft guidance.
     pub const MIN_VIRTUAL_METRIC_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(60);
 
-    /// Enforce a minimum cooldown on rules that subscribe to virtual metrics.
+    /// Enforce a minimum cooldown on rules that subscribe to virtual metrics or
+    /// form an AI-agent ↔ rule feedback loop (`DataSourceType::Ai` → `TriggerAgent` / `RunOperator`).
     ///
     /// Virtual metrics like `__last_seen_age_secs` are refreshed by a periodic
     /// emitter (60s tick). Without a cooldown, a rule whose condition is true
-    /// would fire every 60 seconds. This guard requires cooldown >= 60s so
-    /// that at most one firing per emitter tick is possible.
+    /// would fire every 60 seconds. Similarly, a rule that reacts to an AI agent's
+    /// published `ai:*` metric and triggers an agent without a cooldown can create
+    /// an unbounded `Agent → ai:* → Rule → TriggerAgent` execution storm.
     ///
-    /// Returns `Ok(())` if the rule does not use any virtual metric, or if the
+    /// Returns `Ok(())` if the rule does not hit either guard, or if the
     /// configured cooldown meets the floor. Returns `Err(message)` otherwise.
     pub fn validate_virtual_metric_cooldown(rule: &CompiledRule) -> Result<(), String> {
         let uses_virtual = rule
@@ -557,11 +559,7 @@ impl RuleValidator {
             })
             .unwrap_or(false);
 
-        if !uses_virtual {
-            return Ok(());
-        }
-
-        if rule.cooldown < Self::MIN_VIRTUAL_METRIC_COOLDOWN {
+        if uses_virtual && rule.cooldown < Self::MIN_VIRTUAL_METRIC_COOLDOWN {
             return Err(format!(
                 "Rules using virtual metrics ({}) must set cooldown >= {} ms (got {} ms). \
                  Without a cooldown the rule would fire every 60 seconds.",
@@ -570,6 +568,32 @@ impl RuleValidator {
                 rule.cooldown.as_millis()
             ));
         }
+
+        let uses_ai_source = rule
+            .condition
+            .as_ref()
+            .map(|c| {
+                c.extract_sources()
+                    .iter()
+                    .any(|s| s.source_type == neomind_core::datasource::DataSourceType::Ai)
+            })
+            .unwrap_or(false);
+        let triggers_agent = rule.actions.iter().any(|a| {
+            matches!(
+                a,
+                RuleAction::TriggerAgent { .. } | RuleAction::RunOperator { .. }
+            )
+        });
+
+        if uses_ai_source && triggers_agent && rule.cooldown < Self::MIN_VIRTUAL_METRIC_COOLDOWN {
+            return Err(format!(
+                "Rules triggered by AI agent outputs (ai:*) that trigger an agent must set \
+                 cooldown >= {} ms (got {} ms) to prevent Agent ↔ Rule feedback loops.",
+                Self::MIN_VIRTUAL_METRIC_COOLDOWN.as_millis(),
+                rule.cooldown.as_millis()
+            ));
+        }
+
         Ok(())
     }
 }
@@ -873,5 +897,38 @@ mod tests {
 
         let result = RuleValidator::validate_virtual_metric_cooldown(&rule);
         assert!(result.is_ok(), "regular metrics must skip cooldown check");
+    }
+
+    #[test]
+    fn test_validate_ai_source_with_trigger_agent_requires_cooldown() {
+        let mut rule = CompiledRule::new("ai-loop");
+        rule.condition = Some(RuleCondition::Comparison {
+            source: DataSourceId::ai("agent-a", "risk_score"),
+            operator: ComparisonOperator::GreaterThan,
+            threshold: 0.8,
+            threshold_value: None,
+        });
+        rule.actions.push(RuleAction::TriggerAgent {
+            agent_id: "agent-b".into(),
+            input: None,
+            data: None,
+        });
+        rule.cooldown = std::time::Duration::from_secs(30);
+        rule.finalize();
+
+        let err = RuleValidator::validate_virtual_metric_cooldown(&rule)
+            .expect_err("AI source + TriggerAgent with short cooldown must be rejected");
+        assert!(err.contains("feedback loops"), "unexpected err: {err}");
+
+        rule.cooldown = std::time::Duration::from_secs(60);
+        assert!(RuleValidator::validate_virtual_metric_cooldown(&rule).is_ok());
+
+        // Non-agent action (Notify) reading AI source does not require the loop floor.
+        rule.actions = vec![RuleAction::Notify {
+            message: "high risk".into(),
+            severity: NotifySeverity::Warning,
+        }];
+        rule.cooldown = std::time::Duration::from_secs(0);
+        assert!(RuleValidator::validate_virtual_metric_cooldown(&rule).is_ok());
     }
 }
