@@ -1,10 +1,12 @@
 /**
- * Shared header for setup pages with language switcher and optional back button
+ * Shared header for setup pages — matches the login page header
+ * with theme toggle, language switcher, and optional back button.
  */
 import { useTranslation } from 'react-i18next'
-import { ArrowLeft, Languages } from 'lucide-react'
+import { ArrowLeft, Check, Languages } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { BrandLogoHorizontal } from '@/components/shared/BrandName'
+import { ThemeToggle } from '@/components/layout/ThemeToggle'
 import { handleWindowDragMouseDown } from '@/lib/windowDrag'
 import {
   DropdownMenu,
@@ -55,25 +57,30 @@ export function SetupHeader({ onBack, stepLabel }: SetupHeaderProps) {
           )}
         </div>
 
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="sm" className="gap-1.5">
-              <Languages className="h-4 w-4" />
-              {languages.find(l => l.code === i18n.language)?.name || 'Language'}
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="min-w-[130px]">
-            {languages.map((lang) => (
-              <DropdownMenuItem
-                key={lang.code}
-                onClick={() => i18n.changeLanguage(lang.code)}
-                className={i18n.language === lang.code ? 'bg-muted' : ''}
-              >
-                {lang.name}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <div className="flex items-center gap-1.5">
+          <ThemeToggle side="bottom" />
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="sm" className="gap-1.5 px-2.5 text-muted-foreground hover:text-foreground">
+                <Languages className="h-4 w-4" />
+                <span className="hidden sm:inline">{languages.find(l => l.code === i18n.language)?.name || 'Language'}</span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-[130px]">
+              {languages.map((lang) => (
+                <DropdownMenuItem
+                  key={lang.code}
+                  onClick={() => i18n.changeLanguage(lang.code)}
+                  className="gap-2 cursor-pointer"
+                >
+                  <span className="text-sm">{lang.name}</span>
+                  {i18n.language === lang.code && <Check className="ml-auto h-3.5 w-3.5 text-foreground" />}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </div>
     </header>
   )

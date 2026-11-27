@@ -379,20 +379,6 @@ export function LoginPage() {
             <BrandLogoHorizontal className="h-6 sm:h-7" />
           </div>
           <div className="flex items-center gap-1.5">
-            {/* Backend node chip — always shows which node you sign in to */}
-            <button
-              type="button"
-              onClick={() => cachedInstances.length > 0 && setShowInstancePicker(true)}
-              disabled={cachedInstances.length === 0}
-              className="inline-flex max-w-[200px] sm:max-w-[260px] items-center gap-1.5 rounded-full border border-border bg-card px-2.5 py-1 text-xs text-muted-foreground transition-colors enabled:hover:border-border-hover enabled:hover:text-foreground disabled:cursor-default"
-            >
-              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-success" />
-              <span className="truncate text-foreground">{backendLabel}</span>
-              <span aria-hidden="true" className="hidden sm:inline text-border">·</span>
-              <span className="hidden sm:inline truncate font-mono">{backendHost}</span>
-              {cachedInstances.length > 0 && <ChevronRight className="h-3 w-3 shrink-0" />}
-            </button>
-
             <ThemeToggle side="bottom" />
 
             <DropdownMenu>
@@ -427,14 +413,31 @@ export function LoginPage() {
           handleBackdropClick()
         }}
       >
-        <div className="w-full max-w-[340px] animate-fade-in-up">
-          <div className="mb-8 text-left">
-            <h2 className={`${textAuthTitle} text-foreground`}>
-              {t('auth:signInTitle', 'Sign in to NeoMind')}
-            </h2>
-            <p className="mt-2 text-sm text-muted-foreground">
-              {t('auth:signInSubtitle', 'Enter your credentials to continue')}
-            </p>
+        <div className="w-full max-w-[360px] animate-fade-in-up">
+          <div className="mb-8 flex items-start justify-between gap-3">
+            <div className="min-w-0 text-left">
+              <h2 className={`${textAuthTitle} text-foreground`}>
+                {t('auth:signInTitle', 'Sign in to NeoMind')}
+              </h2>
+              <p className="mt-2 text-sm text-muted-foreground">
+                {t('auth:signInSubtitle', 'Enter your credentials to continue')}
+              </p>
+            </div>
+
+            {/* Backend node chip — compact name-only pill beside the heading (URL on hover) */}
+            <button
+              type="button"
+              title={backendHost}
+              onClick={() => cachedInstances.length > 0 && setShowInstancePicker(true)}
+              disabled={cachedInstances.length === 0}
+              className="mt-1 inline-flex shrink-0 max-w-[132px] items-center gap-1.5 rounded-full border border-border bg-card px-2.5 py-1 text-xs font-medium text-foreground transition-colors enabled:hover:border-border-hover disabled:cursor-default"
+            >
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-success" />
+              <span className="truncate">{backendLabel}</span>
+              {cachedInstances.length > 0 && (
+                <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" />
+              )}
+            </button>
           </div>
 
           <form onSubmit={handleSubmit} className="flex flex-col gap-3.5">
