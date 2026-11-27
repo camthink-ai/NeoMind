@@ -33,6 +33,7 @@ import { resolveTelemetryPageTotal } from "@/lib/api/telemetry"
 import type { Device, DeviceType, CommandDefinition, TelemetryDataResponse, DeviceCurrentStateResponse } from "@/types"
 import { isBase64Image, getImageDataUrl } from "./utils"
 import { cn } from "@/lib/utils"
+import { textMini } from "@/design-system/tokens/typography"
 import { useIsMobile } from "@/hooks/useMobile"
 import type { TFunction } from "i18next"
 
@@ -770,7 +771,7 @@ export function DeviceDetail({
         </div>
       </div>
 
-      {/* Metric History Dialog — compact centered modal with summary stats */}
+      {/* Metric History Dialog — compact centered modal with pinned stats & pagination */}
       <UnifiedFormDialog
         open={metricHistoryOpen}
         onOpenChange={(open) => {
@@ -779,8 +780,28 @@ export function DeviceDetail({
         }}
         title={selectedMetric ? getMetricDisplayName(selectedMetric) : t('devices:detailPage.metricHistory')}
         icon={<Clock className="h-4 w-4 text-foreground shrink-0" strokeWidth={1.75} />}
-        width="xl"
-        hideFooter
+        width="2xl"
+        className="sm:h-[78vh]"
+        contentClassName="p-0 flex flex-col min-h-0 overflow-hidden"
+        hideFooter={totalCount <= PAGE_SIZE}
+        footer={
+          totalCount > PAGE_SIZE ? (
+            <div className="flex w-full items-center justify-between gap-3">
+              <span className="hidden sm:inline text-xs text-muted-foreground tabular-nums">
+                {t('common:totalRecords', { count: totalCount, defaultValue: `${totalCount} records` })}
+              </span>
+              <div className="flex-1 sm:flex-none flex justify-center sm:justify-end">
+                <Pagination
+                  total={totalCount}
+                  pageSize={PAGE_SIZE}
+                  currentPage={currentPage}
+                  onPageChange={handlePageChange}
+                  hideOnMobile={false}
+                />
+              </div>
+            </div>
+          ) : undefined
+        }
       >
         {(() => {
           const numericValues = currentMetricData
@@ -797,65 +818,59 @@ export function DeviceDetail({
             n === null ? '—' : Number.isInteger(n) ? String(n) : Number(n.toFixed(2)).toString()
 
           return (
-            <div className="space-y-4">
+            <div className="flex flex-1 min-h-0 flex-col">
+              {/* Pinned summary strip */}
               {currentMetricData.length > 0 && (
-                <div className={cn("grid gap-2.5", hasStats ? "grid-cols-2 sm:grid-cols-4" : "grid-cols-2")}>
-                  <div className="rounded-xl border border-border bg-muted-20 px-3.5 py-2.5">
-                    <div className="text-xs text-muted-foreground">{t('common:latest', { defaultValue: 'Latest' })}</div>
-                    <div className="mt-0.5 truncate text-sm font-semibold tabular-nums text-foreground">
-                      {latestVal === undefined || latestVal === null ? '—' : String(latestVal)}
+                <div className="shrink-0 border-b border-glass-border bg-muted-20 px-4 py-3 sm:px-6">
+                  <div className={cn("grid gap-2", hasStats ? "grid-cols-2 sm:grid-cols-4" : "grid-cols-2")}>
+                    <div className="rounded-lg border border-border bg-card px-3 py-2">
+                      <div className={cn(textMini, "text-muted-foreground")}>{t('common:latest', { defaultValue: 'Latest' })}</div>
+                      <div className="mt-0.5 truncate text-sm font-semibold tabular-nums text-foreground">
+                        {latestVal === undefined || latestVal === null ? '—' : String(latestVal)}
+                      </div>
                     </div>
+                    {hasStats && (
+                      <>
+                        <div className="rounded-lg border border-border bg-card px-3 py-2">
+                          <div className={cn(textMini, "text-muted-foreground")}>{t('common:average', { defaultValue: 'Avg' })}</div>
+                          <div className="mt-0.5 truncate text-sm font-semibold tabular-nums text-foreground">{fmtNum(avgVal)}</div>
+                        </div>
+                        <div className="rounded-lg border border-border bg-card px-3 py-2">
+                          <div className={cn(textMini, "text-muted-foreground")}>{t('common:min', { defaultValue: 'Min' })}</div>
+                          <div className="mt-0.5 truncate text-sm font-semibold tabular-nums text-foreground">{fmtNum(minVal)}</div>
+                        </div>
+                        <div className="rounded-lg border border-border bg-card px-3 py-2">
+                          <div className={cn(textMini, "text-muted-foreground")}>{t('common:max', { defaultValue: 'Max' })}</div>
+                          <div className="mt-0.5 truncate text-sm font-semibold tabular-nums text-foreground">{fmtNum(maxVal)}</div>
+                        </div>
+                      </>
+                    )}
+                    {!hasStats && (
+                      <div className="rounded-lg border border-border bg-card px-3 py-2">
+                        <div className={cn(textMini, "text-muted-foreground")}>{t('common:total', { defaultValue: 'Records' })}</div>
+                        <div className="mt-0.5 truncate text-sm font-semibold tabular-nums text-foreground">{totalCount}</div>
+                      </div>
+                    )}
                   </div>
-                  {hasStats && (
-                    <>
-                      <div className="rounded-xl border border-border bg-muted-20 px-3.5 py-2.5">
-                        <div className="text-xs text-muted-foreground">{t('common:average', { defaultValue: 'Avg' })}</div>
-                        <div className="mt-0.5 truncate text-sm font-semibold tabular-nums text-foreground">{fmtNum(avgVal)}</div>
-                      </div>
-                      <div className="rounded-xl border border-border bg-muted-20 px-3.5 py-2.5">
-                        <div className="text-xs text-muted-foreground">{t('common:min', { defaultValue: 'Min' })}</div>
-                        <div className="mt-0.5 truncate text-sm font-semibold tabular-nums text-foreground">{fmtNum(minVal)}</div>
-                      </div>
-                      <div className="rounded-xl border border-border bg-muted-20 px-3.5 py-2.5">
-                        <div className="text-xs text-muted-foreground">{t('common:max', { defaultValue: 'Max' })}</div>
-                        <div className="mt-0.5 truncate text-sm font-semibold tabular-nums text-foreground">{fmtNum(maxVal)}</div>
-                      </div>
-                    </>
-                  )}
-                  {!hasStats && (
-                    <div className="rounded-xl border border-border bg-muted-20 px-3.5 py-2.5">
-                      <div className="text-xs text-muted-foreground">{t('common:total', { defaultValue: 'Records' })}</div>
-                      <div className="mt-0.5 truncate text-sm font-semibold tabular-nums text-foreground">{totalCount}</div>
-                    </div>
-                  )}
                 </div>
               )}
 
-              <ResponsiveTable
-                columns={metricHistoryColumns}
-                data={currentMetricData as unknown as Record<string, unknown>[]}
-                renderCell={renderMetricHistoryCell}
-                rowKey={(row) => String((row as { timestamp: number }).timestamp)}
-                loading={telemetryLoading}
-                flexHeight={false}
-                emptyState={
-                  <EmptyState
-                    title={t('devices:detailPage.noHistoryData')}
-                  />
-                }
-              />
-
-              {totalCount > PAGE_SIZE && (
-                <div className="border-t border-glass-border pt-3">
-                  <Pagination
-                    total={totalCount}
-                    pageSize={PAGE_SIZE}
-                    currentPage={currentPage}
-                    onPageChange={handlePageChange}
-                    hideOnMobile={false}
-                  />
-                </div>
-              )}
+              {/* Independently scrollable history table */}
+              <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 sm:px-6">
+                <ResponsiveTable
+                  columns={metricHistoryColumns}
+                  data={currentMetricData as unknown as Record<string, unknown>[]}
+                  renderCell={renderMetricHistoryCell}
+                  rowKey={(row) => String((row as { timestamp: number }).timestamp)}
+                  loading={telemetryLoading}
+                  flexHeight={false}
+                  emptyState={
+                    <EmptyState
+                      title={t('devices:detailPage.noHistoryData')}
+                    />
+                  }
+                />
+              </div>
             </div>
           )
         })()}

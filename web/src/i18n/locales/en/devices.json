@@ -1033,7 +1033,8 @@
     "wifiManualFallbackHint": "Manual entry still works for provisioning.",
     "errorBusy": "The device is busy. Wait a moment and try again.",
     "errorNotConnected": "The provisioning session disconnected. Reconnect to the device.",
-    "errorInternal": "The device reported an internal error. Retry; if it persists, check firmware or reboot the device."
+    "errorInternal": "The device reported an internal error. Retry; if it persists, check firmware or reboot the device.",
+    "errorBlePairingRemoved": "Bluetooth pairing info is out of sync with the device. Forget this device in your OS Bluetooth settings (on macOS, if it isn't listed, toggle Bluetooth off/on or restart bluetoothd) and retry."
   },
   "ap": {
     "tabTitle": "AP Provision",

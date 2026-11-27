@@ -6,6 +6,7 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
+import { ThemeProvider } from '@/components/ui/theme'
 import { LoginPage } from '../login'
 import { useStore } from '@/store'
 
@@ -59,9 +60,11 @@ describe('LoginPage — remember me never stores the password', () => {
 
   it('remembers only the username when the box is ticked', async () => {
     render(
-      <MemoryRouter>
-        <LoginPage />
-      </MemoryRouter>,
+      <ThemeProvider>
+        <MemoryRouter>
+          <LoginPage />
+        </MemoryRouter>
+      </ThemeProvider>,
     )
 
     await submitWith('ming', true)
@@ -75,9 +78,11 @@ describe('LoginPage — remember me never stores the password', () => {
   it('remembers nothing when the box is not ticked', async () => {
     localStorage.setItem('neomind_remembered_username', 'ming')
     render(
-      <MemoryRouter>
-        <LoginPage />
-      </MemoryRouter>,
+      <ThemeProvider>
+        <MemoryRouter>
+          <LoginPage />
+        </MemoryRouter>
+      </ThemeProvider>,
     )
 
     await submitWith('ming', false)
@@ -90,9 +95,11 @@ describe('LoginPage — remember me never stores the password', () => {
   it('prefills a remembered username and leaves the password field empty', async () => {
     localStorage.setItem('neomind_remembered_username', 'ming')
     render(
-      <MemoryRouter>
-        <LoginPage />
-      </MemoryRouter>,
+      <ThemeProvider>
+        <MemoryRouter>
+          <LoginPage />
+        </MemoryRouter>
+      </ThemeProvider>,
     )
 
     await waitFor(() => expect(screen.getByPlaceholderText('auth:username')).toHaveValue('ming'))

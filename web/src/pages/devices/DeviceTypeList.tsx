@@ -173,8 +173,8 @@ export function DeviceTypeList({
             case 'name':
               return (
                 <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-lg flex items-center justify-center bg-info-light text-info">
-                    <Database className="h-4 w-4" />
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-muted-30 text-foreground">
+                    <Database className="h-4 w-4" strokeWidth={1.75} />
                   </div>
                   <div className="min-w-0">
                     <div className="flex min-w-0 items-center gap-1.5">

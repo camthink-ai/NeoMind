@@ -26,7 +26,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
-  Bot,
+  Sparkles,
   Edit,
   Play,
   Trash2,
@@ -152,18 +152,10 @@ export function AgentCard({
       <CardContent className="p-4 flex flex-col flex-1">
       {/* ── Header: identity + health ─────────────────────────────── */}
       <div className="flex items-start gap-3">
-        <div className={cn(
-          "relative w-11 h-11 rounded-lg flex items-center justify-center shrink-0 transition-colors",
-          isExecuting ? "bg-info-light" : isError ? "bg-error-light"
-            : agent.status === 'Paused' ? "bg-muted" : "bg-success-light"
-        )}>
-          <Bot className={cn(
-            "h-5 w-5",
-            isExecuting ? "text-info" : isError ? "text-error"
-              : agent.status === 'Paused' ? "text-muted-foreground" : "text-success"
-          )} />
+        <div className="relative w-10 h-10 rounded-lg border border-border bg-muted-30 text-foreground flex items-center justify-center shrink-0 transition-colors">
+          <Sparkles className="h-4 w-4" strokeWidth={1.75} />
           <span className={cn(
-            "absolute -top-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-background",
+            "absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ring-2 ring-card",
             isError ? "bg-error" : isExecuting ? "bg-info"
               : agent.status === 'Paused' ? "bg-muted-foreground" : "bg-success"
           )} />

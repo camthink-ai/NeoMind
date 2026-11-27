@@ -11,9 +11,10 @@ import { fetchCache } from "@/lib/utils/async"
 import { useNavigate, useLocation, useParams } from "react-router-dom"
 import { PageLayout } from "@/components/layout/PageLayout"
 import { PageTabsBar, PageTabsContent, Pagination, SearchInput, type TabAction } from "@/components/shared"
-import { Upload, Download, Settings, Server, Layers, FileEdit, Cloud, ChevronLeft, Pencil } from "lucide-react"
+import { Upload, Download, Settings, Box, Layers, FileEdit, Cloud, ChevronLeft, Pencil, LayoutGrid, List } from "lucide-react"
 import { LoadingState } from "@/components/shared/LoadingState"
 import { Button } from "@/components/ui/button"
+import { SegmentedControl } from "@/components/ui/segmented-control"
 import { api } from "@/lib/api"
 import type { Device, DeviceType } from "@/types"
 import {
@@ -39,6 +40,23 @@ export function DevicesPage() {
   const { handleError: _handleError, withErrorHandling } = useErrorHandler()
   const { id: urlDeviceId } = useParams<{ id?: string }>()
   const isMobile = useIsMobile()
+  const [deviceViewMode, setDeviceViewMode] = useState<'grid' | 'list'>(() => {
+    try {
+      const saved = localStorage.getItem('neomind_devices_view_mode')
+      return saved === 'grid' ? 'grid' : 'list'
+    } catch {
+      return 'list'
+    }
+  })
+  const handleDeviceViewModeChange = useCallback((mode: 'grid' | 'list') => {
+    setDeviceViewMode(mode)
+    setDevicePage(1)
+    try {
+      localStorage.setItem('neomind_devices_view_mode', mode)
+    } catch {
+      // ignore storage errors
+    }
+  }, [])
 
   // Group device data selectors (change together)
   const openSettings = useStore((s) => s.openSettings)
@@ -100,7 +118,7 @@ export function DevicesPage() {
 
   // Pagination state
   const [devicePage, setDevicePage] = useState(1)
-  const devicesPerPage = 10
+  const devicesPerPage = !isMobile && deviceViewMode === 'grid' ? 12 : 10
 
   // Device type pagination state
   const [deviceTypePage, setDeviceTypePage] = useState(1)
@@ -821,7 +839,7 @@ export function DevicesPage() {
           !deviceDetailView ? (
             <PageTabsBar
               tabs={[
-                { value: 'devices', label: t('devices:deviceList'), icon: <Server className="h-4 w-4" /> },
+                { value: 'devices', label: t('devices:deviceList'), icon: <Box className="h-4 w-4" /> },
                 { value: 'types', label: t('devices:deviceTypes'), icon: <Layers className="h-4 w-4" /> },
                 { value: 'drafts', label: t('devices:pending.tab'), icon: <FileEdit className="h-4 w-4" /> },
               ]}
@@ -831,13 +849,36 @@ export function DevicesPage() {
               secondaryActions={tabActions.secondary}
               actionsExtra={
                 activeTab === 'devices' ? (
-                  <SearchInput
-                    value={deviceSearch}
-                    onChange={setDeviceSearch}
-                    placeholder={t('devices:searchDevices', { defaultValue: 'Search devices...' })}
-                    aria-label={t('devices:searchDevices', { defaultValue: 'Search devices...' })}
-                    className="w-full sm:w-[min(16rem,calc(100vw-3rem))]"
-                  />
+                  <div className="flex items-center gap-2 w-full sm:w-auto">
+                    <SearchInput
+                      value={deviceSearch}
+                      onChange={setDeviceSearch}
+                      placeholder={t('devices:searchDevices', { defaultValue: 'Search devices...' })}
+                      aria-label={t('devices:searchDevices', { defaultValue: 'Search devices...' })}
+                      className="w-full sm:w-[min(16rem,calc(100vw-3rem))]"
+                    />
+                    <SegmentedControl
+                      size="icon"
+                      value={deviceViewMode}
+                      onChange={handleDeviceViewModeChange}
+                      ariaLabel={t('common:viewMode', { defaultValue: 'View mode' })}
+                      className="hidden md:inline-flex"
+                      options={[
+                        {
+                          value: 'list',
+                          label: <List className="h-3.5 w-3.5" />,
+                          title: t('common:listView', { defaultValue: 'List view' }),
+                          ariaLabel: t('common:listView', { defaultValue: 'List view' }),
+                        },
+                        {
+                          value: 'grid',
+                          label: <LayoutGrid className="h-3.5 w-3.5" />,
+                          title: t('common:gridView', { defaultValue: 'Card view' }),
+                          ariaLabel: t('common:gridView', { defaultValue: 'Card view' }),
+                        },
+                      ]}
+                    />
+                  </div>
                 ) : undefined
               }
             />
@@ -899,6 +940,7 @@ export function DevicesPage() {
                 devices={devices}
                 loading={devicesLoading}
                 paginatedDevices={paginatedDevices}
+                viewMode={deviceViewMode}
                 searching={!!deviceSearch.trim()}
                 devicePage={devicePage}
                 devicesPerPage={devicesPerPage}

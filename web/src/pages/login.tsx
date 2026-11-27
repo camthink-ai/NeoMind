@@ -2,7 +2,7 @@ import { useState, useEffect } from "react"
 import { useTranslation } from "react-i18next"
 import { useNavigate } from "react-router-dom"
 import { useStore } from "@/store"
-import { Languages, Lock, User, Shield, ArrowLeft, Server, Globe, ChevronRight, Check, KeyRound, Eye, EyeOff } from "lucide-react"
+import { Languages, Lock, User, Shield, ArrowLeft, Server, Globe, ChevronRight, Check, KeyRound, Eye, EyeOff, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
@@ -13,9 +13,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { BrandLogoHorizontal } from "@/components/shared/BrandName"
+import { ThemeToggle } from "@/components/layout/ThemeToggle"
 import { LoadingState } from "@/components/shared/LoadingState"
 import { forceViewportReset } from "@/hooks/useVisualViewport"
-import { textNano } from '@/design-system/tokens/typography'
+import { textNano, textAuthTitle } from '@/design-system/tokens/typography'
 import { tokenManager, getApiBase, getApiKey, setApiBase, clearApiKey } from "@/lib/api"
 import { handleWindowDragMouseDown } from "@/lib/windowDrag"
 import { INSTANCE_CACHE_KEY, CURRENT_INSTANCE_KEY, PENDING_SWITCH_KEY } from "@/lib/instance-constants"
@@ -300,34 +301,34 @@ export function LoginPage() {
                 <button
                   key={inst.id}
                   onClick={() => handleInstanceSwitch(inst)}
-                  className={`w-full flex items-center gap-4 p-4 rounded-xl border transition-colors text-left ${
-                    isCurrent ? 'border-primary' : 'border-border hover:border-primary'
+                  className={`w-full flex items-center gap-3.5 p-4 rounded-xl border bg-card transition-colors text-left ${
+                    isCurrent ? 'border-foreground bg-muted-20' : 'border-border hover:border-border-hover hover:bg-muted-20'
                   }`}
                 >
-                  <div className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${isCurrent ? 'bg-primary-light' : 'bg-muted'}`}>
-                    {inst.is_local ? <Globe className="h-5 w-5 text-primary" /> : <Server className={`h-5 w-5 ${isCurrent ? 'text-primary' : 'text-accent-cyan'}`} />}
+                  <div className="relative flex-shrink-0 w-10 h-10 rounded-lg border border-border bg-muted-30 text-foreground flex items-center justify-center">
+                    {inst.is_local ? <Globe className="h-4 w-4" strokeWidth={1.75} /> : <Server className="h-4 w-4" strokeWidth={1.75} />}
+                    {instanceStatuses[inst.id] && (
+                      <span className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ring-2 ring-card ${
+                        instanceStatuses[inst.id] === 'online' ? 'bg-success'
+                        : instanceStatuses[inst.id] === 'offline' ? 'bg-destructive'
+                        : 'bg-muted-foreground'
+                      }`} />
+                    )}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="font-medium truncate flex items-center gap-2">
-                      {instanceStatuses[inst.id] && (
-                        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                          instanceStatuses[inst.id] === 'online' ? 'bg-success'
-                          : instanceStatuses[inst.id] === 'offline' ? 'bg-destructive'
-                          : 'bg-muted-foreground'
-                        }`} />
-                      )}
-                      {inst.is_local ? t('instances:localBackend') : inst.name}
+                    <div className="font-medium text-sm truncate flex items-center gap-2 text-foreground">
+                      <span>{inst.is_local ? t('instances:localBackend') : inst.name}</span>
                       {isCurrent && (
-                        <span className={`inline-flex items-center gap-0.5 ${textNano} font-medium px-1.5 py-0.5 rounded-full bg-primary-light text-primary`}>
+                        <span className={`inline-flex items-center gap-0.5 ${textNano} font-medium px-1.5 py-0.5 rounded-full border border-border bg-card text-foreground`}>
                           <Check className="h-3 w-3" />
                           {t('instances:current')}
                         </span>
                       )}
                     </div>
-                    <div className="text-xs text-muted-foreground truncate flex items-center gap-2 mt-0.5">
-                      <span>{inst.is_local ? 'localhost:9375' : inst.url.replace(/^https?:\/\//, '')}</span>
-                      <span className={`inline-flex items-center gap-1 ${textNano} px-1.5 py-0.5 rounded bg-muted`}>
-                        <KeyRound className="h-3 w-3" />
+                    <div className="text-xs text-muted-foreground truncate flex items-center gap-2 mt-1">
+                      <span className="font-mono">{inst.is_local ? 'localhost:9375' : inst.url.replace(/^https?:\/\//, '')}</span>
+                      <span className={`inline-flex items-center gap-1 ${textNano} px-1.5 py-0.5 rounded-md border border-glass-border bg-muted-20`}>
+                        <KeyRound className="h-2.5 w-2.5" />
                         {inst.is_local ? t('instances:authUserLogin') : hasApiKey ? t('instances:authApiKey') : t('instances:authUserLogin')}
                       </span>
                     </div>
@@ -345,16 +346,30 @@ export function LoginPage() {
     )
   }
 
+  const currentInstanceId = localStorage.getItem(CURRENT_INSTANCE_KEY)
+  const currentInstance = cachedInstances.find(i => i.id === currentInstanceId)
+  const backendLabel = currentInstance && !currentInstance.is_local
+    ? currentInstance.name
+    : t('instances:localBackend')
+  const backendHost = currentInstance && !currentInstance.is_local
+    ? currentInstance.url.replace(/^https?:\/\//, '').replace(/\/+$/, '')
+    : 'localhost:9375'
+
   return (
     <div className="flex flex-col bg-background relative overflow-hidden viewport-full">
-      {/* Background — flat color. After four decorated attempts
-          (honeycomb → aurora → network → horizon) the cleanest read is
-          none at all: the page IS the background, the card carries the
-          depth. No gradients, no texture, nothing to get tired of. */}
+      {/* Canvas dot grid — echoes the dashboard / device canvas, fades out at the edges */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0"
+        style={{
+          backgroundImage: 'radial-gradient(circle, var(--border) 1px, transparent 1.2px)',
+          backgroundSize: '22px 22px',
+          maskImage: 'radial-gradient(ellipse 60% 55% at 50% 45%, black 20%, transparent 80%)',
+          WebkitMaskImage: 'radial-gradient(ellipse 60% 55% at 50% 45%, black 20%, transparent 80%)',
+        }}
+      />
 
-      {/* Top Header — doubles as the Tauri window drag region (the shell's
-          TopBar has the same contract; overlay titlebar means nothing native
-          is draggable here). Interactive elements are skipped by the helper. */}
+      {/* Top Header — doubles as the Tauri window drag region */}
       <header className="absolute top-0 left-0 right-0 z-50 safe-top">
         <div
           className="flex items-center justify-between px-4 sm:px-6 h-14 sm:h-16"
@@ -363,27 +378,28 @@ export function LoginPage() {
           <div className="flex items-center gap-2 sm:gap-3">
             <BrandLogoHorizontal className="h-6 sm:h-7" />
           </div>
-          <div className="flex items-center gap-1">
-            {/* Backend switcher — always opens instance picker */}
-            {cachedInstances.length > 0 ? (() => {
-              const currentId = localStorage.getItem(CURRENT_INSTANCE_KEY)
-              const current = cachedInstances.find(i => i.id === currentId)
-              const label = current
-                ? (current.is_local ? t('instances:localBackend') : current.name)
-                : t('instances:localBackend')
-              return (
-                <Button variant="ghost" size="sm" className="gap-1 px-2 sm:px-3" onClick={() => setShowInstancePicker(true)}>
-                  <Server className="h-4 w-4" />
-                  <span className="hidden sm:inline">{label}</span>
-                </Button>
-              )
-            })() : null}
+          <div className="flex items-center gap-1.5">
+            {/* Backend node chip — always shows which node you sign in to */}
+            <button
+              type="button"
+              onClick={() => cachedInstances.length > 0 && setShowInstancePicker(true)}
+              disabled={cachedInstances.length === 0}
+              className="inline-flex max-w-[200px] sm:max-w-[260px] items-center gap-1.5 rounded-full border border-border bg-card px-2.5 py-1 text-xs text-muted-foreground transition-colors enabled:hover:border-border-hover enabled:hover:text-foreground disabled:cursor-default"
+            >
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-success" />
+              <span className="truncate text-foreground">{backendLabel}</span>
+              <span aria-hidden="true" className="hidden sm:inline text-border">·</span>
+              <span className="hidden sm:inline truncate font-mono">{backendHost}</span>
+              {cachedInstances.length > 0 && <ChevronRight className="h-3 w-3 shrink-0" />}
+            </button>
+
+            <ThemeToggle side="bottom" />
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="gap-1 px-2 sm:px-3">
+                <Button variant="ghost" size="sm" className="gap-1.5 px-2.5 text-muted-foreground hover:text-foreground">
                   <Languages className="h-4 w-4" />
-                  <span>{languages.find(l => l.code === i18n.language)?.name || 'Language'}</span>
+                  <span className="hidden sm:inline">{languages.find(l => l.code === i18n.language)?.name || 'Language'}</span>
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="min-w-[130px]">
@@ -391,9 +407,10 @@ export function LoginPage() {
                   <DropdownMenuItem
                     key={lang.code}
                     onClick={() => i18n.changeLanguage(lang.code)}
-                    className={i18n.language === lang.code ? 'bg-primary-light text-primary font-medium' : ''}
+                    className="gap-2 cursor-pointer"
                   >
-                    {lang.name}
+                    <span className="text-sm">{lang.name}</span>
+                    {i18n.language === lang.code && <Check className="ml-auto h-3.5 w-3.5 text-foreground" />}
                   </DropdownMenuItem>
                 ))}
               </DropdownMenuContent>
@@ -402,87 +419,93 @@ export function LoginPage() {
         </div>
       </header>
 
-      {/* Main Content */}
+      {/* Main Content — frameless centered column (Linear / Vercel style) */}
       <main
-        className="flex-1 px-4 sm:px-6 safe-bottom flex items-center justify-center min-h-0 overflow-y-auto"
+        className="relative z-10 flex-1 px-5 sm:px-6 safe-bottom flex items-center justify-center min-h-0 overflow-y-auto"
         onClick={(e) => {
           if ((e.target as HTMLElement).closest('form, button, a')) return
           handleBackdropClick()
         }}
       >
-        <div className="w-full max-w-md">
-          <div
-            className="backdrop-blur-xl rounded-2xl p-6 sm:p-8 border shadow-md animate-fade-in-up"
-            style={{
-              backgroundColor: 'color-mix(in oklch, var(--background) 72%, transparent)',
-              borderColor: 'color-mix(in oklch, var(--border) 55%, transparent)',
-            }}
-          >
-            <h2 className="text-2xl sm:text-3xl font-semibold mb-4 sm:mb-6 text-center">{t('auth:login')}</h2>
-            <form onSubmit={handleSubmit} className="flex flex-col gap-4 sm:gap-5">
-              <div className="relative">
-                <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-                <Input
-                  id="username"
-                  type="text"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  placeholder={t('auth:username')}
-                  autoComplete="username"
-                  required
-                  className="pl-9 h-11 bg-bg-70 border-border focus:bg-background dark:focus:bg-glass focus:border-primary transition-colors text-base scroll-mb-32"
-                />
-              </div>
-              <div className="relative">
-                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-                <Input
-                  id="password"
-                  type={showPassword ? "text" : "password"}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder={t('auth:password')}
-                  autoComplete="current-password"
-                  required
-                  className="pl-9 pr-10 h-11 bg-bg-70 border-border focus:bg-background dark:focus:bg-glass focus:border-primary transition-colors text-base scroll-mb-32"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((s) => !s)}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                  aria-label={showPassword ? t('auth:hidePassword') : t('auth:showPassword')}
-                  title={showPassword ? t('auth:hidePassword') : t('auth:showPassword')}
-                  tabIndex={-1}
-                >
-                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
-              </div>
-              <label className="flex items-center gap-2 cursor-pointer group">
-                <Checkbox
-                  id="remember"
-                  checked={rememberMe}
-                  onCheckedChange={(checked) => setRememberMe(!!checked)}
-                />
-                <span className="text-sm text-muted-foreground group-hover:text-foreground transition-colors leading-none">
-                  {t('auth:rememberMe')}
-                </span>
-              </label>
-              {error && (
-                <div className="flex items-start gap-2 text-sm text-error bg-muted rounded-md p-3">
-                  <Shield className="h-4 w-4 mt-0.5 flex-shrink-0" />
-                  <span>{error}</span>
-                </div>
-              )}
-              <Button
-                type="submit"
-                disabled={isLoading || !username || !password}
-                className="h-11 w-full"
-                size="default"
-              >
-                {isLoading ? t('auth:loggingIn') : t('auth:login')}
-              </Button>
-            </form>
+        <div className="w-full max-w-[340px] animate-fade-in-up">
+          <div className="mb-8 text-left">
+            <h2 className={`${textAuthTitle} text-foreground`}>
+              {t('auth:signInTitle', 'Sign in to NeoMind')}
+            </h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              {t('auth:signInSubtitle', 'Enter your credentials to continue')}
+            </p>
           </div>
+
+          <form onSubmit={handleSubmit} className="flex flex-col gap-3.5">
+            <div className="relative">
+              <User className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+              <Input
+                id="username"
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder={t('auth:username')}
+                autoComplete="username"
+                required
+                className="pl-10 h-11 rounded-xl bg-card border-border focus:border-foreground transition-colors text-base sm:text-sm scroll-mb-32"
+              />
+            </div>
+
+            <div className="relative">
+              <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+              <Input
+                id="password"
+                type={showPassword ? "text" : "password"}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder={t('auth:password')}
+                autoComplete="current-password"
+                required
+                className="pl-10 pr-10 h-11 rounded-xl bg-card border-border focus:border-foreground transition-colors text-base sm:text-sm scroll-mb-32"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((s) => !s)}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 h-7 w-7 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                aria-label={showPassword ? t('auth:hidePassword') : t('auth:showPassword')}
+                title={showPassword ? t('auth:hidePassword') : t('auth:showPassword')}
+                tabIndex={-1}
+              >
+                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
+
+            <label className="flex items-center gap-2 cursor-pointer group pt-1">
+              <Checkbox
+                id="remember"
+                checked={rememberMe}
+                onCheckedChange={(checked) => setRememberMe(!!checked)}
+              />
+              <span className="text-xs sm:text-sm text-muted-foreground group-hover:text-foreground transition-colors leading-none">
+                {t('auth:rememberMe')}
+              </span>
+            </label>
+
+            {error && (
+              <div className="flex items-start gap-2 text-xs text-error bg-error-light border border-error rounded-xl p-3">
+                <Shield className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                <span className="leading-relaxed">{error}</span>
+              </div>
+            )}
+
+            <Button
+              type="submit"
+              disabled={isLoading || !username || !password}
+              className="mt-2 h-11 rounded-xl w-full gap-2 font-medium"
+              size="default"
+            >
+              {isLoading && <Loader2 className="h-4 w-4 animate-spin" />}
+              <span>{isLoading ? t('auth:loggingIn') : t('auth:login')}</span>
+            </Button>
+          </form>
         </div>
+
         <footer className="hidden sm:block absolute left-0 right-0 z-10 text-center bottom-6">
           <p className="text-xs text-muted-foreground">
             © CamThink {new Date().getFullYear()}

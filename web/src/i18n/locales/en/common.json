@@ -852,5 +852,9 @@
   "saveChanges": "Save Changes",
   "priority": "Priority",
   "send": "Send",
-  "selectPlaceholder": "Select..."
+  "selectPlaceholder": "Select...",
+  "totalRecords": "{{count}} records",
+  "viewMode": "View mode",
+  "listView": "List view",
+  "gridView": "Card view"
 }

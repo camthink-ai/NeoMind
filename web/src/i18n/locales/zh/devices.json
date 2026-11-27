@@ -1033,7 +1033,8 @@
     "wifiManualFallbackHint": "仍可手动填写并完成配网。",
     "errorBusy": "设备正忙，请稍候再试。",
     "errorNotConnected": "与设备的配网会话已断开，请重新连接。",
-    "errorInternal": "设备返回内部错误。请重试；若反复出现，检查固件或重启设备。"
+    "errorInternal": "设备返回内部错误。请重试；若反复出现，检查固件或重启设备。",
+    "errorBlePairingRemoved": "系统蓝牙缓存的配对信息已与设备不同步。请在系统蓝牙设置中忽略此设备后重试（macOS 若列表中看不到该设备，可开关蓝牙或重启 bluetoothd 后再试）。"
   },
   "ap": {
     "tabTitle": "AP 配网",

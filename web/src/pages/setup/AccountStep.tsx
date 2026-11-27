@@ -179,17 +179,11 @@ export function AccountStep({ getApiUrl, onAccountCreated }: AccountStepProps) {
           `safe-bottom` clears the iPhone home indicator. */}
       <main className="relative z-10 flex-1 min-h-0 overflow-y-auto safe-bottom">
         <div className="min-h-full flex items-center justify-center px-4 pt-20 pb-6 sm:px-6 sm:pt-24 sm:pb-10">
-          <div className="w-full max-w-md animate-fade-in-up">
-            <div
-              className="backdrop-blur-xl rounded-2xl p-6 sm:p-8 border shadow-md"
-              style={{
-                backgroundColor: 'color-mix(in oklch, var(--background) 72%, transparent)',
-                borderColor: 'color-mix(in oklch, var(--border) 55%, transparent)',
-              }}
-            >
+          <div className="w-full max-w-[380px] animate-fade-in-up">
+            <div>
               {/* Title */}
-              <h2 className="text-xl sm:text-2xl font-semibold mb-1.5 text-center tracking-tight">{t('setup:createAccount')}</h2>
-              <p className="text-muted-foreground text-center mb-5 text-sm px-2">{t('setup:accountDescription')}</p>
+              <h2 className="text-2xl sm:text-[26px] leading-tight font-semibold tracking-[-0.025em] mb-2 text-center text-foreground">{t('setup:createAccount')}</h2>
+              <p className="text-muted-foreground text-center mb-7 text-sm">{t('setup:accountDescription')}</p>
 
               <form onSubmit={handleSubmit} className="flex flex-col gap-4">
                 {/* Username */}

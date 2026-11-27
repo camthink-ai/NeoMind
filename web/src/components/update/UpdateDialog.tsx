@@ -137,20 +137,6 @@ export function UpdateDialog({ open, onClose }: UpdateDialogProps) {
     }
   }
 
-  const getStatusColor = () => {
-    switch (installStatus) {
-      case 'done':
-        return 'bg-success-light text-success'
-      case 'error':
-        return 'bg-error-light text-error'
-      case 'downloading':
-      case 'installing':
-        return 'bg-info-light text-info'
-      default:
-        return 'bg-info-light text-info'
-    }
-  }
-
   const getTitle = () => {
     switch (installStatus) {
       case 'downloading':
@@ -165,49 +151,54 @@ export function UpdateDialog({ open, onClose }: UpdateDialogProps) {
     }
   }
 
-  // No header description: every state's title plus its body (version line,
-  // progress bar, success/error card) already carries the content — a header
-  // sentence under the title only restated it.
+  const dialogIcon = (() => {
+    switch (installStatus) {
+      case 'done':
+        return <Check className="h-4 w-4 text-success" strokeWidth={2} />
+      case 'error':
+        return <AlertCircle className="h-4 w-4 text-error" strokeWidth={1.75} />
+      case 'downloading':
+      case 'installing':
+        return <Loader2 className="h-4 w-4 text-foreground animate-spin" />
+      default:
+        return <Rocket className="h-4 w-4 text-foreground" strokeWidth={1.75} />
+    }
+  })()
 
-  // Dynamic icon with colored background
-  const dialogIcon = (
-    <div className={`flex items-center justify-center w-10 h-10 rounded-full ${getStatusColor()}`}>
-      {getStatusIcon()}
-    </div>
-  )
+  const hasReleaseNotes = installStatus === 'idle' && !!currentUpdateInfo?.body
 
   // Dynamic footer based on install status
   const footerContent = installStatus === 'idle' ? (
     <>
-      <Button variant="ghost" onClick={onClose} className="text-muted-foreground">
+      <Button variant="ghost" size="sm" onClick={onClose} className="text-muted-foreground">
         {t('settings:remindLater')}
       </Button>
-      <Button onClick={handleUpdate} className="gap-2">
-        <Download className="w-4 h-4" />
+      <Button size="sm" onClick={handleUpdate} className="gap-1.5">
+        <Download className="w-3.5 h-3.5" />
         {t('settings:updateNow')}
       </Button>
     </>
   ) : installStatus === 'downloading' ? (
-    <Button disabled variant="secondary">
-      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+    <Button disabled variant="secondary" size="sm">
+      <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
       {t('settings:downloading')}
     </Button>
   ) : installStatus === 'installing' ? (
-    <Button disabled variant="secondary">
-      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+    <Button disabled variant="secondary" size="sm">
+      <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
       {t('settings:installing')}
     </Button>
   ) : installStatus === 'done' ? (
-    <Button onClick={handleRelaunch} className="gap-2">
-      <Rocket className="w-4 h-4" />
+    <Button size="sm" onClick={handleRelaunch} className="gap-1.5">
+      <Rocket className="w-3.5 h-3.5" />
       {t('settings:relaunchToComplete')}
     </Button>
   ) : installStatus === 'error' ? (
     <>
-      <Button variant="outline" onClick={onClose}>
+      <Button variant="outline" size="sm" onClick={onClose}>
         {t('common:close')}
       </Button>
-      <Button onClick={handleUpdate} variant="default">
+      <Button size="sm" onClick={handleUpdate} variant="default">
         {t('common:retry')}
       </Button>
     </>
@@ -222,29 +213,27 @@ export function UpdateDialog({ open, onClose }: UpdateDialogProps) {
       }}
       title={getTitle()}
       icon={dialogIcon}
-      width="sm"
+      width={hasReleaseNotes ? 'lg' : 'md'}
       preventCloseOnSubmit={false}
       isSubmitting={installStatus === 'downloading' || installStatus === 'installing'}
       footer={footerContent}
     >
-      <div className="space-y-3">
-        {/* Version line, then release notes as plain text. The floating
-            version badge and the bordered, height-capped notes box added two
-            extra visual layers; the dialog body scrolls under the pinned
-            footer instead of nesting a scroll area. */}
+      <div className="space-y-4">
         {installStatus === 'idle' && currentUpdateInfo?.version && (
-          <div className="flex items-baseline gap-1.5 text-xs text-muted-foreground">
-            <span>{t('settings:version')}</span>
-            <span className="tabular-nums font-medium text-foreground">
+          <div className="flex items-center justify-between gap-2 rounded-xl border border-border bg-muted-20 px-3.5 py-2.5 text-xs">
+            <span className="text-muted-foreground">{t('settings:version')}</span>
+            <span className="rounded-md border border-border bg-card px-1.5 py-0.5 font-mono tabular-nums font-medium text-foreground">
               v{currentUpdateInfo.version}
             </span>
           </div>
         )}
-        {installStatus === 'idle' && currentUpdateInfo?.body && (
-          <div className={releaseNotesProse}>
-            <Suspense fallback={null}>
-              <ReleaseNotes body={currentUpdateInfo.body} components={releaseNotesComponents} />
-            </Suspense>
+        {hasReleaseNotes && (
+          <div className="max-h-[46vh] overflow-y-auto rounded-xl border border-border bg-card px-4 py-3.5">
+            <div className={releaseNotesProse}>
+              <Suspense fallback={null}>
+                <ReleaseNotes body={currentUpdateInfo.body!} components={releaseNotesComponents} />
+              </Suspense>
+            </div>
           </div>
         )}
 

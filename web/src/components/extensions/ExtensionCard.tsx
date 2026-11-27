@@ -128,15 +128,9 @@ export function ExtensionCard({
             name is the only status indicator — keep both signals. */}
         <div className="flex min-w-0 items-start justify-between gap-2 md:mb-3">
           <div className="flex min-w-0 flex-1 items-center gap-3">
-            {/* Icon with status-tinted background (mirrors AgentCard) */}
-            <div className={cn(
-              "relative hidden w-11 h-11 rounded-xl items-center justify-center shrink-0 transition-colors md:flex",
-              hasError || hasCrashed ? "bg-error-light text-error" :
-              hasWarning ? "bg-warning-light text-warning" :
-              isFailed ? "bg-muted text-muted-foreground" :
-              "bg-success-light text-success",
-            )}>
-            <CategoryIcon className="h-5 w-5" />
+            {/* Monochrome icon tile with status corner dot (unified across entity cards) */}
+            <div className="relative hidden w-10 h-10 rounded-lg border border-border bg-muted-30 text-foreground items-center justify-center shrink-0 transition-colors md:flex">
+              <CategoryIcon className="h-4 w-4" strokeWidth={1.75} />
               {/* Status indicator dot */}
               <div className={cn(
                 "absolute -top-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-background",

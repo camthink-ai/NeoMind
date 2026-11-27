@@ -30,6 +30,9 @@ export const textCode = 'text-code'
 // Heading: markdown headings
 export const textHeading = 'text-heading'
 
+// Auth / onboarding primary page title
+export const textAuthTitle = 'text-2xl sm:text-[26px] leading-tight font-semibold tracking-[-0.025em]'
+
 // Font family
 export const fontMonoClass = 'font-mono'
 

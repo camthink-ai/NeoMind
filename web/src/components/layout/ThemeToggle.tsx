@@ -9,7 +9,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 
-export function ThemeToggle() {
+export function ThemeToggle({ side = "top" }: { side?: "top" | "bottom" } = {}) {
   const { t } = useTranslation('common')
   const { theme, setTheme, resolvedTheme } = useTheme()
 
@@ -32,8 +32,7 @@ export function ThemeToggle() {
           {getIcon()}
         </Button>
       </DropdownMenuTrigger>
-      {/* Opens upward — the toggle lives in the sidebar footer */}
-      <DropdownMenuContent side="top" align="end" className="w-36">
+      <DropdownMenuContent side={side} align="end" className="w-36">
         <DropdownMenuItem onClick={() => setTheme("light")} className="gap-2 cursor-pointer">
           <Sun className="h-4 w-4" />
           <span>{t('theme.light')}</span>

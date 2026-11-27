@@ -852,5 +852,9 @@
   "saveChanges": "保存修改",
   "priority": "优先级",
   "send": "发送",
-  "selectPlaceholder": "请选择..."
+  "selectPlaceholder": "请选择...",
+  "totalRecords": "共 {{count}} 条",
+  "viewMode": "视图模式",
+  "listView": "列表视图",
+  "gridView": "卡片视图"
 }

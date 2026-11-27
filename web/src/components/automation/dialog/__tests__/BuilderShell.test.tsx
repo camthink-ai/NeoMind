@@ -12,11 +12,10 @@ describe('BuilderShell', () => {
     onOpenChange: () => {},
     accent: 'indigo' as const,
     title: '新建规则',
-    subtitle: '当条件满足时执行动作',
     icon: <span>R</span>,
   }
 
-  it('renders title, subtitle, and all four slots', () => {
+  it('renders title and all four slots', () => {
     render(
       <BuilderShell
         {...baseProps}
@@ -31,7 +30,6 @@ describe('BuilderShell', () => {
       />
     )
     expect(screen.getByText('新建规则')).toBeInTheDocument()
-    expect(screen.getByText('当条件满足时执行动作')).toBeInTheDocument()
     expect(screen.getByText('CONFIG_RAIL')).toBeInTheDocument()
     expect(screen.getByText('WORKSPACE_CANVAS')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '取消' })).toBeInTheDocument()

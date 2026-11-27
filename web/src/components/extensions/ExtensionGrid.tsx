@@ -142,8 +142,8 @@ export function ExtensionGrid({
     return (
       <div className="flex flex-col items-center px-1 py-10 sm:px-4 sm:py-12">
         {/* Hero */}
-        <div className="mb-5 hidden h-16 w-16 items-center justify-center rounded-xl bg-muted ring-1 ring-border sm:flex">
-          <Plug className="h-8 w-8 text-muted-foreground" />
+        <div className="mb-5 hidden h-12 w-12 items-center justify-center rounded-xl border border-border bg-muted-30 text-foreground sm:flex">
+          <Plug className="h-5 w-5" strokeWidth={1.75} />
         </div>
         <h3 className="text-lg font-semibold sm:text-xl">{t("empty.title")}</h3>
         <p className="mt-2 max-w-md text-center text-sm leading-relaxed text-muted-foreground">

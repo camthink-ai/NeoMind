@@ -137,8 +137,9 @@ export function CenterPickerDialog({
             </div>
           </div>
           {hasSelected && (
-            <div className="text-xs text-success">
-              ✓ {t('mapDisplay.centerSelected', '已选择新位置')}
+            <div className="inline-flex items-center gap-1 text-xs text-success">
+              <Check className="h-3.5 w-3.5 shrink-0" />
+              <span>{t('mapDisplay.centerSelected', '已选择新位置')}</span>
             </div>
           )}
         </div>

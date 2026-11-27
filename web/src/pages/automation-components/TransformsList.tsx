@@ -6,10 +6,19 @@ import { useState } from "react"
 import { Switch } from "@/components/ui/switch"
 import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
-import { ResponsiveTable, EmptyState } from "@/components/shared"
-import { Edit, Trash2, Code, Globe, Cpu, HardDrive, Download } from "lucide-react"
+import { IconButton } from "@/components/ui/button"
+import { Skeleton } from "@/components/ui/skeleton"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { EmptyState, EmptyStateCard } from "@/components/shared"
+import { Edit, Trash2, Workflow, Globe, Cpu, HardDrive, Download, MoreVertical } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
+import { textMini } from "@/design-system/tokens/typography"
 import { formatTimestamp } from "@/lib/utils/format"
 import type { TransformAutomation } from "@/types"
 import { useIsMobile } from "@/hooks/useMobile"
@@ -167,15 +176,13 @@ export function TransformsList({
         {/* Mobile has no ResponsiveTable — carry its own loading skeleton. */}
         {loading && paginatedTransforms.length === 0 && (
           [0, 1, 2].map((i) => (
-            <Card key={i} className="overflow-hidden rounded-2xl border-border bg-card shadow-none">
-              <div className="px-3 py-2.5 animate-pulse space-y-2">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-lg bg-muted" />
-                  <div className="h-4 w-36 rounded bg-muted" />
-                </div>
-                <div className="ml-[42px] h-3 w-48 rounded bg-muted" />
+            <div key={i} className="rounded-2xl border border-border bg-card px-4 py-3.5 space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <Skeleton className="h-4 w-36" />
+                <Skeleton className="h-5 w-9 rounded-full" />
               </div>
-            </Card>
+              <Skeleton className="h-3 w-48" />
+            </div>
           ))
         )}
         {paginatedTransforms.map((transform) => {
@@ -207,140 +214,123 @@ export function TransformsList({
           )
         })}
       </div>
-    ) : (
-    <ResponsiveTable
-      columns={[
-        {
-          key: 'name',
-          label: t('automation:name'),
-          width: '20%',
-        },
-        {
-          key: 'scope',
-          label: t('automation:scope'),
-          width: '30%',
-        },
-        {
-          key: 'createdAt',
-          label: t('common:createdAt', 'Created'),
-          width: '16%',
-        },
-        {
-          key: 'lastExecuted',
-          label: t('automation:lastExecuted', 'Last Executed'),
-          width: '16%',
-        },
-        {
-          key: 'status',
-          label: t('automation:status'),
-          width: '10%',
-        },
-      ]}
-      data={paginatedTransforms}
-      rowKey={(transform: TransformAutomation) => transform.id}
-      onRowClick={(row: TransformAutomation) => onEdit(row)}
-      loading={loading}
-      getRowClassName={(rowData) => {
-        const transform = rowData
-        return cn(!transform.enabled && "opacity-50")
-      }}
-      renderCell={(columnKey, rowData) => {
-        const transform = rowData
-        const scopeInfo = getScopeInfo(transform.scope)
-        const ScopeIcon = scopeInfo.icon
-
-        switch (columnKey) {
-          case 'name': {
-            const subtitle = listSubtitle(transform.description)
-            return (
-              <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-                  <Code className="h-4 w-4" />
-                </div>
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-medium">{transform.name}</div>
-                  {subtitle && (
-                    <div className="line-clamp-1 text-xs text-muted-foreground">{subtitle}</div>
-                  )}
-                </div>
-              </div>
-            )
-          }
-
-          case 'scope':
-            return (
-              <Badge variant="outline" className="max-w-full gap-1 text-xs text-muted-foreground">
-                <ScopeIcon className="h-3 w-3 shrink-0" />
-                <span className="truncate">{getScopeLabel(transform.scope)}</span>
-              </Badge>
-            )
-
-          case 'createdAt':
-            return (
-              <span className="text-xs text-muted-foreground">
-                {formatTimestamp(transform.created_at)}
-              </span>
-            )
-
-          case 'lastExecuted': {
-            const hasExecuted = transform.last_executed && transform.last_executed !== 0
-            const execCount = transform.execution_count || 0
-            return !hasExecuted ? (
-              <span className="text-xs text-muted-foreground">-</span>
-            ) : (
-              <div className="flex flex-col gap-0.5">
-                <span className="text-xs">{formatTimestamp(transform.last_executed ?? undefined)}</span>
-                {execCount > 1 && (
-                  <span className="text-xs text-muted-foreground">{execCount}x</span>
-                )}
-              </div>
-            )
-          }
-
-          case 'status':
-            return (
-              <Switch
-                checked={transform.enabled}
-                onCheckedChange={() => onToggleStatus(transform)}
-                className="scale-90"
-              />
-            )
-
-          default:
-            return null
-        }
-      }}
-      actions={[
-        {
-          label: t('common:edit'),
-          icon: <Edit className="h-4 w-4" />,
-          onClick: (rowData) => {
-            const transform = rowData
-            onEdit(transform)
-          },
-        },
-        ...(onExport ? [{
-          label: t('common:export'),
-          icon: <Download className="h-4 w-4" />,
-          onClick: (transform: TransformAutomation) => onExport(transform),
-        }] : []),
-        {
-          label: t('common:delete'),
-          icon: <Trash2 className="h-4 w-4" />,
-          variant: 'destructive',
-          onClick: (rowData) => {
-            const transform = rowData
-            onDelete(transform)
-          },
-        },
-      ]}
-      emptyState={
+    ) : loading && paginatedTransforms.length === 0 ? (
+      <div className="rounded-xl border border-border bg-card divide-y divide-glass-border overflow-hidden">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} className="flex items-center gap-4 px-5 py-3.5">
+            <Skeleton className="h-9 w-9 rounded-lg shrink-0" />
+            <div className="flex-1 space-y-2">
+              <Skeleton className="h-4 w-44" />
+              <Skeleton className="h-5 w-36 rounded-md" />
+            </div>
+            <Skeleton className="h-4 w-24 hidden lg:block" />
+            <Skeleton className="h-5 w-9 rounded-full" />
+          </div>
+        ))}
+      </div>
+    ) : paginatedTransforms.length === 0 ? (
+      <EmptyStateCard>
         <EmptyState
           title={t('automation:emptyTransforms.title', 'No transforms')}
           description={t('automation:emptyTransforms.description', 'Create your first transform to process device data')}
         />
-      }
-    />
+      </EmptyStateCard>
+    ) : (
+      <div className="rounded-xl border border-border bg-card divide-y divide-glass-border overflow-hidden">
+        {paginatedTransforms.map((transform) => {
+          const subtitle = listSubtitle(transform.description)
+          const scopeInfo = getScopeInfo(transform.scope)
+          const ScopeIcon = scopeInfo.icon
+          const hasExecuted = transform.last_executed && transform.last_executed !== 0
+          const execCount = transform.execution_count || 0
+
+          return (
+            <div
+              key={transform.id}
+              role="button"
+              tabIndex={0}
+              onClick={() => onEdit(transform)}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onEdit(transform) } }}
+              className={cn(
+                "group/row flex items-center gap-4 px-5 py-3.5 transition-colors duration-fast hover:bg-muted-20 cursor-pointer",
+                !transform.enabled && "opacity-55"
+              )}
+            >
+              {/* Icon */}
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-muted-30 text-foreground">
+                <Workflow className="h-4 w-4" strokeWidth={1.75} />
+              </div>
+
+              {/* Main 2-line content: Name + Scope/Meta */}
+              <div className="min-w-0 flex-1 space-y-1.5">
+                <div className="flex items-baseline gap-2 min-w-0">
+                  <span className="truncate text-sm font-medium text-foreground">{transform.name}</span>
+                  {subtitle && (
+                    <span className="truncate text-xs text-muted-foreground">{subtitle}</span>
+                  )}
+                </div>
+                <div className="flex flex-wrap items-center gap-2 min-w-0">
+                  <Badge variant="outline" className="max-w-full gap-1 text-xs font-normal bg-muted-20 border-glass-border text-muted-foreground">
+                    <ScopeIcon className="h-3 w-3 shrink-0" />
+                    <span className="truncate">{getScopeLabel(transform.scope)}</span>
+                  </Badge>
+                  <span className="text-xs text-muted-foreground tabular-nums">
+                    {formatTimestamp(transform.created_at)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Quiet right meta: last executed + count */}
+              <div className="hidden lg:flex flex-col items-end gap-0.5 shrink-0 text-xs tabular-nums text-muted-foreground">
+                <span>
+                  {hasExecuted ? formatTimestamp(transform.last_executed ?? undefined) : '-'}
+                </span>
+                {hasExecuted && execCount > 1 && (
+                  <span className={cn(textMini, "text-muted-foreground")}>
+                    {execCount}x
+                  </span>
+                )}
+              </div>
+
+              {/* Switch + hover-reveal actions */}
+              <div className="flex items-center gap-2 shrink-0" onClick={(e) => e.stopPropagation()}>
+                <Switch
+                  checked={transform.enabled}
+                  onCheckedChange={() => onToggleStatus(transform)}
+                  className="scale-90"
+                />
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <IconButton
+                      size="sm"
+                      aria-label={t('common:actions', { defaultValue: 'Actions' })}
+                      className="opacity-50 transition-opacity group-hover/row:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
+                    >
+                      <MoreVertical className="h-4 w-4" />
+                    </IconButton>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-[160px]">
+                    <DropdownMenuItem onClick={() => onEdit(transform)} className="gap-2">
+                      <Edit className="h-4 w-4 shrink-0" />
+                      <span>{t('common:edit')}</span>
+                    </DropdownMenuItem>
+                    {onExport && (
+                      <DropdownMenuItem onClick={() => onExport(transform)} className="gap-2">
+                        <Download className="h-4 w-4 shrink-0" />
+                        <span>{t('common:export')}</span>
+                      </DropdownMenuItem>
+                    )}
+                    <DropdownMenuItem onClick={() => onDelete(transform)} className="gap-2 text-error focus:text-error">
+                      <Trash2 className="h-4 w-4 shrink-0" />
+                      <span>{t('common:delete')}</span>
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            </div>
+          )
+        })}
+      </div>
     )
   )
 }

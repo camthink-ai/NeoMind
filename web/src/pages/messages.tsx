@@ -22,6 +22,7 @@ import type { MessageChain } from '@/lib/api/onboarding'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { SelectableChip } from '@/components/ui/selectable-chip'
 import {
   Select,
   SelectContent,
@@ -1008,7 +1009,7 @@ export default function MessagesPage() {
                         {(message.tags || []).length > 0 && (
                           <div className="flex items-center gap-1 mt-1 flex-wrap">
                             {(message.tags || []).slice(0, 4).map((tag, i) => (
-                              <Badge key={i} variant="secondary" className="text-xs h-5 px-1.5">
+                              <Badge key={i} variant="outline" className="text-xs font-normal h-5 px-1.5 bg-muted-20 border-glass-border text-muted-foreground">
                                 {tag}
                               </Badge>
                             ))}
@@ -1021,20 +1022,20 @@ export default function MessagesPage() {
                     )
                   case 'severityBadge':
                     return (
-                      <Badge variant="outline" className={cn("text-xs", severityConfig.bgColor, severityConfig.color)}>
+                      <Badge variant="outline" className={cn("text-xs font-normal border-transparent", severityConfig.bgColor, severityConfig.color)}>
                         {t(`messages.severity.${message.severity}`)}
                       </Badge>
                     )
                   case 'category':
                     return (
-                      <div className="flex items-center gap-1.5">
-                        <CategoryIcon className="h-4 w-4 text-muted-foreground" />
+                      <div className="flex items-center gap-1.5 text-muted-foreground">
+                        <CategoryIcon className="h-3.5 w-3.5 shrink-0" />
                         <span className="text-xs">{t(categoryConfig.label)}</span>
                       </div>
                     )
                   case 'status':
                     return (
-                      <Badge variant={statusConfig.variant} className="text-xs">
+                      <Badge variant={statusConfig.variant} className="text-xs font-normal">
                         {t(statusConfig.label)}
                       </Badge>
                     )
@@ -1068,7 +1069,7 @@ export default function MessagesPage() {
                 },
                 {
                   label: t('messages.acknowledge'),
-                  icon: <Eye className="h-4 w-4" />,
+                  icon: <Check className="h-4 w-4" />,
                   show: (rowData: NotificationMessage) => rowData.status === 'active',
                   onClick: (rowData) => {
                     const message = rowData
@@ -1077,7 +1078,7 @@ export default function MessagesPage() {
                 },
                 {
                   label: t('messages.resolve'),
-                  icon: <Eye className="h-4 w-4" />,
+                  icon: <CheckCircle2 className="h-4 w-4" />,
                   show: (rowData) => {
                     const status = rowData.status
                     return status !== 'resolved' && status !== 'archived'
@@ -1182,7 +1183,7 @@ export default function MessagesPage() {
                                 <><span aria-hidden="true">·</span><span>{channel.recipients.length} {t('messages.channels.recipients', 'recipients')}</span></>
                               )}
                               {testResult && (
-                                <><span aria-hidden="true">·</span><span className={testResult.success ? 'text-success' : 'text-error'}>{testResult.success ? '✓' : '✗'} {testResult.message}</span></>
+                                <><span aria-hidden="true">·</span><span className={cn("inline-flex items-center gap-1", testResult.success ? 'text-success' : 'text-error')}>{testResult.success ? <Check className="h-3 w-3 shrink-0" /> : <X className="h-3 w-3 shrink-0" />}{testResult.message}</span></>
                               )}
                             </div>
                           </div>
@@ -1272,9 +1273,9 @@ export default function MessagesPage() {
                           )}
                         </div>
                         {testResult && (
-                          <div className={`text-xs mt-1 ${testResult.success ? 'text-success' : 'text-error'}`}>
-                            {testResult.success ? '✓ ' : '✗ '}
-                            {testResult.message}
+                          <div className={cn("text-xs mt-1 inline-flex items-center gap-1", testResult.success ? 'text-success' : 'text-error')}>
+                            {testResult.success ? <Check className="h-3 w-3 shrink-0" /> : <X className="h-3 w-3 shrink-0" />}
+                            <span>{testResult.message}</span>
                           </div>
                         )}
                       </div>
@@ -1430,13 +1431,11 @@ export default function MessagesPage() {
         open={!!selectedMessage}
         onOpenChange={(open) => !open && setSelectedMessage(null)}
         title={selectedMessage?.title || t('messages.messageDetails', 'Message Details')}
-        icon={
-          <Bell className="h-5 w-5 text-info" />
-        }
+        icon={<Bell className="h-4 w-4 text-foreground" strokeWidth={1.75} />}
         width="xl"
         showCancelButton={false}
         footer={
-          <div className="flex justify-end gap-2">
+          <div className="flex flex-wrap justify-end gap-2">
             {selectedMessage?.status === 'active' && (
               <Button
                 variant="outline"
@@ -1446,7 +1445,7 @@ export default function MessagesPage() {
                   setSelectedMessage(null)
                 }}
               >
-                <Eye className="h-4 w-4 mr-1" />
+                <Check className="h-3.5 w-3.5 mr-1.5" />
                 {t('messages.acknowledge', 'Acknowledge')}
               </Button>
             )}
@@ -1462,7 +1461,7 @@ export default function MessagesPage() {
                     }
                   }}
                 >
-                  <Flag className="h-4 w-4 mr-1" />
+                  <Flag className="h-3.5 w-3.5 mr-1.5" />
                   {t('messages.markFalsePositive', 'Not a real alert')}
                 </Button>
               )}
@@ -1477,7 +1476,7 @@ export default function MessagesPage() {
                   }
                 }}
               >
-                <CheckCircle2 className="h-4 w-4 mr-1" />
+                <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" />
                 {t('messages.resolve', 'Resolve')}
               </Button>
             )}
@@ -1492,83 +1491,75 @@ export default function MessagesPage() {
         }
       >
         {selectedMessage && (
-          <div className="space-y-1">
-            {/* Status Badges */}
-            <div className="flex items-center gap-2 pb-2">
-              <Badge
-                variant="outline"
-                className="bg-info-light text-info border-info"
-              >
-                <>
-                  <Bell className="h-4 w-4 mr-1" />
-                  {t('messages.type.notification', 'Notification')}
-                </>
-              </Badge>
-              <Badge variant="outline" className={
-                selectedMessage.severity === 'critical' ? 'bg-error-light text-error' :
-                selectedMessage.severity === 'warning' ? 'bg-warning-light text-warning' :
-                'bg-info-light text-info'
-              }>
-                {t(`messages.severity.${selectedMessage.severity}`, selectedMessage.severity)}
-              </Badge>
-              <Badge variant={selectedMessage.status === 'active' ? 'default' : 'secondary'}>
-                {t(`messages.status.${selectedMessage.status}`, selectedMessage.status)}
-              </Badge>
-            </div>
-
-            {/* Basic Info Section */}
-            <FormSection
-              title={t('messages.basicInfo', 'Basic Information')}
-              description={t('messages.basicInfoDesc', 'Message category and source details')}
-            >
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <Label className="text-muted-foreground text-xs">{t('messages.category.label', 'Category')}</Label>
-                  <div className="font-medium">{selectedMessage.category}</div>
-                </div>
-                <div>
-                  <Label className="text-muted-foreground text-xs">{t('messages.source', 'Source')}</Label>
-                  <div className="font-medium">{selectedMessage.source || '-'}</div>
-                </div>
-                <div>
-                  <Label className="text-muted-foreground text-xs">{t('messages.sourceType.label', 'Source Type')}</Label>
-                  <div className="font-medium">{selectedMessage.source_type || '-'}</div>
-                </div>
-                <div className="col-span-2">
-                  <Label className="text-muted-foreground text-xs">{t('messages.timestamp', 'Timestamp')}</Label>
-                  <div className="font-medium">{formatTimestamp(selectedMessage.timestamp, true)}</div>
-                </div>
-              </div>
-            </FormSection>
-
-            {/* Why this fired (M2-5). Rendered only when there is something to
-                say: a message that is not a rule alert has no chain at all, and
-                announcing that on every system message would be noise. */}
-            {messageChain &&
-              (messageChain.resolved || messageChain.reason === 'execution_not_found') && (
-                <FormSection
-                  title={t('messages.chain.title', 'Why this fired')}
-                  description={t(
-                    'messages.chain.description',
-                    'The rule execution behind this alert, and what it acted on',
+          <div className="space-y-4">
+            {/* Status & Timestamp Strip */}
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-muted-20 px-3.5 py-2.5">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <Badge
+                  variant="outline"
+                  className={cn(
+                    "text-xs font-normal border-transparent",
+                    selectedMessage.severity === 'critical' || selectedMessage.severity === 'emergency'
+                      ? 'bg-error-light text-error'
+                      : selectedMessage.severity === 'warning'
+                        ? 'bg-warning-light text-warning'
+                        : 'bg-info-light text-info'
                   )}
                 >
+                  {t(`messages.severity.${selectedMessage.severity}`, selectedMessage.severity)}
+                </Badge>
+                <Badge variant={selectedMessage.status === 'active' ? 'default' : 'secondary'} className="text-xs font-normal">
+                  {t(`messages.status.${selectedMessage.status}`, selectedMessage.status)}
+                </Badge>
+                <Badge variant="outline" className="text-xs font-normal bg-card border-glass-border text-muted-foreground">
+                  {selectedMessage.category}
+                </Badge>
+              </div>
+              <span className="text-xs text-muted-foreground tabular-nums">
+                {formatTimestamp(selectedMessage.timestamp, true)}
+              </span>
+            </div>
+
+            {/* Message Body */}
+            <div className="rounded-xl border border-border bg-card p-4 text-sm leading-relaxed text-foreground whitespace-pre-wrap break-words">
+              {selectedMessage.message}
+            </div>
+
+            {/* Source Meta Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <div className="rounded-xl border border-border bg-muted-20 px-3.5 py-2.5">
+                <div className={cn(textMini, "text-muted-foreground")}>{t('messages.source', 'Source')}</div>
+                <div className="mt-0.5 text-sm font-medium text-foreground truncate">{selectedMessage.source || '—'}</div>
+              </div>
+              <div className="rounded-xl border border-border bg-muted-20 px-3.5 py-2.5">
+                <div className={cn(textMini, "text-muted-foreground")}>{t('messages.sourceType.label', 'Source Type')}</div>
+                <div className="mt-0.5 text-sm font-medium text-foreground truncate">{selectedMessage.source_type || '—'}</div>
+              </div>
+            </div>
+
+            {/* Why this fired (M2-5) — clean key-value card matching Channel Details */}
+            {messageChain &&
+              (messageChain.resolved || messageChain.reason === 'execution_not_found') && (
+                <div className="space-y-1.5">
+                  <div className="text-xs font-medium text-muted-foreground">
+                    {t('messages.chain.title', 'Why this fired')}
+                  </div>
                   {messageChain.resolved ? (
-                    <div className="space-y-2 text-sm">
-                      <div className="flex items-baseline gap-2">
-                        <span className="text-muted-foreground text-xs w-20 shrink-0">
+                    <div className="rounded-xl border border-border bg-card divide-y divide-glass-border overflow-hidden text-sm">
+                      <div className="flex items-baseline justify-between gap-4 px-3.5 py-2.5">
+                        <span className="text-xs text-muted-foreground shrink-0">
                           {t('messages.chain.rule', 'Rule')}
                         </span>
-                        <span className="font-medium">
-                          {messageChain.rule?.name || messageChain.rule?.id || '-'}
+                        <span className="font-medium text-right truncate">
+                          {messageChain.rule?.name || messageChain.rule?.id || '—'}
                         </span>
                       </div>
                       {messageChain.trigger?.source && (
-                        <div className="flex items-baseline gap-2">
-                          <span className="text-muted-foreground text-xs w-20 shrink-0">
+                        <div className="flex items-baseline justify-between gap-4 px-3.5 py-2.5">
+                          <span className="text-xs text-muted-foreground shrink-0">
                             {t('messages.chain.evidence', 'Evidence')}
                           </span>
-                          <span className="font-mono text-xs">
+                          <span className="font-mono text-xs text-right break-all">
                             {messageChain.trigger.source}
                             {messageChain.trigger.value ? ` = ${messageChain.trigger.value}` : ''}
                           </span>
@@ -1576,27 +1567,27 @@ export default function MessagesPage() {
                       )}
                       {messageChain.execution && (
                         <>
-                          <div className="flex items-baseline gap-2">
-                            <span className="text-muted-foreground text-xs w-20 shrink-0">
+                          <div className="flex items-baseline justify-between gap-4 px-3.5 py-2.5">
+                            <span className="text-xs text-muted-foreground shrink-0">
                               {t('messages.chain.firedAt', 'Fired')}
                             </span>
-                            <span>{formatTimestamp(messageChain.execution.triggered_at, true)}</span>
+                            <span className="text-xs tabular-nums text-right">
+                              {formatTimestamp(messageChain.execution.triggered_at, true)}
+                            </span>
                           </div>
-                          <div className="flex items-baseline gap-2">
-                            <span className="text-muted-foreground text-xs w-20 shrink-0">
+                          <div className="flex items-baseline justify-between gap-4 px-3.5 py-2.5">
+                            <span className="text-xs text-muted-foreground shrink-0">
                               {t('messages.chain.actions', 'Actions')}
                             </span>
-                            {/* Shown raw: this is the honest record of what the
-                                system did, not a paraphrase of it. */}
-                            <span className="flex flex-wrap gap-1">
+                            <span className="flex flex-wrap justify-end gap-1">
                               {messageChain.execution.actions_executed.length > 0 ? (
                                 messageChain.execution.actions_executed.map((action, i) => (
-                                  <Badge key={i} variant="secondary" className="text-xs font-mono">
+                                  <Badge key={i} variant="outline" className="text-xs font-mono font-normal bg-muted-20 border-glass-border">
                                     {action}
                                   </Badge>
                                 ))
                               ) : (
-                                <span className="text-muted-foreground">
+                                <span className="text-xs text-muted-foreground">
                                   {t('messages.chain.noActions', 'none')}
                                 </span>
                               )}
@@ -1604,14 +1595,12 @@ export default function MessagesPage() {
                           </div>
                         </>
                       )}
-                      {/* The loop's other half: what the dismissals add up to.
-                          Advice only — the rule is never changed for you. */}
                       {messageChain.rule_quality && messageChain.rule_quality.alerts > 0 && (
-                        <div className="flex items-baseline gap-2">
-                          <span className="text-muted-foreground text-xs w-20 shrink-0">
+                        <div className="flex items-baseline justify-between gap-4 px-3.5 py-2.5">
+                          <span className="text-xs text-muted-foreground shrink-0">
                             {t('messages.chain.trackRecord', 'Track record')}
                           </span>
-                          <span>
+                          <span className="text-xs text-right">
                             {t('messages.chain.dismissedOf', {
                               defaultValue: '{{fp}} of {{total}} alerts dismissed as false',
                               fp: messageChain.rule_quality.false_positives,
@@ -1631,49 +1620,38 @@ export default function MessagesPage() {
                       )}
                     </div>
                   ) : (
-                    <p className="text-sm text-muted-foreground">
+                    <div className="rounded-xl border border-border bg-muted-20 px-3.5 py-2.5 text-xs text-muted-foreground leading-relaxed">
                       {t(
                         'messages.chain.expired',
                         'This alert points at a rule execution whose record has expired — rule history is kept for 30 days.',
                       )}
-                    </p>
+                    </div>
                   )}
-                </FormSection>
+                </div>
               )}
-
-            {/* Content Section */}
-            <FormSection
-              title={t('messages.contentSection', 'Content')}
-              description={t('messages.contentSectionDesc', 'Message body')}
-            >
-              <div className="bg-muted-30 rounded-lg p-3 text-sm whitespace-pre-wrap">
-                {selectedMessage.message}
-              </div>
-            </FormSection>
 
             {/* Tags Section */}
             {selectedMessage.tags && selectedMessage.tags.length > 0 && (
-              <FormSection
-                title={t('messages.tags.label', 'Tags')}
-                description={t('messages.tags.hint', 'Comma-separated tags for categorization')}
-              >
-                <div className="flex flex-wrap gap-1">
+              <div className="space-y-1.5">
+                <div className="text-xs font-medium text-muted-foreground">{t('messages.tags.label', 'Tags')}</div>
+                <div className="flex flex-wrap gap-1.5">
                   {(selectedMessage.tags || []).map((tag, i) => (
-                    <Badge key={i} variant="secondary" className="text-xs">{tag}</Badge>
+                    <Badge key={i} variant="outline" className="text-xs font-normal bg-muted-20 border-glass-border text-muted-foreground">
+                      {tag}
+                    </Badge>
                   ))}
                 </div>
-              </FormSection>
+              </div>
             )}
 
             {/* Metadata Section */}
             {selectedMessage.metadata && Object.keys(selectedMessage.metadata).length > 0 && (
               <FormSection
                 title={t('messages.metadata', 'Metadata')}
-                description={t('messages.metadataDesc', 'Additional message metadata')}
                 collapsible
                 defaultExpanded={false}
               >
-                <pre className="bg-muted-50 rounded-lg p-3 text-xs font-mono overflow-x-auto max-h-40 overflow-y-auto">
+                <pre className="bg-muted-20 border border-glass-border rounded-xl p-3 text-xs font-mono overflow-x-auto max-h-40 overflow-y-auto">
                   {JSON.stringify(selectedMessage.metadata, null, 2)}
                 </pre>
               </FormSection>
@@ -1687,107 +1665,98 @@ export default function MessagesPage() {
         open={!!viewChannel}
         onOpenChange={(open) => !open && setViewChannel(null)}
         title={t('messages.channels.channelDetails', 'Channel Details')}
-        icon={<Network className="h-5 w-5" />}
+        icon={<Network className="h-4 w-4 text-foreground" strokeWidth={1.75} />}
         width="md"
         showCancelButton={false}
         footer={
-          <div className="flex justify-end gap-2">
-            {viewChannel && viewChannel.channel_type !== 'console' && viewChannel.channel_type !== 'memory' && (
-              <>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    handleTestChannel(viewChannel.name)
-                    setViewChannel(null)
-                  }}
-                  disabled={testingChannel === viewChannel.name}
-                >
-                  <TestTube className="h-4 w-4 mr-1" />
-                  {t('messages.channels.test')}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    handleToggleEnabled(viewChannel.name, !viewChannel.enabled)
-                    setViewChannel(null)
-                  }}
-                >
-                  {viewChannel.enabled ? t('disable') : t('enable')}
-                </Button>
-              </>
-            )}
+          <div className="flex w-full items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              {viewChannel && viewChannel.channel_type !== 'console' && viewChannel.channel_type !== 'memory' && (
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      handleTestChannel(viewChannel.name)
+                      setViewChannel(null)
+                    }}
+                    disabled={testingChannel === viewChannel.name}
+                  >
+                    <TestTube className="h-3.5 w-3.5 mr-1.5" />
+                    {t('messages.channels.test')}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      handleToggleEnabled(viewChannel.name, !viewChannel.enabled)
+                      setViewChannel(null)
+                    }}
+                  >
+                    {viewChannel.enabled ? t('disable') : t('enable')}
+                  </Button>
+                </>
+              )}
+            </div>
+            <Button variant="outline" size="sm" onClick={() => setViewChannel(null)}>
+              {t('close', 'Close')}
+            </Button>
           </div>
         }
       >
         {viewChannel && (
-          <div className="space-y-1">
-            {/* Basic Info Section */}
-            <FormSection
-              title={t('messages.basicInfo', 'Basic Information')}
-              description={t('messages.basicInfoDesc', 'Channel name and type')}
-            >
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div>
-                  <Label className="text-muted-foreground text-xs">{t('messages.channels.name')}</Label>
-                  <div className="font-medium">{viewChannel.name}</div>
-                </div>
-                <div>
-                  <Label className="text-muted-foreground text-xs">{t('messages.channels.type')}</Label>
-                  <div className="font-medium capitalize">{viewChannel.channel_type}</div>
-                </div>
-                <div>
-                  <Label className="text-muted-foreground text-xs">{t('status')}</Label>
-                  <Badge variant={viewChannel.enabled ? 'default' : 'secondary'}>
-                    {viewChannel.enabled ? t('enabled') : t('disabled')}
-                  </Badge>
+          <div className="space-y-4">
+            {/* Hero Identity Card */}
+            <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-muted-20 px-4 py-3.5">
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-semibold text-foreground">{viewChannel.name}</div>
+                <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                  <span className={cn("inline-flex items-center rounded-md border border-glass-border bg-card px-2 py-0.5 font-mono capitalize", textMini)}>
+                    {viewChannel.channel_type}
+                  </span>
                 </div>
               </div>
-            </FormSection>
+              <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-card px-2.5 py-1 text-xs font-medium text-foreground">
+                <span className={cn("h-1.5 w-1.5 rounded-full", viewChannel.enabled ? "bg-success" : "bg-muted-foreground")} />
+                {viewChannel.enabled ? t('enabled') : t('disabled')}
+              </span>
+            </div>
 
-            {/* Config Section - Webhook */}
-            {viewChannel.channel_type === 'webhook' && viewChannel.config && (
-              <FormSection
-                title={t('messages.channels.config', 'Configuration')}
-                description={t('messages.channels.webhookConfigDesc', 'Webhook endpoint URL')}
-              >
-                <div className="bg-muted-50 rounded-lg p-3 text-sm font-mono break-all">
-                  {(() => {
-                    const cfg = viewChannel.config as Record<string, unknown>
-                    return typeof cfg === 'object' && cfg !== null && 'url' in cfg
-                      ? String(cfg.url)
-                      : JSON.stringify(viewChannel.config, null, 2)
-                  })()}
+            {/* Configuration Key-Value List */}
+            {viewChannel.config && typeof viewChannel.config === 'object' && Object.keys(viewChannel.config).length > 0 && (
+              <div className="space-y-1.5">
+                <div className="text-xs font-medium text-muted-foreground">
+                  {t('messages.channels.config', 'Configuration')}
                 </div>
-              </FormSection>
-            )}
-
-            {/* Config Section - Email */}
-            {viewChannel.channel_type === 'email' && viewChannel.config && (
-              <FormSection
-                title={t('messages.channels.config', 'Configuration')}
-                description={t('messages.channels.emailConfigDesc', 'Email server settings')}
-              >
-                <div className="bg-muted-50 rounded-lg p-3 text-sm space-y-1">
-                  {(() => {
-                    const cfg = viewChannel.config as Record<string, unknown>
-                    return (
-                      <>
-                        {cfg && 'smtp_server' in cfg && (
-                          <div>{t('messages.channels.smtpServer')}: {String(cfg.smtp_server)}</div>
-                        )}
-                        {cfg && 'smtp_port' in cfg && (
-                          <div>{t('messages.channels.smtpPort')}: {String(cfg.smtp_port)}</div>
-                        )}
-                        {cfg && 'from_address' in cfg && (
-                          <div>{t('messages.channels.emailFrom')}: {String(cfg.from_address)}</div>
-                        )}
-                      </>
-                    )
-                  })()}
+                <div className="rounded-xl border border-border bg-card divide-y divide-glass-border overflow-hidden">
+                  {Object.entries(viewChannel.config as Record<string, unknown>)
+                    .filter(([, v]) => v !== undefined && v !== null && v !== '')
+                    .map(([k, v]) => {
+                      const configLabels: Record<string, string> = {
+                        url: t('messages.channels.webhookUrl', 'Webhook URL'),
+                        webhook_url: t('messages.channels.webhookUrl', 'Webhook URL'),
+                        smtp_server: t('messages.channels.smtpServer', 'SMTP Server'),
+                        smtp_port: t('messages.channels.smtpPort', 'SMTP Port'),
+                        from_address: t('messages.channels.emailFrom', 'From'),
+                        username: t('auth:username', 'Username'),
+                        password: t('auth:password', 'Password'),
+                        chat_id: 'Chat ID',
+                        bot_token: 'Bot Token',
+                      }
+                      const isSecret = /(^|_)(api_?key|secret|token|password|access_?key|private_?key|app_?secret)$/i.test(k)
+                      const rawStr = typeof v === 'object' ? JSON.stringify(v) : String(v)
+                      const displayVal = isSecret && rawStr.length > 6 && !rawStr.includes('***')
+                        ? `${rawStr.slice(0, 3)}••••••${rawStr.slice(-3)}`
+                        : rawStr
+                      return (
+                        <div key={k} className="flex flex-col sm:flex-row sm:items-baseline sm:justify-between gap-1 sm:gap-4 px-3.5 py-2.5">
+                          <span className="text-xs text-muted-foreground shrink-0">{configLabels[k] || k}</span>
+                          <span className="text-xs font-mono text-foreground break-all sm:text-right">{displayVal}</span>
+                        </div>
+                      )
+                    })}
                 </div>
-              </FormSection>
+              </div>
             )}
           </div>
         )}
@@ -1804,17 +1773,15 @@ export default function MessagesPage() {
           }
         }}
         title={t('messages.channels.manageRecipients', 'Manage Recipients')}
-        icon={<Mail className="h-5 w-5" />}
+        icon={<Mail className="h-4 w-4 text-foreground" strokeWidth={1.75} />}
         width="sm"
         loading={loadingRecipients}
         submitError={recipientError}
-        showCancelButton={true}
-        cancelLabel={t('close')}
-        onSubmit={async () => {
-          // Dialog doesn't have a primary submit action - just close
-          setRecipientsDialogChannel(null)
-        }}
-        submitLabel={t('done', 'Done')}
+        footer={
+          <Button size="sm" onClick={() => setRecipientsDialogChannel(null)}>
+            {t('done', 'Done')}
+          </Button>
+        }
       >
         <div className="space-y-4">
           {/* Add new recipient */}
@@ -1848,29 +1815,29 @@ export default function MessagesPage() {
               {t('messages.channels.currentRecipients', 'Current Recipients')} ({recipients.length})
             </Label>
             {loadingRecipients ? (
-              <div className="text-center py-4 text-muted-foreground">
+              <div className="text-center py-4 text-sm text-muted-foreground">
                 {t('loading')}
               </div>
             ) : recipients.length === 0 ? (
-              <div className="text-center py-6 text-muted-foreground border border-dashed rounded-lg">
-                <Mail className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                <p className="text-sm">{t('messages.channels.noRecipients', 'No recipients configured')}</p>
+              <div className="text-center py-6 text-muted-foreground border border-dashed border-border rounded-xl bg-muted-20">
+                <Mail className="h-6 w-6 mx-auto mb-2 opacity-50" strokeWidth={1.75} />
+                <p className="text-xs">{t('messages.channels.noRecipients', 'No recipients configured')}</p>
               </div>
             ) : (
-              <div className="space-y-2 max-h-[300px] overflow-y-auto">
+              <div className="rounded-xl border border-border bg-card divide-y divide-glass-border max-h-[280px] overflow-y-auto">
                 {recipients.map((email) => (
                   <div
                     key={email}
-                    className="flex items-center justify-between bg-muted-50 rounded-lg px-3 py-2"
+                    className="flex items-center justify-between px-3.5 py-2.5"
                   >
-                    <span className="min-w-0 flex-1 truncate text-sm">{email}</span>
+                    <span className="min-w-0 flex-1 truncate text-sm font-mono">{email}</span>
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-6 w-6 p-0 text-muted-foreground hover:text-error shrink-0 ml-2 sm:h-6 sm:w-6"
+                      className="h-7 w-7 p-0 text-muted-foreground hover:text-error shrink-0 ml-2 sm:h-7 sm:w-7"
                       onClick={() => handleRemoveRecipient(email)}
                     >
-                      <X className="h-4 w-4" />
+                      <X className="h-3.5 w-3.5" />
                     </Button>
                   </div>
                 ))}
@@ -1885,85 +1852,96 @@ export default function MessagesPage() {
         open={!!filterDialogChannel}
         onOpenChange={(open) => !open && setFilterDialogChannel(null)}
         title={t('messages.channels.filterConfig', 'Filter Configuration')}
-        icon={<FilterIcon className="h-5 w-5" />}
+        icon={<FilterIcon className="h-4 w-4 text-foreground" strokeWidth={1.75} />}
         width="md"
         onSubmit={handleSaveFilter}
         isSubmitting={savingFilter}
         submitLabel={t('save')}
         cancelLabel={t('cancel')}
       >
-        <div className="space-y-1">
+        <div className="space-y-5">
           {/* Source Types Section */}
-          <FormSection
-            title={t('messages.channels.sourceTypes', 'Source Types')}
-            description={t('messages.channels.sourceTypesHint', 'Leave unchecked to accept all sources')}
-          >
-            <div className="flex flex-wrap gap-2">
-              {['device', 'rule', 'telemetry', 'schedule', 'llm', 'system'].map(st => (
-                <label key={st} className="flex items-center gap-2 cursor-pointer">
-                  <Checkbox
-                    checked={filterConfig.source_types.includes(st)}
-                    onCheckedChange={(checked) => {
-                      if (checked) {
-                        setFilterConfig(prev => ({
-                          ...prev,
-                          source_types: [...prev.source_types, st]
-                        }))
-                      } else {
-                        setFilterConfig(prev => ({
-                          ...prev,
-                          source_types: prev.source_types.filter(t => t !== st)
-                        }))
-                      }
-                    }}
-                  />
-                  {st}
-                </label>
-              ))}
+          <div className="space-y-2.5">
+            <div>
+              <div className="text-sm font-medium text-foreground">
+                {t('messages.channels.sourceTypes', 'Source Types')}
+              </div>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {t('messages.channels.sourceTypesHint', 'Leave unchecked to accept all sources')}
+              </p>
             </div>
-          </FormSection>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {['device', 'rule', 'telemetry', 'schedule', 'llm', 'system'].map((st) => {
+                const checked = filterConfig.source_types.includes(st)
+                return (
+                  <SelectableChip
+                    key={st}
+                    selected={checked}
+                    onToggle={() => {
+                      setFilterConfig((prev) => ({
+                        ...prev,
+                        source_types: checked
+                          ? prev.source_types.filter((item) => item !== st)
+                          : [...prev.source_types, st],
+                      }))
+                    }}
+                  >
+                    <span className="capitalize">{st}</span>
+                  </SelectableChip>
+                )
+              })}
+            </div>
+          </div>
 
           {/* Categories Section */}
-          <FormSection
-            title={t('messages.channels.categories', 'Categories')}
-            description={t('messages.channels.categoriesHint', 'Leave unchecked to accept all categories')}
-          >
-            <div className="flex flex-wrap gap-2">
-              {['alert', 'system', 'business', 'notification'].map(cat => (
-                <label key={cat} className="flex items-center gap-2 cursor-pointer">
-                  <Checkbox
-                    checked={filterConfig.categories.includes(cat)}
-                    onCheckedChange={(checked) => {
-                      if (checked) {
-                        setFilterConfig(prev => ({
-                          ...prev,
-                          categories: [...prev.categories, cat]
-                        }))
-                      } else {
-                        setFilterConfig(prev => ({
-                          ...prev,
-                          categories: prev.categories.filter(t => t !== cat)
-                        }))
-                      }
-                    }}
-                  />
-                  {t(`messages.category.${cat}`, cat)}
-                </label>
-              ))}
+          <div className="space-y-2.5">
+            <div>
+              <div className="text-sm font-medium text-foreground">
+                {t('messages.channels.categories', 'Categories')}
+              </div>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {t('messages.channels.categoriesHint', 'Leave unchecked to accept all categories')}
+              </p>
             </div>
-          </FormSection>
+            <div className="grid grid-cols-2 gap-2">
+              {['alert', 'system', 'business', 'notification'].map((cat) => {
+                const checked = filterConfig.categories.includes(cat)
+                return (
+                  <SelectableChip
+                    key={cat}
+                    selected={checked}
+                    onToggle={() => {
+                      setFilterConfig((prev) => ({
+                        ...prev,
+                        categories: checked
+                          ? prev.categories.filter((item) => item !== cat)
+                          : [...prev.categories, cat],
+                      }))
+                    }}
+                  >
+                    {t(`messages.category.${cat}`, cat)}
+                  </SelectableChip>
+                )
+              })}
+            </div>
+          </div>
 
           {/* Minimum Severity Section */}
-          <FormSection
-            title={t('messages.channels.minSeverity', 'Minimum Severity')}
-            description={t('messages.channels.minSeverityHint', 'Only receive messages at or above this severity level')}
-          >
+          <div className="space-y-2">
+            <div>
+              <div className="text-sm font-medium text-foreground">
+                {t('messages.channels.minSeverity', 'Minimum Severity')}
+              </div>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {t('messages.channels.minSeverityHint', 'Only receive messages at or above this severity level')}
+              </p>
+            </div>
             <Select
               value={filterConfig.min_severity || 'all'}
               onValueChange={(value) => {
-                setFilterConfig(prev => ({
+                setFilterConfig((prev) => ({
                   ...prev,
-                  min_severity: value === 'all' ? null : value as MessageSeverity
+                  min_severity: value === 'all' ? null : (value as MessageSeverity),
                 }))
               }}
             >
@@ -1972,23 +1950,27 @@ export default function MessagesPage() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">{t('messages.channels.allSeverities', 'All Severities')}</SelectItem>
-                <SelectItem value="info">Info</SelectItem>
-                <SelectItem value="warning">Warning</SelectItem>
-                <SelectItem value="critical">Critical</SelectItem>
-                <SelectItem value="emergency">Emergency</SelectItem>
+                <SelectItem value="info">{t('messages.severity.info', 'Info')}</SelectItem>
+                <SelectItem value="warning">{t('messages.severity.warning', 'Warning')}</SelectItem>
+                <SelectItem value="critical">{t('messages.severity.critical', 'Critical')}</SelectItem>
+                <SelectItem value="emergency">{t('messages.severity.emergency', 'Emergency')}</SelectItem>
               </SelectContent>
             </Select>
-          </FormSection>
+          </div>
 
-          {/* Filter Preview */}
-          <div className="p-3 bg-muted-50 rounded-md">
-            <p className="text-sm font-medium mb-1">{t('messages.channels.filterPreview', 'Filter Preview')}</p>
-            <p className="text-xs text-muted-foreground">
+          {/* Filter Summary */}
+          <div className="rounded-xl border border-border bg-muted-20 px-4 py-3 space-y-1">
+            <div className="text-xs font-medium text-foreground">
+              {t('messages.channels.filterPreview', 'Filter Preview')}
+            </div>
+            <p className="text-xs text-muted-foreground leading-relaxed">
               {filterConfig.source_types.length === 0 && filterConfig.categories.length === 0 && !filterConfig.min_severity
                 ? t('messages.channels.filterAcceptAll', 'This channel will receive all messages')
-                : t('messages.channels.filterWillMatch', 'Sources: {{sources}}', {
-                    sources: filterConfig.source_types.length > 0 ? filterConfig.source_types.join(', ') : t('messages.channels.all', 'All')
-                  })}
+                : [
+                    `${t('messages.channels.sourceTypes', 'Source Types')}: ${filterConfig.source_types.length > 0 ? filterConfig.source_types.join(', ') : t('messages.channels.all', 'All')}`,
+                    `${t('messages.channels.categories', 'Categories')}: ${filterConfig.categories.length > 0 ? filterConfig.categories.map((c) => t(`messages.category.${c}`, c)).join(', ') : t('messages.channels.all', 'All')}`,
+                    `${t('messages.channels.minSeverity', 'Minimum Severity')}: ${filterConfig.min_severity ? t(`messages.severity.${filterConfig.min_severity}`, filterConfig.min_severity) : t('messages.channels.allSeverities', 'All Severities')}`,
+                  ].join(' · ')}
             </p>
           </div>
         </div>

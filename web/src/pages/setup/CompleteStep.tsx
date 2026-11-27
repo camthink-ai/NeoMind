@@ -51,24 +51,18 @@ export function CompleteStep({ username, initialTimezone, token, getApiUrl, onCo
 
       <main className="relative z-10 flex-1 min-h-0 overflow-y-auto safe-bottom">
         <div className="min-h-full flex items-center justify-center px-4 pt-20 pb-6 sm:px-6 sm:pt-24 sm:pb-10">
-          <div className="w-full max-w-md text-center animate-fade-in-up">
-            <div
-              className="backdrop-blur-xl rounded-2xl p-6 sm:p-8 border shadow-md"
-              style={{
-                backgroundColor: 'color-mix(in oklch, var(--background) 72%, transparent)',
-                borderColor: 'color-mix(in oklch, var(--border) 55%, transparent)',
-              }}
-            >
+          <div className="w-full max-w-[380px] text-center animate-fade-in-up">
+            <div>
               {/* Success Icon */}
-              <div className="flex justify-center mb-4 sm:mb-5">
-                <div className="flex size-12 sm:size-14 items-center justify-center rounded-full bg-success-light text-success ring-1 ring-border">
-                  <Check className="size-6 sm:size-7" />
+              <div className="flex justify-center mb-5">
+                <div className="flex size-12 items-center justify-center rounded-full bg-success-light text-success ring-1 ring-border">
+                  <Check className="size-6" />
                 </div>
               </div>
 
               {/* Success Message */}
-              <h2 className="text-xl sm:text-2xl font-semibold mb-2 tracking-tight">{t('setup:completeTitle')}</h2>
-              <p className="text-muted-foreground mb-2 text-sm">{t('setup:completeMessage')}</p>
+              <h2 className="text-2xl sm:text-[26px] leading-tight font-semibold tracking-[-0.025em] mb-2 text-foreground">{t('setup:completeTitle')}</h2>
+              <p className="text-muted-foreground mb-4 text-sm">{t('setup:completeMessage')}</p>
 
               {/* Account meta — username chip + inline timezone selector */}
               <div className="flex flex-wrap items-center justify-center gap-2 mb-6 sm:mb-7">

@@ -264,7 +264,9 @@ describe('translation keys referenced from source', () => {
     // other churn); freeze at the measured tip.
     // 252 -> 251 (AgentDetailPanel refactor): agents:detail.modelId added to
     // both locales — ratchet down so it cannot creep back.
-    const FROZEN = 251
+    // 251 -> 245 (UI polish pass): common:totalRecords, viewMode, listView,
+    // gridView and auth:signIn* added to both locales — ratchet down.
+    const FROZEN = 245
     const soft = [...referenced.values()].filter(
       (r) => r.bare.length === 0 && resolve(bundleOf('en', r.ns) ?? {}, r.key) === undefined,
     )

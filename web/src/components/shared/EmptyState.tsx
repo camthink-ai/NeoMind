@@ -2,7 +2,7 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 import {
-  Server,
+  Box,
   FileJson,
   Zap,
   Workflow,
@@ -32,7 +32,7 @@ export type EmptyStateIconType =
   | 'custom'
 
 const iconMap: Record<Exclude<EmptyStateIconType, 'custom'>, React.ReactNode> = {
-  device: <Server />,
+  device: <Box />,
   deviceType: <FileJson />,
   rule: <Zap />,
   workflow: <Workflow />,

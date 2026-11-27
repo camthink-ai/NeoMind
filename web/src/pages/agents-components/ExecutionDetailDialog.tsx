@@ -12,6 +12,8 @@ import {
   Image as ImageIcon,
   ChevronDown,
   ChevronUp,
+  Check,
+  X,
 } from "lucide-react"
 import { api } from "@/lib/api"
 import { resolveImageSrc } from "@/lib/imageUtils"
@@ -210,12 +212,12 @@ export function ExecutionDetailDialog({
       open={open}
       onOpenChange={onOpenChange}
       title={t('agents:execution.title', { defaultValue: 'Execution' }) + ' #' + executionId?.slice(-6)}
-      icon={<Sparkles className="h-5 w-5 text-primary" />}
+      icon={<Sparkles className="h-4 w-4 text-foreground" strokeWidth={1.75} />}
       width="xl"
       loading={loading && !execution}
       preventCloseOnSubmit={false}
       footer={
-        <Button variant="outline" onClick={() => onOpenChange(false)}>
+        <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
           {t('common:close')}
         </Button>
       }
@@ -225,36 +227,36 @@ export function ExecutionDetailDialog({
           {t('agents:executionNotFound', { defaultValue: 'Execution not found' })}
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-4">
           {/* Status Bar */}
-          <div className="flex flex-wrap items-center justify-between gap-2 py-2 px-3 bg-muted-30 rounded-lg">
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-muted-20 px-3.5 py-2.5">
             <div className="flex flex-wrap items-center gap-2">
               {getStatusIcon(execution.status)}
-              <span className="text-xs font-medium">{t(`agents:executionStatus.${execution.status.toLowerCase()}`)}</span>
+              <span className="text-xs font-medium text-foreground">{t(`agents:executionStatus.${execution.status.toLowerCase()}`)}</span>
               {execution.config_version != null && (
-                <Badge variant="outline" className="h-5 px-1.5 font-mono text-xs">
+                <Badge variant="outline" className="h-5 px-1.5 font-mono text-xs font-normal bg-card border-glass-border text-muted-foreground">
                   {t('agents:execution.configVersion', { version: execution.config_version })}
                 </Badge>
               )}
               {execution.dry_run && (
-                <Badge variant="secondary" className="h-5 px-1.5 text-xs">
+                <Badge variant="secondary" className="h-5 px-1.5 text-xs font-normal">
                   {t('agents:execution.dryRun')}
                 </Badge>
               )}
               {execution.stale_config && (
-                <Badge variant="outline" className="h-5 px-1.5 text-xs text-warning border-warning">
+                <Badge variant="outline" className="h-5 px-1.5 text-xs font-normal text-warning border-warning">
                   {t('agents:execution.staleConfig')}
                 </Badge>
               )}
               {execution.alert_verdict && (
-                <Badge variant="outline" className="h-5 px-1.5 text-xs">
+                <Badge variant="outline" className="h-5 px-1.5 text-xs font-normal bg-card border-glass-border">
                   {t('agents:execution.alertVerdict')}: {execution.alert_verdict}
                 </Badge>
               )}
             </div>
-            <div className="flex items-center gap-3 text-xs text-muted-foreground">
+            <div className="flex items-center gap-3 text-xs text-muted-foreground tabular-nums">
               <span className="flex items-center gap-1">
-                <Clock className="h-4 w-4" />
+                <Clock className="h-3.5 w-3.5" />
                 {formatTimestamp(execution.timestamp, false)}
               </span>
               <span>{execution.duration_ms}ms</span>
@@ -293,18 +295,18 @@ export function ExecutionDetailDialog({
           {execution.error && (
             <Card
               className={cn(
-                'p-2 bg-muted',
-                execution.status === 'Partial' ? 'border-warning' : 'border-error',
+                'p-3 rounded-xl shadow-none',
+                execution.status === 'Partial' ? 'bg-warning-light border-warning' : 'bg-error-light border-error',
               )}
             >
               <div
                 className={cn(
-                  'flex items-start gap-1.5',
+                  'flex items-start gap-2',
                   execution.status === 'Partial' ? 'text-warning' : 'text-error',
                 )}
               >
                 <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
-                <div className="text-xs break-words">{execution.error}</div>
+                <div className="text-xs break-words leading-relaxed">{execution.error}</div>
               </div>
             </Card>
           )}
@@ -316,9 +318,9 @@ export function ExecutionDetailDialog({
                 title={`${t('agents:execution.structuredResult')} (${Object.keys(execution.structured_result).length})`}
                 collapsible
               >
-                <div className="space-y-1">
+                <div className="space-y-0.5">
                   {Object.entries(execution.structured_result).map(([key, value]) => (
-                    <div key={key} className="flex items-baseline justify-between gap-3 border-b border-border py-1 last:border-0">
+                    <div key={key} className="flex items-baseline justify-between gap-3 border-b border-glass-border py-1.5 last:border-0">
                       <span className="font-mono text-xs text-muted-foreground shrink-0">{key}</span>
                       <span className="text-xs font-medium font-mono break-all text-right">
                         {formatValue(value)}
@@ -547,8 +549,8 @@ export function ExecutionDetailDialog({
                           <div className="text-xs truncate">{action.description}</div>
                           <div className={cn(textNano, "text-muted-foreground truncate")}>{action.target}</div>
                         </div>
-                        <Badge variant={action.success ? "default" : "destructive"} className={cn(badgeSize.micro, "h-4 px-1 shrink-0")}>
-                          {action.success ? '✓' : '✗'}
+                        <Badge variant={action.success ? "default" : "destructive"} className={cn(badgeSize.micro, "h-4 px-1 shrink-0 inline-flex items-center justify-center")}>
+                          {action.success ? <Check className="h-2.5 w-2.5" /> : <X className="h-2.5 w-2.5" />}
                         </Badge>
                       </div>
                     ))}

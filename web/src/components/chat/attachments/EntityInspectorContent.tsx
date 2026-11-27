@@ -8,7 +8,7 @@
  * 3. EntityDetailDialog   — mobile full-screen UnifiedFormDialog (< 768px)
  */
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { useTranslation } from "react-i18next"
 import {
@@ -39,14 +39,42 @@ import type {
 } from "@/types"
 import { api } from "@/lib/api"
 import type { ExplainLoadStatus } from "@/components/automation/RuleWhyNotTriggeredPanel"
-import { TransformTestDialog } from "@/components/automation/TransformTestDialog"
 import { Button } from "@/components/ui/button"
 import { SnapshotKV } from "./inspector/shared"
-import { DeviceInspectorView } from "./inspector/DeviceInspectorView"
-import { RuleInspectorView } from "./inspector/RuleInspectorView"
-import { TransformInspectorView } from "./inspector/TransformInspectorView"
-import { AgentInspectorView } from "./inspector/AgentInspectorView"
-import { DashboardInspectorView } from "./inspector/DashboardInspectorView"
+
+// Lazy-load entity inspector views & TransformTestDialog so heavy dashboard
+// renderers/charts (Recharts/Sparkline/Renderers) never land in the /chat
+// cold-start bundle (keeps `npm run build:check` well under budget).
+const TransformTestDialog = lazy(() =>
+  import("@/components/automation/TransformTestDialog").then((m) => ({
+    default: m.TransformTestDialog,
+  }))
+)
+const DeviceInspectorView = lazy(() =>
+  import("./inspector/DeviceInspectorView").then((m) => ({
+    default: m.DeviceInspectorView,
+  }))
+)
+const RuleInspectorView = lazy(() =>
+  import("./inspector/RuleInspectorView").then((m) => ({
+    default: m.RuleInspectorView,
+  }))
+)
+const TransformInspectorView = lazy(() =>
+  import("./inspector/TransformInspectorView").then((m) => ({
+    default: m.TransformInspectorView,
+  }))
+)
+const AgentInspectorView = lazy(() =>
+  import("./inspector/AgentInspectorView").then((m) => ({
+    default: m.AgentInspectorView,
+  }))
+)
+const DashboardInspectorView = lazy(() =>
+  import("./inspector/DashboardInspectorView").then((m) => ({
+    default: m.DashboardInspectorView,
+  }))
+)
 
 export function getEntityKindMeta(kind: ChatAttachment["kind"]) {
   switch (kind) {
@@ -354,7 +382,13 @@ export function useEntityInspector({
       <SnapshotKV snapshot={attachment.snapshot} />
     </div>
   ) : (
-    <>
+    <Suspense
+      fallback={
+        <div className="flex items-center justify-center py-10 text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+        </div>
+      }
+    >
       {kind === "device" && device && (
         <DeviceInspectorView
           key={entityId}
@@ -412,17 +446,19 @@ export function useEntityInspector({
           onAttach={canAttach ? handleAttach : undefined}
         />
       )}
-    </>
+    </Suspense>
   )
 
   const testDialog =
     kind === "transform" && entityId && testDialogOpen ? (
-      <TransformTestDialog
-        open={testDialogOpen}
-        onOpenChange={setTestDialogOpen}
-        transformId={entityId}
-        devices={testDevices}
-      />
+      <Suspense fallback={null}>
+        <TransformTestDialog
+          open={testDialogOpen}
+          onOpenChange={setTestDialogOpen}
+          transformId={entityId}
+          devices={testDevices}
+        />
+      </Suspense>
     ) : null
 
   return {

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Camera,
-  Bot,
+  Sparkles,
   User,
   AlertCircle,
   AlertTriangle,
@@ -12,6 +12,7 @@ import {
   Database,
 } from 'lucide-react'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
+import { ConclusionContent } from '@/pages/agents-components/ConclusionContent'
 import type { AnalystMessage } from './types'
 import { cn } from "@/lib/utils"
 import { formatElapsedMs } from "@/lib/utils/format"
@@ -41,18 +42,18 @@ export function AnalystMessageBubble({ message, streamingContent }: AnalystMessa
     return (
       <>
         <div className="flex items-start gap-2">
-          <div className="w-6 h-6 rounded-md bg-info-light flex items-center justify-center shrink-0 mt-0.5">
-            <Camera className="h-4 w-4 text-info" />
+          <div className="w-6 h-6 rounded-lg border border-border bg-muted-30 text-foreground flex items-center justify-center shrink-0 mt-0.5">
+            <Camera className="h-3.5 w-3.5" strokeWidth={1.75} />
           </div>
           <div className="flex-1 min-w-0">
-            <div className="flex justify-between items-center">
+            <div className="flex justify-between items-center tabular-nums">
               <span className={cn(textNano, "text-muted-foreground truncate")}>
                 {message.dataSource || t('aiAnalyst.dataSourceFallback')}
               </span>
               <span className={cn(textNano, "text-muted-foreground")}>{formatTime(message.timestamp)}</span>
             </div>
             <div
-              className="mt-1 rounded-lg overflow-hidden border border-border bg-muted-30 cursor-pointer max-w-full"
+              className="mt-1 rounded-xl overflow-hidden border border-border bg-muted-30 cursor-pointer max-w-full"
               onClick={() => setFullscreenImage(message.content)}
             >
               <img
@@ -84,24 +85,24 @@ export function AnalystMessageBubble({ message, streamingContent }: AnalystMessa
     return (
       <>
         <div className="flex items-start gap-2">
-          <div className="w-6 h-6 rounded-md bg-warning-light flex items-center justify-center shrink-0 mt-0.5">
-            <Database className="h-4 w-4 text-warning" />
+          <div className="w-6 h-6 rounded-lg border border-border bg-muted-30 text-foreground flex items-center justify-center shrink-0 mt-0.5">
+            <Database className="h-3.5 w-3.5" strokeWidth={1.75} />
           </div>
           <div className="flex-1 min-w-0">
-            <div className="flex justify-between items-center">
+            <div className="flex justify-between items-center tabular-nums">
               <span className={cn(textNano, "text-muted-foreground truncate")}>
                 {message.dataSource || t('aiAnalyst.dataSourceFallback')}
               </span>
               <span className={cn(textNano, "text-muted-foreground")}>{formatTime(message.timestamp)}</span>
             </div>
-            <div className="mt-1 rounded-lg px-3 py-1.5 bg-warning-light border border-warning w-full overflow-hidden">
+            <div className="mt-1 rounded-xl px-3 py-2 bg-muted-20 border border-glass-border w-full overflow-hidden">
               {/* Inline images */}
               {hasImages && (
-                <div className="flex gap-1 mb-1 flex-wrap">
+                <div className="flex gap-1.5 mb-1.5 flex-wrap">
                   {message.images!.map((img, i) => (
                     <div
                       key={i}
-                      className="rounded overflow-hidden border border-border cursor-pointer max-w-[120px]"
+                      className="rounded-md overflow-hidden border border-border cursor-pointer max-w-[120px]"
                       onClick={() => setFullscreenImage(img)}
                     >
                       <img
@@ -115,7 +116,7 @@ export function AnalystMessageBubble({ message, streamingContent }: AnalystMessa
               )}
               {/* Text data lines */}
               {lines.map((line, i) => (
-                <p key={i} className="text-xs text-foreground font-mono leading-relaxed break-all">
+                <p key={i} className="text-xs text-foreground font-mono leading-relaxed break-all tabular-nums">
                   {line.includes(':')
                     ? <>
                         <span className="text-muted-foreground">{line.split(':').slice(0, -1).join(':')}:</span>
@@ -147,17 +148,17 @@ export function AnalystMessageBubble({ message, streamingContent }: AnalystMessa
   if (message.type === 'ai') {
     return (
       <div className="flex items-start gap-2">
-        <div className="w-6 h-6 rounded-md bg-accent-purple-light flex items-center justify-center shrink-0 mt-0.5">
-          <Bot className="h-4 w-4 text-accent-purple" />
+        <div className="w-6 h-6 rounded-lg border border-border bg-muted-30 text-foreground flex items-center justify-center shrink-0 mt-0.5">
+          <Sparkles className="h-3.5 w-3.5" strokeWidth={1.75} />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="flex justify-between items-center">
-            <span className={cn(textNano, "text-accent-purple flex items-center gap-1")}>
+          <div className="flex justify-between items-center tabular-nums">
+            <span className={cn(textNano, "text-muted-foreground flex items-center gap-1")}>
               <Cpu className="h-2.5 w-2.5" />
               {message.modelName || t('aiAnalyst.aiFallback')}
             </span>
             {isStreaming ? (
-              <span className={cn(textNano, "text-accent-purple flex items-center gap-1")}>
+              <span className={cn(textNano, "text-info flex items-center gap-1")}>
                 <Loader2 className="h-2.5 w-2.5 animate-spin" />
                 {t('aiAnalyst.analyzing')}...
               </span>
@@ -168,16 +169,16 @@ export function AnalystMessageBubble({ message, streamingContent }: AnalystMessa
               </span>
             )}
           </div>
-          <div className="mt-1 rounded-lg px-3 py-2 bg-accent-purple-light border border-accent-purple-light w-full">
+          <div className="mt-1 rounded-xl px-3 py-2 bg-card border border-border w-full">
             {isStreaming && !displayContent ? (
               <div className="flex items-center gap-1.5">
-                <Loader2 className="h-4 w-4 animate-spin text-accent-purple" />
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
                 <span className="text-xs text-muted-foreground">{t('aiAnalyst.waitingForResponse')}</span>
               </div>
             ) : (
-              <p className="text-xs text-foreground leading-relaxed whitespace-pre-wrap">
-                {displayContent}
-              </p>
+              <div className="text-xs text-foreground leading-relaxed">
+                <ConclusionContent content={displayContent} />
+              </div>
             )}
           </div>
         </div>
@@ -190,15 +191,15 @@ export function AnalystMessageBubble({ message, streamingContent }: AnalystMessa
     return (
       <div className="flex items-start gap-2 justify-end">
         <div className="flex-1 min-w-0 flex flex-col items-end">
-          <div className="flex justify-between items-center w-full">
+          <div className="flex justify-between items-center w-full tabular-nums">
             <span className={cn(textNano, "text-muted-foreground")}>{formatTime(message.timestamp)}</span>
-            <span className={cn(textNano, "text-accent-purple flex items-center gap-1 opacity-70")}>
+            <span className={cn(textNano, "text-muted-foreground flex items-center gap-1")}>
               <User className="h-2.5 w-2.5" />
               {t('aiAnalyst.user')}
             </span>
           </div>
-          <div className="mt-1 rounded-lg px-3 py-2 bg-accent-purple-light border border-accent-purple-light w-full">
-            <p className="text-xs text-foreground leading-relaxed">{message.content}</p>
+          <div className="mt-1 rounded-xl px-3 py-2 bg-muted-30 border border-glass-border w-full">
+            <p className="text-xs text-foreground leading-relaxed break-words">{message.content}</p>
           </div>
         </div>
       </div>

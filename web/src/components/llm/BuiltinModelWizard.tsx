@@ -30,6 +30,8 @@ import {
   FullScreenDialogFooter,
 } from '@/components/automation/dialog'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { UnifiedFormDialog } from '@/components/dialog/UnifiedFormDialog'
 import { cn } from '@/lib/utils'
 import { fetchCache } from '@/lib/utils/async'
 import { Progress } from '@/components/ui/progress'
@@ -345,23 +347,33 @@ export function BuiltinModelWizard({
       })
   }, [])
 
+  const [importLocalOpen, setImportLocalOpen] = useState(false)
+  const [importLocalPath, setImportLocalPath] = useState('')
+
   // Offline paths: import a GGUF already on the server, or upload one. Both
   // run the shared validated pipeline (GGUF header check, rollback on spawn
   // failure) and leave the engine running on the imported model.
-  const importLocalModel = useCallback(async () => {
-    const path = window.prompt(t('plugins:llm.builtinImportLocalPrompt'))
-    if (!path || !path.trim()) return
+  const importLocalModel = useCallback(() => {
+    setImportLocalPath('')
+    setImportLocalOpen(true)
+  }, [])
+
+  const confirmImportLocalModel = useCallback(async () => {
+    const trimmed = importLocalPath.trim()
+    if (!trimmed) return
     setImportBusy(true)
     try {
-      const r = await api.importBuiltinModelLocal(path.trim())
+      const r = await api.importBuiltinModelLocal(trimmed)
       notifySuccess(t('plugins:llm.builtinImported', { name: r.name }))
+      setImportLocalOpen(false)
+      setImportLocalPath('')
       reloadModels()
     } catch (e) {
       failWith('download', e)
     } finally {
       setImportBusy(false)
     }
-  }, [t, reloadModels])
+  }, [importLocalPath, t, reloadModels])
 
   const uploadModelFile = useCallback(async (file: File) => {
     setImportBusy(true)
@@ -1024,6 +1036,33 @@ export function BuiltinModelWizard({
           </Button>
         )}
       </FullScreenDialogFooter>
+      <UnifiedFormDialog
+        open={importLocalOpen}
+        onOpenChange={setImportLocalOpen}
+        title={t('plugins:llm.builtinImportLocal', 'Import local GGUF')}
+        width="sm"
+        isSubmitting={importBusy}
+        submitDisabled={!importLocalPath.trim()}
+        onSubmit={confirmImportLocalModel}
+      >
+        <div className="space-y-2">
+          <p className="text-sm text-muted-foreground leading-relaxed">
+            {t('plugins:llm.builtinImportLocalPrompt')}
+          </p>
+          <Input
+            autoFocus
+            value={importLocalPath}
+            onChange={(e) => setImportLocalPath(e.target.value)}
+            placeholder="/path/to/model.gguf"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && importLocalPath.trim() && !importBusy) {
+                e.preventDefault()
+                confirmImportLocalModel()
+              }
+            }}
+          />
+        </div>
+      </UnifiedFormDialog>
     </FullScreenDialog>
   )
 }

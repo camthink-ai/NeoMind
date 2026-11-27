@@ -366,7 +366,7 @@ export function ChatPage() {
       addMessage({
         id: generateId(),
         role: "assistant",
-        content: `❌ **Error**: ${message}`,
+        content: `**Error**: ${message}`,
         timestamp: Date.now(),
       })
     },
@@ -374,7 +374,7 @@ export function ChatPage() {
       addMessage({
         id: generateId(),
         role: "assistant",
-        content: `⚠️ **Warning**: ${message}`,
+        content: `**Warning**: ${message}`,
         timestamp: Date.now(),
         isPartial: true, // Mark as temporary/partial
       })
@@ -1250,7 +1250,7 @@ export function ChatPage() {
     const cancelMsg: Message = {
       id: generateId(),
       role: "assistant",
-      content: "⚠️ Request cancelled by user",
+      content: "Request cancelled by user",
       timestamp: Date.now(),
     }
     addMessage(cancelMsg)

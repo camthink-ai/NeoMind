@@ -6,6 +6,14 @@ import { useState, useEffect } from "react"
 import { Switch } from "@/components/ui/switch"
 import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
+import { IconButton } from "@/components/ui/button"
+import { Skeleton } from "@/components/ui/skeleton"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import {
   FullScreenDialog,
   FullScreenDialogHeader,
@@ -13,7 +21,7 @@ import {
   FullScreenDialogMain,
 } from "@/components/automation/dialog"
 import { ResponsiveTable, EmptyState, EmptyStateCard, Pagination } from "@/components/shared"
-import { Edit, Play, Trash2, Bell, Bot, Sparkles, Zap, Timer, History, CheckCircle2, XCircle, Clock, Download } from "lucide-react"
+import { Edit, Play, Trash2, Bell, Sparkles, Zap, Timer, History, CheckCircle2, XCircle, Clock, Download, MoreVertical, ArrowRight } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import type { Rule, RuleAction, RuleExecutionResult } from "@/types"
 import { cn } from "@/lib/utils"
@@ -41,7 +49,7 @@ const ACTION_CONFIG: Record<string, { icon: typeof Zap; label: string }> = {
   execute: { icon: Zap, label: 'automation:ruleBuilder.actionType.execute' },
   notify: { icon: Bell, label: 'automation:ruleBuilder.actionType.notify' },
   trigger_agent: { icon: Sparkles, label: 'automation:ruleBuilder.actionType.triggerAgent' },
-  run_operator: { icon: Bot, label: 'automation:ruleBuilder.actionType.runOperator' },
+  run_operator: { icon: Sparkles, label: 'automation:ruleBuilder.actionType.runOperator' },
 }
 
 function listSubtitle(value?: string | null): string | null {
@@ -365,15 +373,13 @@ export function RulesList({
         {/* Mobile has no ResponsiveTable — carry its own loading skeleton. */}
         {loading && paginatedRules.length === 0 && (
           [0, 1, 2].map((i) => (
-            <Card key={i} className="overflow-hidden rounded-2xl border-border bg-card shadow-none">
-              <div className="px-3 py-2.5 animate-pulse space-y-2">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-lg bg-muted" />
-                  <div className="h-4 w-36 rounded bg-muted" />
-                </div>
-                <div className="ml-[42px] h-3 w-48 rounded bg-muted" />
+            <div key={i} className="rounded-2xl border border-border bg-card px-4 py-3.5 space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <Skeleton className="h-4 w-36" />
+                <Skeleton className="h-5 w-9 rounded-full" />
               </div>
-            </Card>
+              <Skeleton className="h-3 w-52" />
+            </div>
           ))
         )}
         {paginatedRules.length === 0 && !loading ? (
@@ -415,211 +421,168 @@ export function RulesList({
           )
         })}
       </div>
-    ) : (
-    <ResponsiveTable
-      columns={[
-        {
-          key: 'name',
-          label: t('automation:ruleName'),
-          width: '24%',
-        },
-        {
-          key: 'trigger',
-          label: t('automation:trigger'),
-          width: '22%',
-        },
-        {
-          key: 'actions',
-          label: t('automation:ruleBuilder.executeActions'),
-          width: '18%',
-        },
-        {
-          key: 'createdAt',
-          label: t('common:createdAt', 'Created'),
-          width: '14%',
-        },
-        {
-          key: 'lastTriggered',
-          label: t('automation:lastTriggered'),
-          width: '14%',
-        },
-        {
-          key: 'status',
-          label: t('automation:status'),
-          width: '8%',
-        },
-      ]}
-      data={paginatedRules}
-      rowKey={(rule: Rule) => rule.id}
-      loading={loading}
-      onRowClick={(rowData: Rule) => onView(rowData)}
-      getRowClassName={(rowData) => {
-        const rule = rowData
-        return cn(!rule.enabled && "opacity-50")
-      }}
-      renderCell={(columnKey, rowData) => {
-        const rule = rowData
-
-        switch (columnKey) {
-          case 'name': {
-            const subtitle = listSubtitle(rule.description)
-            return (
-              <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-                  <Sparkles className="h-4 w-4" />
-                </div>
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-medium">{rule.name}</div>
-                  {subtitle && (
-                    <div className="line-clamp-1 text-xs text-muted-foreground">{subtitle}</div>
-                  )}
-                </div>
+    ) : loading && paginatedRules.length === 0 ? (
+      <div className="rounded-xl border border-border bg-card divide-y divide-glass-border overflow-hidden">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} className="flex items-center gap-4 px-5 py-3.5">
+            <Skeleton className="h-9 w-9 rounded-lg shrink-0" />
+            <div className="flex-1 space-y-2">
+              <Skeleton className="h-4 w-48" />
+              <div className="flex items-center gap-2">
+                <Skeleton className="h-5 w-44 rounded-md" />
+                <Skeleton className="h-5 w-20 rounded-md" />
               </div>
-            )
-          }
-
-          case 'trigger': {
-            const condition = formatConditionDisplay(rule)
-            const forClause = parseForClause(rule)
-
-            return (
-              <div className="flex items-center gap-2 min-w-0">
-                <code className="text-xs font-mono bg-muted px-2 py-1 rounded-md truncate block" title={condition.full}>
-                  {condition.text === '-' ? <span className="text-muted-foreground">-</span> : condition.text}
-                </code>
-                {forClause && (
-                  <Badge variant="outline" className="text-xs gap-1 shrink-0 text-info border-info">
-                    <Timer className="h-3 w-3" />
-                    {forClause.duration}{forClause.unit}
-                  </Badge>
-                )}
-              </div>
-            )
-          }
-
-          case 'actions': {
-            const actions = rule.actions && rule.actions.length > 0
-              ? rule.actions
-              : parseActionsFromDSL(rule.dsl_preview)
-            const actionsCount = actions.length
-            const firstActions = actions.slice(0, 2)
-
-            return actionsCount === 0 ? (
-              <span className="text-muted-foreground text-sm">-</span>
-            ) : (
-              <div className="flex flex-wrap gap-1">
-                {firstActions.map((action, i) => {
-                  const config = ACTION_CONFIG[action.type] || ACTION_CONFIG.execute
-                  const Icon = config.icon
-                  return (
-                    <Badge
-                      key={i}
-                      variant="outline"
-                      className="gap-1 text-xs text-muted-foreground"
-                    >
-                      <Icon className="h-3 w-3" />
-                      {t(config.label)}
-                    </Badge>
-                  )
-                })}
-                {actionsCount > 2 && (
-                  <Badge variant="outline" className="text-xs bg-muted">
-                    +{actionsCount - 2}
-                  </Badge>
-                )}
-              </div>
-            )
-          }
-
-          case 'createdAt':
-            return (
-              <span className="text-xs text-muted-foreground">
-                {formatTimestamp(rule.created_at)}
-              </span>
-            )
-
-          case 'lastTriggered': {
-            const hasTriggered = rule.last_triggered && rule.last_triggered !== '-'
-            const triggerCount = rule.trigger_count || 0
-
-            return !hasTriggered ? (
-              <span className="text-xs text-muted-foreground">-</span>
-            ) : (
-              <div className="flex flex-col gap-0.5">
-                <span className="text-xs">{formatTimestamp(rule.last_triggered)}</span>
-                {triggerCount > 1 && (
-                  <span className="text-xs text-muted-foreground">
-                    {triggerCount}x
-                  </span>
-                )}
-              </div>
-            )
-          }
-
-          case 'status':
-            return (
-              <Switch
-                checked={rule.enabled}
-                onCheckedChange={() => onToggleStatus(rule)}
-                className="scale-90"
-              />
-            )
-
-          default:
-            return null
-        }
-      }}
-      actions={[
-        {
-          label: t('common:edit'),
-          icon: <Edit className="h-4 w-4" />,
-          onClick: (rowData) => {
-            const rule = rowData
-            onEdit(rule)
-          },
-        },
-        {
-          label: t('automation:execute'),
-          icon: <Play className="h-4 w-4" />,
-          onClick: (rowData) => {
-            const rule = rowData
-            onExecute(rule)
-          },
-        },
-        {
-          label: t('common:export'),
-          icon: <Download className="h-4 w-4" />,
-          onClick: (rowData) => {
-            const rule = rowData
-            handleExportRule(rule)
-          },
-        },
-        {
-          label: t('automation:executionHistory', 'History'),
-          icon: <History className="h-4 w-4" />,
-          onClick: (rowData) => {
-            const rule = rowData
-            setHistoryRule(rule)
-            setShowHistory(true)
-          },
-        },
-        {
-          label: t('common:delete'),
-          icon: <Trash2 className="h-4 w-4" />,
-          variant: 'destructive',
-          onClick: (rowData) => {
-            const rule = rowData
-            onDelete(rule)
-          },
-        },
-      ]}
-      emptyState={
+            </div>
+            <Skeleton className="h-4 w-24 hidden lg:block" />
+            <Skeleton className="h-5 w-9 rounded-full" />
+          </div>
+        ))}
+      </div>
+    ) : paginatedRules.length === 0 ? (
+      <EmptyStateCard>
         <EmptyState
           title={t('automation:emptyRules.title', 'No rules')}
           description={t('automation:emptyRules.description', 'Create your first rule to automate actions based on conditions')}
         />
-      }
-    />
+      </EmptyStateCard>
+    ) : (
+      <div className="rounded-xl border border-border bg-card divide-y divide-glass-border overflow-hidden">
+        {paginatedRules.map((rule) => {
+          const subtitle = listSubtitle(rule.description)
+          const condition = formatConditionDisplay(rule)
+          const forClause = parseForClause(rule)
+          const actions = rule.actions && rule.actions.length > 0
+            ? rule.actions
+            : parseActionsFromDSL(rule.dsl_preview)
+          const actionsCount = actions.length
+          const firstActions = actions.slice(0, 2)
+          const hasTriggered = rule.last_triggered && rule.last_triggered !== '-'
+          const triggerCount = rule.trigger_count || 0
+
+          return (
+            <div
+              key={rule.id}
+              role="button"
+              tabIndex={0}
+              onClick={() => onView(rule)}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onView(rule) } }}
+              className={cn(
+                "group/row flex items-center gap-4 px-5 py-3.5 transition-colors duration-fast hover:bg-muted-20 cursor-pointer",
+                !rule.enabled && "opacity-55"
+              )}
+            >
+              {/* Icon */}
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-muted-30 text-foreground">
+                <Zap className="h-4 w-4" strokeWidth={1.75} />
+              </div>
+
+              {/* Main 2-line content: Name + WHEN -> THEN summary */}
+              <div className="min-w-0 flex-1 space-y-1.5">
+                <div className="flex items-baseline gap-2 min-w-0">
+                  <span className="truncate text-sm font-medium text-foreground">{rule.name}</span>
+                  {subtitle && (
+                    <span className="truncate text-xs text-muted-foreground">{subtitle}</span>
+                  )}
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+                  <code
+                    className="text-xs font-mono bg-muted-30 border border-glass-border px-2 py-0.5 rounded-md truncate max-w-[320px] text-foreground"
+                    title={condition.full}
+                  >
+                    {condition.text === '-' ? <span className="text-muted-foreground">-</span> : condition.text}
+                  </code>
+                  {forClause && (
+                    <Badge variant="outline" className="text-xs font-normal gap-1 shrink-0 bg-muted-20 border-glass-border text-muted-foreground">
+                      <Timer className="h-3 w-3" />
+                      {forClause.duration}{forClause.unit}
+                    </Badge>
+                  )}
+                  {actionsCount > 0 && (
+                    <>
+                      <ArrowRight className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden="true" />
+                      {firstActions.map((action, i) => {
+                        const config = ACTION_CONFIG[action.type] || ACTION_CONFIG.execute
+                        const Icon = config.icon
+                        return (
+                          <Badge
+                            key={i}
+                            variant="outline"
+                            className="gap-1 text-xs font-normal bg-muted-20 border-glass-border text-muted-foreground"
+                          >
+                            <Icon className="h-3 w-3" />
+                            {t(config.label)}
+                          </Badge>
+                        )
+                      })}
+                      {actionsCount > 2 && (
+                        <Badge variant="outline" className="text-xs font-normal bg-muted-20 border-glass-border text-muted-foreground">
+                          +{actionsCount - 2}
+                        </Badge>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Quiet right meta: last triggered / created with clear label */}
+              <div className="hidden lg:flex flex-col items-end gap-0.5 shrink-0 text-xs tabular-nums text-muted-foreground">
+                <span>
+                  {hasTriggered
+                    ? `${t('automation:lastTriggered', 'Triggered')} · ${formatTimestamp(rule.last_triggered)}`
+                    : `${t('common:createdAt', 'Created')} · ${formatTimestamp(rule.created_at)}`}
+                </span>
+                {hasTriggered && triggerCount > 0 && (
+                  <span className={cn(textMini, "text-muted-foreground")}>
+                    {triggerCount}x
+                  </span>
+                )}
+              </div>
+
+              {/* Switch + hover-reveal actions */}
+              <div className="flex items-center gap-2 shrink-0" onClick={(e) => e.stopPropagation()}>
+                <Switch
+                  checked={rule.enabled}
+                  onCheckedChange={() => onToggleStatus(rule)}
+                  className="scale-90"
+                />
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <IconButton
+                      size="sm"
+                      aria-label={t('common:actions', { defaultValue: 'Actions' })}
+                      className="opacity-50 transition-opacity group-hover/row:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
+                    >
+                      <MoreVertical className="h-4 w-4" />
+                    </IconButton>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-[160px]">
+                    <DropdownMenuItem onClick={() => onEdit(rule)} className="gap-2">
+                      <Edit className="h-4 w-4 shrink-0" />
+                      <span>{t('common:edit')}</span>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => onExecute(rule)} className="gap-2">
+                      <Play className="h-4 w-4 shrink-0" />
+                      <span>{t('automation:execute')}</span>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => handleExportRule(rule)} className="gap-2">
+                      <Download className="h-4 w-4 shrink-0" />
+                      <span>{t('common:export')}</span>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => { setHistoryRule(rule); setShowHistory(true) }} className="gap-2">
+                      <History className="h-4 w-4 shrink-0" />
+                      <span>{t('automation:executionHistory', 'History')}</span>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => onDelete(rule)} className="gap-2 text-error focus:text-error">
+                      <Trash2 className="h-4 w-4 shrink-0" />
+                      <span>{t('common:delete')}</span>
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            </div>
+          )
+        })}
+      </div>
     )
   )
 

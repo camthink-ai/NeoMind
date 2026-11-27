@@ -251,56 +251,41 @@ export function ServerUpgradeDialog({ open, onClose }: ServerUpgradeDialogProps)
     }
   }
 
-  const getStatusIcon = () => {
+  const dialogIcon = (() => {
     switch (stage) {
       case 'done':
-        return <Check className="w-5 h-5" />
+        return <Check className="h-4 w-4 text-success" strokeWidth={2} />
       case 'error':
-        return <AlertCircle className="w-5 h-5" />
+        return <AlertCircle className="h-4 w-4 text-error" strokeWidth={1.75} />
       case 'checking':
       case 'upgrading':
       case 'restarting':
-        return <Loader2 className="w-5 h-5 animate-spin" />
+        return <Loader2 className="h-4 w-4 text-foreground animate-spin" />
       default:
-        return <Server className="w-5 h-5" />
+        return <Server className="h-4 w-4 text-foreground" strokeWidth={1.75} />
     }
-  }
-
-  const getStatusColor = () => {
-    switch (stage) {
-      case 'done':
-        return 'bg-success-light text-success'
-      case 'error':
-        return 'bg-error-light text-error'
-      default:
-        return 'bg-info-light text-info'
-    }
-  }
-
-  const dialogIcon = (
-    <div className={`flex items-center justify-center w-10 h-10 rounded-full ${getStatusColor()}`}>
-      {getStatusIcon()}
-    </div>
-  )
+  })()
 
   const upgradable = !!check?.available && check.supported
   const showHint = !!check && !check.supported
+  const hasReleaseNotes = upgradable && stage === 'idle' && !!check?.release_notes
   // Checking and the final reload need no actions: the header already states
   // the state, so an extra disabled button (plus its divider) was pure noise.
   const hideFooter = stage === 'checking' || stage === 'done'
 
   const footerContent = busy ? (
-    <Button disabled variant="secondary">
-      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+    <Button disabled variant="secondary" size="sm">
+      <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
       {t('settings:updating')}
     </Button>
   ) : stage === 'error' ? (
     <>
-      <Button variant="outline" onClick={onClose}>
+      <Button variant="outline" size="sm" onClick={onClose}>
         {t('common:close')}
       </Button>
       <Button
         variant="default"
+        size="sm"
         onClick={() => {
           // Re-run the open-effect by cycling through checking state.
           setStage('checking')
@@ -323,17 +308,17 @@ export function ServerUpgradeDialog({ open, onClose }: ServerUpgradeDialogProps)
   ) : (
     <>
       {upgradable && (
-        <Button variant="ghost" onClick={onClose} className="text-muted-foreground">
+        <Button variant="ghost" size="sm" onClick={onClose} className="text-muted-foreground">
           {t('settings:remindLater')}
         </Button>
       )}
       {upgradable ? (
-        <Button onClick={handleUpgrade} className="gap-2">
-          <Download className="w-4 h-4" />
+        <Button size="sm" onClick={handleUpgrade} className="gap-1.5">
+          <Download className="w-3.5 h-3.5" />
           {t('settings:updateNow')}
         </Button>
       ) : (
-        <Button variant="outline" onClick={onClose}>
+        <Button variant="outline" size="sm" onClick={onClose}>
           {t('common:close')}
         </Button>
       )}
@@ -349,7 +334,7 @@ export function ServerUpgradeDialog({ open, onClose }: ServerUpgradeDialogProps)
       }}
       title={getTitle()}
       icon={dialogIcon}
-      width="sm"
+      width={hasReleaseNotes ? 'lg' : 'md'}
       // Above SettingsDialog (z-[100]): this dialog opens FROM the About
       // section while the settings overlay stays mounted — the default z-50
       // would leave the confirm button covered by the settings page.
@@ -362,40 +347,42 @@ export function ServerUpgradeDialog({ open, onClose }: ServerUpgradeDialogProps)
       hideFooter={hideFooter}
       footer={footerContent}
     >
-      <div className="space-y-3">
-        {/* Version line — one quiet line, two tones. Two pills plus a
-            "target version" label used to out-shout the notes and the CTA. */}
+      <div className="space-y-4">
+        {/* Version banner — pinned above scrollable release notes */}
         {check && (
-          <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
-            <span>{t('settings:currentVersion')}</span>
-            <span className="tabular-nums text-foreground">{`v${check.current_version}`}</span>
-            {check.latest_version && (
-              <>
-                <span aria-hidden="true">→</span>
-                <span className="tabular-nums font-medium text-foreground">
-                  {`v${check.latest_version}`}
-                </span>
-              </>
-            )}
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-muted-20 px-3.5 py-2.5 text-xs">
+            <span className="text-muted-foreground">{t('settings:currentVersion')}</span>
+            <div className="flex items-center gap-1.5 font-mono tabular-nums">
+              <span className="text-muted-foreground">{`v${check.current_version}`}</span>
+              {check.latest_version && (
+                <>
+                  <span aria-hidden="true" className="text-muted-foreground">→</span>
+                  <span className="rounded-md border border-border bg-card px-1.5 py-0.5 font-medium text-foreground">
+                    {`v${check.latest_version}`}
+                  </span>
+                </>
+              )}
+            </div>
           </div>
         )}
 
         {/* Deployment hint (docker / unsupported / helper missing) */}
         {showHint && stage === 'idle' && check?.notes && (
-          <div className="flex items-start gap-2 rounded-lg bg-muted px-3 py-2.5">
+          <div className="flex items-start gap-2 rounded-xl border border-border bg-muted-20 px-3.5 py-3">
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-            <p className="text-body whitespace-pre-line">{check.notes}</p>
+            <p className="text-xs leading-relaxed text-muted-foreground whitespace-pre-line">{check.notes}</p>
           </div>
         )}
 
-        {/* Release notes — plain text, no bordered inner scroll box: the
-            "box in a box" edge was the loudest line in the dialog, and the
-            dialog body already scrolls under the pinned header/footer. */}
-        {upgradable && stage === 'idle' && check?.release_notes && (
-          <div className={releaseNotesProse}>
-            <Suspense fallback={null}>
-              <ReleaseNotes body={check.release_notes} components={releaseNotesComponents} />
-            </Suspense>
+        {/* Release notes — independently scrollable reading surface so long
+            changelogs never distort the dialog proportion */}
+        {hasReleaseNotes && (
+          <div className="max-h-[46vh] overflow-y-auto rounded-xl border border-border bg-card px-4 py-3.5">
+            <div className={releaseNotesProse}>
+              <Suspense fallback={null}>
+                <ReleaseNotes body={check.release_notes!} components={releaseNotesComponents} />
+              </Suspense>
+            </div>
           </div>
         )}
 

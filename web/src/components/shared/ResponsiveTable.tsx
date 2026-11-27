@@ -114,15 +114,16 @@ export function ResponsiveTable<T extends object>({
   )
 
   if (loading) {
-    const skeletonRows = 8
+    const skeletonRows = 7
+    const skeletonWidths = ['w-3/4', 'w-1/2', 'w-2/3', 'w-3/5', 'w-2/5']
     return (
       <>
         {/* Desktop skeleton — wrapper scrolls internally when the table
             outgrows it (min-w-full keeps the table filling the container) */}
-        <div className="hidden md:block w-full overflow-x-auto rounded-lg border bg-card">
-          <table className={cn("min-w-full caption-bottom text-sm", className)}>
-            <thead className="bg-muted-30 [&_tr]:border-b">
-              <tr className="rounded-t-lg">
+        <div className="hidden md:block w-full overflow-x-auto rounded-xl border border-border bg-card">
+          <table className={cn("min-w-full caption-bottom text-sm tabular-nums", className)}>
+            <thead className="bg-card [&_tr]:border-b [&_tr]:border-glass-border">
+              <tr>
                 {columns.map((column) => (
                   <th
                     key={column.key}
@@ -140,21 +141,29 @@ export function ResponsiveTable<T extends object>({
                   </th>
                 ))}
                 {actions && actions.length > 0 && (
-                  <th className="w-16 bg-muted-30"></th>
+                  <th className="w-14 bg-card last:pr-5"></th>
                 )}
               </tr>
             </thead>
             <tbody className="[&_tr:last-child]:border-0">
               {Array.from({ length: skeletonRows }).map((_, i) => (
-                <tr key={i} className="border-b">
-                  {columns.map((column) => (
+                <tr key={i} className="border-b border-glass-border">
+                  {columns.map((column, colIdx) => (
                     <td key={column.key} className={tableCellClass}>
-                      <div className="flex min-h-8 items-center"><Skeleton className="h-4 w-full" /></div>
+                      <div className={cn(
+                        "flex min-h-8 items-center",
+                        column.align === 'center' && 'justify-center',
+                        column.align === 'right' && 'justify-end',
+                      )}>
+                        <Skeleton className={cn("h-4", skeletonWidths[(i + colIdx) % skeletonWidths.length])} />
+                      </div>
                     </td>
                   ))}
                   {actions && actions.length > 0 && (
-                    <td className={tableCellClass}>
-                      <Skeleton className="h-4 w-6" />
+                    <td className={cn(tableCellClass, "text-right")}>
+                      <div className="flex justify-end">
+                        <Skeleton className="h-4 w-5 rounded" />
+                      </div>
                     </td>
                   )}
                 </tr>
@@ -189,13 +198,13 @@ export function ResponsiveTable<T extends object>({
       {/* Desktop Table - w-full wrapper scrolls internally (overflow-x-auto)
           when the table outgrows it; min-w-full keeps the table filling the
           container width so it adapts to window resizes */}
-      <div className="hidden md:block w-full overflow-x-auto rounded-lg border bg-card">
-        <table className={cn("min-w-full caption-bottom text-sm", className)}>
+      <div className="hidden md:block w-full overflow-x-auto rounded-xl border border-border bg-card">
+        <table className={cn("min-w-full caption-bottom text-sm tabular-nums", className)}>
           <thead className={cn(
-            "bg-card [&_tr]:border-b",
+            "bg-card [&_tr]:border-b [&_tr]:border-glass-border",
             stickyHeader && "sticky top-0 z-10"
           )}>
-            <tr className="rounded-t-xl">
+            <tr>
               {columns.map((column) => (
                 <th
                   key={column.key}
@@ -213,7 +222,7 @@ export function ResponsiveTable<T extends object>({
                 </th>
               ))}
               {actions && actions.length > 0 && (
-                <th className="w-16 bg-muted-30"></th>
+                <th className="w-14 bg-card last:pr-5"></th>
               )}
             </tr>
           </thead>
@@ -269,6 +278,7 @@ export function ResponsiveTable<T extends object>({
                             <IconButton
                               size="sm"
                               aria-label={t('actions', { defaultValue: 'Actions' })}
+                              className="opacity-50 transition-opacity group-hover/row:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
                               onClick={(e) => e.stopPropagation()}
                             >
                               <MoreVertical className="h-4 w-4" />

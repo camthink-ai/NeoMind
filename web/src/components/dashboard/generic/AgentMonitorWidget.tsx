@@ -10,44 +10,34 @@
 import { useState, useCallback, useEffect, useRef, useMemo, memo } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  Bot,
+  Sparkles,
   CheckCircle2,
   XCircle,
   Loader2,
   Clock,
   AlertCircle,
   ChevronRight,
-  Brain,
   Send,
   MessageSquare,
-  Zap,
   Activity,
   Target,
   CircleDot,
   Pause,
-  Database,
-  Maximize2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { textMicro, badgeSize, textNano, textMini } from '@/design-system/tokens/typography'
 import { api } from '@/lib/api'
 import { resolveImageSrc } from '@/lib/imageUtils'
-import { MarkdownMessage } from '@/components/chat/MarkdownMessage'
 import { useEvents } from '@/hooks/useEvents'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { dashboardCardBase } from '@/design-system/tokens/size'
 import { indicatorFontWeight } from '@/design-system/tokens/indicator'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from '@/components/ui/dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { LoadingState, EmptyState } from '../shared'
+import { ExecutionDetailDialog } from '@/pages/agents-components/ExecutionDetailDialog'
+import { ConclusionContent } from '@/pages/agents-components/ConclusionContent'
 import type { AiAgent, AgentExecution, DataCollected } from '@/types'
 import type {
   AgentExecutionStartedEvent,
@@ -247,280 +237,18 @@ function normalizeDecisionProcess(raw: unknown): {
   }
 }
 
-// Execution Detail Dialog
-interface ExecutionDetailDialogProps {
-  execution: AgentExecution | null
-  open: boolean
-  onClose: () => void
-  agentId: string
+// Format a structured_result value compactly for the widget timeline
+function formatStructuredValue(value: unknown): string {
+  if (value === null || value === undefined) return '—'
+  if (typeof value === 'boolean') return value ? 'true' : 'false'
+  if (typeof value === 'number') return Number.isInteger(value) ? String(value) : Number(value.toFixed(2)).toString()
+  if (typeof value === 'string') return value.length > 40 ? `${value.slice(0, 39)}…` : value
+  if (Array.isArray(value)) return `[${value.length}]`
+  const str = JSON.stringify(value)
+  return str.length > 40 ? `${str.slice(0, 39)}…` : str
 }
 
-function ExecutionDetailDialog({ execution, open, onClose, agentId }: ExecutionDetailDialogProps) {
-  const { t: _t } = useTranslation('agents')
-  const [detail, setDetail] = useState<any>(null)
-  const [loading, setLoading] = useState(false)
-  const [fullscreenImage, setFullscreenImage] = useState<string | null>(null)
-
-  // Prevent loading flash: only show spinner when loading AND no detail exists yet
-  const showLoading = loading && !detail
-  const dialogRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!dialogRef.current) return
-    const dialogElement = dialogRef.current
-    const stopPropagation = (e: Event) => {
-      e.stopPropagation()
-      e.stopImmediatePropagation()
-    }
-    dialogElement.addEventListener('mousedown', stopPropagation, { capture: true })
-    dialogElement.addEventListener('touchstart', stopPropagation, { capture: true })
-    return () => {
-      dialogElement.removeEventListener('mousedown', stopPropagation, { capture: true } as any)
-      dialogElement.removeEventListener('touchstart', stopPropagation, { capture: true } as any)
-    }
-  }, [open])
-
-  useEffect(() => {
-    if (open && execution?.id) {
-      setLoading(true)
-      api.getAgentExecution(agentId, execution.id)
-        .then(setDetail)
-        .catch(console.error)
-        .finally(() => setLoading(false))
-    }
-  }, [open, execution, agentId])
-
-  if (!execution) return null
-
-  const decisionProcess = detail?.decision_process != null ? normalizeDecisionProcess(detail.decision_process) : null
-  const dataCollected = detail?.decision_process?.data_collected || []
-  const images = extractImagesFromData(dataCollected)
-  const metricTags = extractMetricTags(dataCollected)
-
-  return (
-    <>
-      <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-        {/* sm:max-h only — bare max-h-[80vh] caps the mobile fullscreen dialog. */}
-        <DialogContent ref={dialogRef} className="max-w-2xl sm:max-h-[80vh] overflow-hidden flex flex-col z-[110]">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-base">
-              {execution.status === 'Completed' ? (
-                <CheckCircle2 className="h-4 w-4 text-success" />
-              ) : execution.status === 'Running' ? (
-                <Loader2 className="h-4 w-4 text-info animate-spin" />
-              ) : execution.status === 'Partial' ? (
-                <AlertCircle className="h-4 w-4 text-warning" />
-              ) : (
-                <XCircle className="h-4 w-4 text-error" />
-              )}
-              <span>#{execution.id.slice(-6)}</span>
-              <Badge variant="outline" className={textNano}>{execution.trigger_type}</Badge>
-            </DialogTitle>
-            <DialogDescription className="sr-only">Execution details</DialogDescription>
-          </DialogHeader>
-
-          <div className="flex-1 overflow-auto space-y-4">
-            {showLoading ? (
-              <LoadingState size="md" />
-            ) : detail ? (
-              <>
-                {/* Timing */}
-                <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                  <div className="flex items-center gap-1">
-                    <Clock className="h-4 w-4" />
-                    {new Date(execution.timestamp).toLocaleString()}
-                  </div>
-                  {execution.duration_ms > 0 && (
-                    <div className="flex items-center gap-1">
-                      <Activity className="h-4 w-4" />
-                      {execution.duration_ms < 1000 ? `${execution.duration_ms}ms` : `${(execution.duration_ms / 1000).toFixed(1)}s`}
-                    </div>
-                  )}
-                </div>
-
-                {/* Error / Partial */}
-                {execution.error && (
-                  <div
-                    className={cn(
-                      'p-3 rounded-lg border text-sm',
-                      execution.status === 'Partial'
-                        ? 'bg-warning-light border-warning text-warning'
-                        : 'bg-error-light border-error text-error',
-                    )}
-                  >
-                    {execution.error}
-                  </div>
-                )}
-
-                {/* Input summary chip (vision path / skip reason) */}
-                {execution.input_summary &&
-                  (execution.input_summary.vision_path ||
-                    execution.input_summary.skip_reason ||
-                    execution.input_summary.image_extracted != null) && (
-                    <div className="flex flex-wrap gap-1.5">
-                      {execution.input_summary.vision_path && (
-                        <Badge variant="outline" className={cn(textNano, 'h-5 px-1.5')}>
-                          vision: {execution.input_summary.vision_path}
-                        </Badge>
-                      )}
-                      {execution.input_summary.skip_reason && (
-                        <Badge variant="outline" className={cn(textNano, 'h-5 px-1.5 text-warning')}>
-                          skip: {execution.input_summary.skip_reason}
-                        </Badge>
-                      )}
-                      {execution.input_summary.image_extracted != null && (
-                        <Badge variant="secondary" className={cn(textNano, 'h-5 px-1.5')}>
-                          image: {execution.input_summary.image_extracted ? 'yes' : 'no'}
-                          {execution.input_summary.metrics_collected > 0
-                            ? ` · ${execution.input_summary.metrics_collected} metrics`
-                            : ''}
-                        </Badge>
-                      )}
-                    </div>
-                  )}
-
-                {/* Input Data Section */}
-                {(images.length > 0 || metricTags.length > 0) && (
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                      <Database className="h-4 w-4" />
-                      Input Data
-                    </div>
-
-                    {/* Images Grid */}
-                    {images.length > 0 && (
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                        {images.map((img, idx) => (
-                          <div
-                            key={idx}
-                            className="relative group rounded-lg overflow-hidden border border-border bg-muted-30 cursor-pointer aspect-video"
-                            onClick={() => setFullscreenImage(img.image)}
-                          >
-                            <img
-                              src={img.image}
-                              alt={img.source}
-                              className="w-full h-full object-cover"
-                            />
-                            <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-                            <div className="absolute bottom-0 left-0 right-0 p-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <span className={cn(textMicro, "text-white/90 truncate block")}>{img.source}</span>
-                            </div>
-                            <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity bg-overlay-medium rounded p-0.5">
-                              <Maximize2 className="h-4 w-4 text-white" />
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Metric Tags */}
-                    {metricTags.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5">
-                        {metricTags.map((tag, idx) => (
-                          <Badge key={idx} variant="secondary" className={cn(textNano, "h-5 px-1.5")}>
-                            {tag}
-                          </Badge>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Decision Process */}
-                {decisionProcess && (
-                  <div className="space-y-3">
-                    {decisionProcess.situation_analysis && (
-                      <div>
-                        <div className="flex items-center gap-1.5 mb-1.5 text-xs font-medium text-muted-foreground">
-                          <Target className="h-4 w-4" />
-                          Analysis
-                        </div>
-                        <p className="text-sm bg-muted-50 p-3 rounded-lg">{decisionProcess.situation_analysis}</p>
-                      </div>
-                    )}
-
-                    {decisionProcess.reasoning_steps.length > 0 && (
-                      <div>
-                        <div className="flex items-center gap-1.5 mb-1.5 text-xs font-medium text-muted-foreground">
-                          <Brain className="h-4 w-4" />
-                          Reasoning
-                        </div>
-                        <div className="space-y-1">
-                          {decisionProcess.reasoning_steps.map((step, idx) => (
-                            <div key={idx} className="flex items-start gap-2 text-sm">
-                              <span className="text-muted-foreground font-mono text-xs">#{step.step_number || idx + 1}</span>
-                              <span>{step.description}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {decisionProcess.conclusion && (
-                      <div>
-                        <div className="flex items-center gap-1.5 mb-1.5 text-xs font-medium text-muted-foreground">
-                          <CheckCircle2 className="h-4 w-4" />
-                          Conclusion
-                        </div>
-                        <div className="text-sm bg-success-light p-3 rounded-lg border border-success-light prose prose-sm max-w-none"><MarkdownMessage content={decisionProcess.conclusion} /></div>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Actions Executed */}
-                {detail?.result?.actions_executed && detail.result.actions_executed.length > 0 && (
-                  <div>
-                    <div className="flex items-center gap-1.5 mb-1.5 text-xs font-medium text-muted-foreground">
-                      <Zap className="h-4 w-4" />
-                      Actions Executed
-                    </div>
-                    <div className="space-y-1">
-                      {detail.result.actions_executed.map((action: any, idx: number) => (
-                        <div key={idx} className={cn(
-                          "flex items-center justify-between text-sm p-2 rounded",
-                          action.success ? "bg-success-light" : "bg-error-light"
-                        )}>
-                          <span>{action.description}</span>
-                          {action.success ? (
-                            <CheckCircle2 className="h-4 w-4 text-success" />
-                          ) : (
-                            <XCircle className="h-4 w-4 text-error" />
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </>
-            ) : (
-              <div className="text-center py-8 text-muted-foreground">No details available</div>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Fullscreen Image */}
-      {fullscreenImage && (
-        <Dialog open={!!fullscreenImage} onOpenChange={() => setFullscreenImage(null)}>
-          <DialogContent className="max-w-4xl p-2 z-[110]">
-            <DialogHeader className="sr-only">
-              <DialogTitle>Fullscreen Image</DialogTitle>
-              <DialogDescription>Image preview</DialogDescription>
-            </DialogHeader>
-            <img
-              src={fullscreenImage}
-              alt="Fullscreen"
-              className="w-full h-auto max-h-[80vh] object-contain rounded-lg"
-            />
-          </DialogContent>
-        </Dialog>
-      )}
-    </>
-  )
-}
-
-// Data Flow Node - Single execution item with input data preview
+// Data Flow Node - Single execution item with structured result, conclusion & input preview
 interface FlowNodeProps {
   execution: AgentExecution
   isLatest?: boolean
@@ -537,6 +265,11 @@ const FlowNode = memo(function FlowNode({ execution, isLatest, isRunning, onClic
   const dataCollected = detail?.decision_process?.data_collected || []
   const images = useMemo(() => extractImagesFromData(dataCollected), [dataCollected])
   const metricTags = useMemo(() => extractMetricTags(dataCollected), [dataCollected])
+  const structuredEntries = useMemo(() => {
+    const sr = detail?.structured_result
+    if (!sr || typeof sr !== 'object') return []
+    return Object.entries(sr as Record<string, unknown>).slice(0, 4)
+  }, [detail?.structured_result])
 
   const formatTime = (timestamp: string | number) => {
     const date = typeof timestamp === 'number'
@@ -550,6 +283,9 @@ const FlowNode = memo(function FlowNode({ execution, isLatest, isRunning, onClic
     return `${(ms / 1000).toFixed(1)}s`
   }
 
+  const alertVerdict = detail?.alert_verdict
+  const isDryRun = detail?.dry_run
+
   return (
     <button
       type="button"
@@ -559,23 +295,23 @@ const FlowNode = memo(function FlowNode({ execution, isLatest, isRunning, onClic
         onClick()
       }}
       className={cn(
-        "w-full text-left group relative rounded-lg border transition-all duration-normal",
-        "hover:shadow-md hover:border-border",
-        isLatest ? "border-border bg-muted" : "border-border bg-glass",
+        "w-full text-left group relative rounded-xl border transition-colors duration-fast overflow-hidden",
+        "hover:border-border-hover hover:bg-muted-20",
+        isLatest ? "border-border bg-muted-20" : "border-border bg-card",
         isRunning && "border-info bg-info-light"
       )}
     >
       {/* Header row */}
-      <div className="px-3 py-2 border-b border-border">
-        <div className="flex flex-wrap items-center gap-1.5">
+      <div className="px-3 py-2 border-b border-glass-border">
+        <div className="flex flex-wrap items-center gap-1.5 tabular-nums">
           {execution.status === 'Running' ? (
-            <Loader2 className="h-4 w-4 text-info shrink-0 animate-spin" />
+            <Loader2 className="h-3.5 w-3.5 text-info shrink-0 animate-spin" />
           ) : execution.status === 'Completed' ? (
-            <CheckCircle2 className="h-4 w-4 text-success shrink-0" />
+            <CheckCircle2 className="h-3.5 w-3.5 text-success shrink-0" />
           ) : execution.status === 'Partial' ? (
-            <AlertCircle className="h-4 w-4 text-warning shrink-0" />
+            <AlertCircle className="h-3.5 w-3.5 text-warning shrink-0" />
           ) : (
-            <XCircle className="h-4 w-4 text-error shrink-0" />
+            <XCircle className="h-3.5 w-3.5 text-error shrink-0" />
           )}
 
           <span className={cn(textNano, "font-mono text-muted-foreground")}>
@@ -583,84 +319,105 @@ const FlowNode = memo(function FlowNode({ execution, isLatest, isRunning, onClic
           </span>
 
           {isLatest && (
-            <Badge variant="default" className={cn(textMicro, "h-4 px-1")}>
+            <Badge variant="default" className={cn(textMicro, "h-4 px-1.5 font-normal")}>
               Latest
             </Badge>
           )}
 
-          <Badge variant="outline" className={cn(badgeSize.micro, "h-4 px-1")}>
+          <Badge variant="outline" className={cn(badgeSize.micro, "h-4 px-1.5 font-normal bg-muted-20 border-glass-border text-muted-foreground")}>
             {execution.trigger_type}
           </Badge>
+
+          {isDryRun && (
+            <Badge variant="secondary" className={cn(textMicro, "h-4 px-1.5 font-normal")}>
+              dry-run
+            </Badge>
+          )}
+
+          {alertVerdict && (
+            <Badge variant="outline" className={cn(textMicro, "h-4 px-1.5 font-normal bg-card border-glass-border")}>
+              {alertVerdict}
+            </Badge>
+          )}
 
           <span className={cn(textNano, "text-muted-foreground")}>{formatTime(execution.timestamp)}</span>
           {execution.duration_ms > 0 && (
             <span className={cn(textNano, "font-mono text-muted-foreground")}>{formatDuration(execution.duration_ms)}</span>
           )}
-          {execution.input_summary?.vision_path && (
-            <Badge variant="outline" className={cn(textMicro, "h-4 px-1")}>
-              {execution.input_summary.vision_path}
-            </Badge>
-          )}
           {execution.input_summary?.skip_reason && (
-            <Badge variant="outline" className={cn(textMicro, "h-4 px-1 text-warning")}>
+            <Badge variant="outline" className={cn(textMicro, "h-4 px-1.5 font-normal text-warning border-warning")}>
               {execution.input_summary.skip_reason}
             </Badge>
           )}
-          <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity ml-auto" />
+          <ChevronRight className="h-3.5 w-3.5 text-muted-foreground opacity-40 group-hover:opacity-100 transition-opacity ml-auto" />
         </div>
       </div>
 
-      {/* Input Data Preview - Images and Tags */}
-      {(images.length > 0 || metricTags.length > 0) && (
-        <div className="px-3 py-2">
-          {/* Images */}
-          {images.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 mb-2">
-              {images.slice(0, 4).map((img, idx) => (
-                <img
-                  key={idx}
-                  src={img.image}
-                  alt={img.source}
-                  className="h-10 w-10 object-cover rounded border border-border"
-                />
-              ))}
-              {images.length > 4 && (
-                <div className="h-10 w-10 rounded border border-border bg-muted-50 flex items-center justify-center">
-                  <span className={cn(textMicro, "text-muted-foreground")}>+{images.length - 4}</span>
-                </div>
-              )}
+      {/* Structured Output (OutputContract projection) */}
+      {structuredEntries.length > 0 && (
+        <div className="px-3 py-2 grid grid-cols-2 gap-1.5 border-b border-glass-border">
+          {structuredEntries.map(([k, v]) => (
+            <div key={k} className="min-w-0 rounded-lg border border-glass-border bg-muted-20 px-2 py-1">
+              <div className={cn(textMicro, "font-mono text-muted-foreground truncate")}>{k}</div>
+              <div className={cn(textMini, "font-medium font-mono tabular-nums text-foreground truncate")}>
+                {formatStructuredValue(v)}
+              </div>
             </div>
-          )}
-
-          {/* Metric Tags */}
-          {metricTags.length > 0 && (
-            <div className="flex flex-wrap gap-1">
-              {metricTags.slice(0, 8).map((tag, idx) => (
-                <Badge key={idx} variant="secondary" className={cn(badgeSize.micro, "h-4 px-1")}>
-                  {tag}
-                </Badge>
-              ))}
-              {metricTags.length > 8 && (
-                <Badge variant="outline" className={cn(badgeSize.micro, "h-4 px-1")}>
-                  +{metricTags.length - 8}
-                </Badge>
-              )}
-            </div>
-          )}
+          ))}
         </div>
       )}
 
       {/* Conclusion preview */}
       {dp?.conclusion && (
         <div className="px-3 py-2">
-          <div className={cn(textMini, "text-foreground line-clamp-2")}><MarkdownMessage content={dp.conclusion} /></div>
+          <div className={cn(textMini, "text-foreground line-clamp-3")}>
+            <ConclusionContent content={dp.conclusion} />
+          </div>
+        </div>
+      )}
+
+      {/* Input Data Preview - Images and Metric Tags */}
+      {(images.length > 0 || (metricTags.length > 0 && structuredEntries.length === 0)) && (
+        <div className="px-3 py-2 border-t border-glass-border">
+          {images.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mb-1.5">
+              {images.slice(0, 4).map((img, idx) => (
+                <img
+                  key={idx}
+                  src={img.image}
+                  alt={img.source}
+                  className="h-10 w-10 object-cover rounded-md border border-border"
+                />
+              ))}
+              {images.length > 4 && (
+                <div className="h-10 w-10 rounded-md border border-border bg-muted-30 flex items-center justify-center">
+                  <span className={cn(textMicro, "text-muted-foreground")}>+{images.length - 4}</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {metricTags.length > 0 && structuredEntries.length === 0 && (
+            <div className="flex flex-wrap gap-1">
+              {metricTags.slice(0, 6).map((tag, idx) => (
+                <Badge key={idx} variant="outline" className={cn(badgeSize.micro, "h-4 px-1.5 font-normal bg-muted-20 border-glass-border text-muted-foreground")}>
+                  {tag}
+                </Badge>
+              ))}
+              {metricTags.length > 6 && (
+                <Badge variant="outline" className={cn(badgeSize.micro, "h-4 px-1.5 font-normal bg-muted-20 border-glass-border text-muted-foreground")}>
+                  +{metricTags.length - 6}
+                </Badge>
+              )}
+            </div>
+          )}
         </div>
       )}
 
       {/* Error */}
       {execution.error && (
-        <div className="px-3 py-2">
-          <p className={cn(textNano, "text-error line-clamp-2")}>{execution.error}</p>
+        <div className="px-3 py-2 border-t border-glass-border bg-error-light">
+          <p className={cn(textNano, "text-error line-clamp-2 break-words")}>{execution.error}</p>
         </div>
       )}
     </button>
@@ -913,7 +670,7 @@ export function AgentMonitorWidget({
     return (
       <div className={cn(dashboardCardBase, "overflow-hidden flex items-center justify-center min-h-[200px]", className)}>
         <div className="text-center p-6">
-          <Bot className="h-12 w-12 opacity-20 text-muted-foreground mx-auto mb-3" />
+          <Sparkles className="h-10 w-10 opacity-25 text-muted-foreground mx-auto mb-3" strokeWidth={1.75} />
           <p className="text-sm text-muted-foreground">
             {t('dashboardComponents:agentMonitorWidget.noAgentConfigured')}
           </p>
@@ -954,18 +711,27 @@ export function AgentMonitorWidget({
         className
       )}>
         {/* Header: Agent Info */}
-        <div className="shrink-0 px-4 py-3 border-b border-border">
+        <div className="shrink-0 px-4 py-3 border-b border-glass-border">
           <div className="flex items-start gap-3">
-            {/* Avatar */}
-            <div className={cn(
-              "w-10 h-10 rounded-lg flex items-center justify-center shrink-0",
-              currentlyExecuting ? "bg-info-light" : "bg-muted"
-            )}>
+            {/* Monochrome Avatar with live corner status dot (matches AgentCard) */}
+            <div className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-muted-30 text-foreground">
               {currentlyExecuting ? (
-                <Loader2 className="h-5 w-5 text-info animate-spin" />
+                <Loader2 className="h-4 w-4 text-info animate-spin" />
               ) : (
-                <Bot className="h-5 w-5 text-primary" />
+                <Sparkles className="h-4 w-4" strokeWidth={1.75} />
               )}
+              <span
+                className={cn(
+                  "absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-card",
+                  currentlyExecuting
+                    ? "bg-info"
+                    : displayAgent?.status === 'Error'
+                      ? "bg-error"
+                      : displayAgent?.status === 'Paused'
+                        ? "bg-muted-foreground"
+                        : "bg-success"
+                )}
+              />
             </div>
 
             {/* Info */}
@@ -973,41 +739,37 @@ export function AgentMonitorWidget({
               <div className="flex items-center gap-2 mb-1">
                 <h3 className={cn(indicatorFontWeight.title, 'truncate')}>{displayAgent?.name || 'Agent'}</h3>
                 {currentlyExecuting ? (
-                  <Badge variant="default" className={cn(textNano, "h-5 gap-0.5 px-1.5")}>
+                  <Badge variant="default" className={cn(textNano, "h-5 gap-1 px-1.5 font-normal")}>
                     <Loader2 className="h-2.5 w-2.5 animate-spin" />
                     Running
                   </Badge>
                 ) : displayAgent?.status === 'Active' ? (
-                  <Badge variant="outline" className={cn(textNano, "h-5 text-success border-success-light")}>
-                    <CheckCircle2 className="h-2.5 w-2.5 mr-0.5" />
+                  <Badge variant="outline" className={cn(textNano, "h-5 font-normal bg-muted-20 border-glass-border text-muted-foreground")}>
                     Active
                   </Badge>
                 ) : displayAgent?.status === 'Paused' ? (
-                  <Badge variant="secondary" className={cn(textNano, "h-5")}>
+                  <Badge variant="secondary" className={cn(textNano, "h-5 font-normal")}>
                     <Pause className="h-2.5 w-2.5 mr-0.5" />
                     Paused
                   </Badge>
                 ) : displayAgent?.status === 'Error' ? (
-                  <Badge variant="destructive" className={cn(textNano, "h-5")}>Error</Badge>
+                  <Badge variant="destructive" className={cn(textNano, "h-5 font-normal")}>Error</Badge>
                 ) : null}
               </div>
 
               {/* Stats inline */}
-              <div className={cn("flex items-center gap-3", textMini, "text-muted-foreground")}>
+              <div className={cn("flex flex-wrap items-center gap-x-3 gap-y-0.5 tabular-nums", textMini, "text-muted-foreground")}>
                 <span className="flex items-center gap-1">
-                  <Activity className="h-4 w-4" />
+                  <Activity className="h-3.5 w-3.5" />
                   {executionCount} runs
                 </span>
-                <span className={cn(
-                  "flex items-center gap-1",
-                  successRate >= 80 ? "text-success" : successRate >= 50 ? "text-warning" : "text-error"
-                )}>
-                  <Target className="h-4 w-4" />
+                <span className="flex items-center gap-1">
+                  <Target className="h-3.5 w-3.5" />
                   {successRate}% success
                 </span>
                 {avgDurationMs > 0 && (
                   <span className="flex items-center gap-1">
-                    <Clock className="h-4 w-4" />
+                    <Clock className="h-3.5 w-3.5" />
                     {avgDurationMs < 1000 ? `${avgDurationMs}ms` : `${(avgDurationMs / 1000).toFixed(1)}s`}
                   </span>
                 )}
@@ -1017,12 +779,8 @@ export function AgentMonitorWidget({
 
           {/* User Prompt */}
           {promptText && (
-            <div className="mt-3 p-2.5 rounded-lg bg-muted-30 border border-border">
-              <div className="flex items-center gap-1.5 mb-1">
-                <Target className="h-4 w-4 text-primary" />
-                <span className={cn(textNano, "font-medium text-muted-foreground uppercase tracking-wide")}>Task Prompt</span>
-              </div>
-              <p className="text-xs text-foreground line-clamp-2">{promptText}</p>
+            <div className="mt-3 px-3 py-2 rounded-xl bg-muted-20 border border-glass-border">
+              <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">{promptText}</p>
             </div>
           )}
         </div>
@@ -1093,14 +851,14 @@ export function AgentMonitorWidget({
                     const msg = item.data
                     return (
                       <div key={`msg-${msg.id}`} className="flex items-start gap-2">
-                        <div className="w-6 h-6 rounded-full bg-accent-purple-light flex items-center justify-center shrink-0 mt-0.5">
-                          <MessageSquare className="h-4 w-4 text-accent-purple" />
+                        <div className="w-6 h-6 rounded-lg border border-border bg-muted-30 text-foreground flex items-center justify-center shrink-0 mt-0.5">
+                          <MessageSquare className="h-3.5 w-3.5" strokeWidth={1.75} />
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className={cn(textNano, "text-muted-foreground mb-0.5")}>
-                            User hint • {new Date(msg.timestamp * 1000).toLocaleString()}
+                          <div className={cn(textNano, "text-muted-foreground tabular-nums mb-0.5")}>
+                            User hint · {new Date(msg.timestamp * 1000).toLocaleString()}
                           </div>
-                          <p className="text-xs bg-accent-purple-light rounded-lg px-2.5 py-1.5 border border-accent-purple-light">
+                          <p className="text-xs bg-muted-20 rounded-xl px-3 py-2 border border-glass-border text-foreground break-words">
                             {msg.content}
                           </p>
                         </div>
@@ -1164,13 +922,13 @@ export function AgentMonitorWidget({
         </div>
       </div>
 
-      {/* Execution Detail Dialog */}
-      {agentId && (
+      {/* Execution Detail Dialog — shared v2 dialog with structured_result, evidence & deliveries */}
+      {agentId && selectedExecution && (
         <ExecutionDetailDialog
-          execution={selectedExecution}
           open={detailOpen}
-          onClose={() => setDetailOpen(false)}
+          onOpenChange={setDetailOpen}
           agentId={agentId}
+          executionId={selectedExecution.id}
         />
       )}
     </>

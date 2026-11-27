@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Bot, ChevronDown, Clock, History } from "lucide-react"
+import { Sparkles, ChevronDown, Clock, History } from "lucide-react"
 import type {
   AgentExecution,
   AgentExecutionDetail,
@@ -173,7 +173,7 @@ export function AgentInspectorView({
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center gap-1.5 rounded-xl border border-border bg-muted-20 px-4 py-6 text-center">
-            <Bot className="h-5 w-5 text-muted-foreground opacity-60" aria-hidden="true" />
+            <Sparkles className="h-5 w-5 text-muted-foreground opacity-60" strokeWidth={1.75} aria-hidden="true" />
             <p className="text-sm font-medium text-foreground">
               {isZh ? "暂无执行结论" : "No executions yet"}
             </p>

@@ -238,7 +238,9 @@ body,
    pointer devices. The class selector escapes the colon to match the literal
    Tailwind utility class name. */
 @media (hover: none) and (pointer: coarse) {
-  .group-hover\:opacity-100 {
+  .group-hover\:opacity-100,
+  .group-hover\/row\:opacity-100,
+  .group-hover\/card\:opacity-100 {
     opacity: 1 !important;
   }
   .group-hover\:opacity-50 {

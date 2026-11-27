@@ -20,13 +20,7 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { normalizeImageUrl } from '@/lib/imageUtils'
 import { Label } from '@/components/ui/label'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from '@/components/ui/dialog'
+import { UnifiedFormDialog } from '@/components/dialog/UnifiedFormDialog'
 import { cn } from '@/lib/utils'
 import { compressImageFile } from '@/lib/imageUtils'
 import { textNano } from '@/design-system/tokens/typography'
@@ -298,34 +292,27 @@ export function DualModeSourceField({
       )}
 
       {/* Data source picker dialog */}
-      <Dialog open={pickerOpen} onOpenChange={(open) => { if (!open) handleCancel() }}>
-        {/* sm:!h-[70vh] only — bare !h-[70vh] overrides DialogContent's mobile !h-full. */}
-        <DialogContent className="z-[110] max-w-2xl sm:!h-[70vh] flex flex-col !p-0 overflow-hidden">
-          <DialogHeader className="px-5 py-3 border-b shrink-0">
-            <DialogTitle className="text-base">{t('dualMode.selectDataSource')}</DialogTitle>
-          </DialogHeader>
-
-          {/* Picker body — fills remaining space */}
-          <div className="flex-1 min-h-0 overflow-hidden">
-            <UnifiedDataSourceConfig
-              value={stagedDataSource}
-              onChange={setStagedDataSource}
-              allowedTypes={allowedTypes}
-              className="border-0 h-full"
-            />
-          </div>
-
-          {/* Footer: Cancel / Confirm */}
-          <DialogFooter className="px-5 py-3 border-t shrink-0">
-            <Button variant="outline" onClick={handleCancel}>
-              {t('common.cancel')}
-            </Button>
-            <Button onClick={handleConfirm} disabled={!stagedChanged}>
-              {t('common.confirm')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <UnifiedFormDialog
+        open={pickerOpen}
+        onOpenChange={(open) => { if (!open) handleCancel() }}
+        title={t('dualMode.selectDataSource')}
+        width="xl"
+        className="sm:h-[72vh]"
+        contentClassName="p-0 flex flex-col min-h-0 overflow-hidden"
+        onSubmit={async () => { handleConfirm() }}
+        submitLabel={t('common.confirm')}
+        cancelLabel={t('common.cancel')}
+        submitDisabled={!stagedChanged}
+      >
+        <div className="flex-1 min-h-0 overflow-hidden">
+          <UnifiedDataSourceConfig
+            value={stagedDataSource}
+            onChange={setStagedDataSource}
+            allowedTypes={allowedTypes}
+            className="border-0 h-full"
+          />
+        </div>
+      </UnifiedFormDialog>
     </div>
   )
 }

@@ -5,7 +5,7 @@
  */
 
 import { useTranslation } from "react-i18next"
-import { Languages } from "lucide-react"
+import { Languages, Check } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ThemeToggle } from "./ThemeToggle"
 import { BuiltinDownloadIndicator } from "@/components/llm/BuiltinDownloadIndicator"
@@ -47,11 +47,11 @@ export function GlobalControlsFloating() {
           <DropdownMenuContent align="end" className="w-32">
             <DropdownMenuItem onClick={() => i18n.changeLanguage('zh')} className="gap-2 cursor-pointer">
               <span className="text-sm">中文</span>
-              {i18n.language === 'zh' && <span className="ml-auto text-xs text-foreground">✓</span>}
+              {i18n.language === 'zh' && <Check className="ml-auto h-3.5 w-3.5 text-foreground" />}
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => i18n.changeLanguage('en')} className="gap-2 cursor-pointer">
               <span className="text-sm">English</span>
-              {i18n.language === 'en' && <span className="ml-auto text-xs text-foreground">✓</span>}
+              {i18n.language === 'en' && <Check className="ml-auto h-3.5 w-3.5 text-foreground" />}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

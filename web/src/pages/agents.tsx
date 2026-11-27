@@ -24,7 +24,7 @@ import { useEvents } from "@/hooks/useEvents"
 import { useErrorHandler } from "@/hooks/useErrorHandler"
 import { showErrorToast } from "@/lib/error-messages"
 import { useIsMobile } from "@/hooks/useMobile"
-import { Bot, Plus, Brain, Cpu, Settings, BookOpen, Edit, Play, FileText, Wrench, Download, Server } from "lucide-react"
+import { Sparkles, Plus, Brain, Cpu, Settings, BookOpen, Edit, Play, FileText, Wrench, Download, Server } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Select,
@@ -596,8 +596,8 @@ export function AgentsPage() {
                  agents are inert without a model, so the CTAs lead with model
                  setup; creating an agent first stays reachable via text link. */
               <div className="text-center max-w-md px-6">
-                <div className="mx-auto mb-5 flex size-14 items-center justify-center rounded-xl bg-primary-light text-primary">
-                  <Bot className="size-7" />
+                <div className="mx-auto mb-5 flex size-14 items-center justify-center rounded-xl border border-border bg-muted-30 text-foreground">
+                  <Sparkles className="size-7" strokeWidth={1.75} />
                 </div>
                 <h2 className="mb-2 text-lg font-semibold tracking-tight">{tAgent('noAgents')}</h2>
                 <p className="text-sm text-muted-foreground mb-6 leading-relaxed">
@@ -621,7 +621,7 @@ export function AgentsPage() {
               </div>
             ) : (
               <EmptyState
-                icon={<Bot className="h-12 w-12" />}
+                icon={<Sparkles className="h-12 w-12" strokeWidth={1.75} />}
                 title={tAgent('noAgents')}
                 description={tAgent('noAgentsDesc')}
                 action={{
@@ -684,9 +684,9 @@ export function AgentsPage() {
       {/* Agent Detail Dialog */}
       <FullScreenDialog open={detailDialogOpen} onOpenChange={setDetailDialogOpen}>
         <FullScreenDialogHeader
-          icon={<Bot className="h-5 w-5" />}
-          iconBg="bg-accent-purple-light"
-          iconColor="text-accent-purple"
+          icon={<Sparkles className="h-5 w-5" strokeWidth={1.75} />}
+          iconBg="bg-muted-30 border border-border"
+          iconColor="text-foreground"
           title={selectedAgent?.name || tAgent('detailTitle')}
           onClose={() => setDetailDialogOpen(false)}
           actions={

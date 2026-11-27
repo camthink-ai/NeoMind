@@ -604,7 +604,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
         hardReset()
         const content = state.errorMessage
           ? `**${t("chat:connection.authFailed")}**\n\n${state.errorMessage}`
-          : `⚠️ ${t("chat:connection.interruptedSaved")}`
+          : t("chat:connection.interruptedSaved")
         addPanelMessage({
           id: generateId(),
           role: "assistant",
@@ -913,7 +913,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     addPanelMessage({
       id: generateId(),
       role: "assistant",
-      content: "⚠️ Request cancelled by user",
+      content: "Request cancelled by user",
       timestamp: Math.floor(Date.now() / 1000),
     })
   }, [isStreaming, addPanelMessage, hardReset])

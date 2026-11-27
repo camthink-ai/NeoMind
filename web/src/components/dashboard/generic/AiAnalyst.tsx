@@ -281,8 +281,8 @@ export function AiAnalyst({
         )}
       >
         <div className="text-center p-6">
-          <div className="w-12 h-12 rounded-lg bg-muted flex items-center justify-center mx-auto mb-3">
-            <ScanEye className="h-6 w-6 text-primary" />
+          <div className="w-10 h-10 rounded-lg border border-border bg-muted-30 text-foreground flex items-center justify-center mx-auto mb-3">
+            <ScanEye className="h-5 w-5" strokeWidth={1.75} />
           </div>
           <p className="text-sm text-muted-foreground">
             {t('aiAnalyst.emptyState')}
@@ -338,20 +338,21 @@ export function AiAnalyst({
       )}
     >
       {/* Header */}
-      <div className="shrink-0 px-4 py-3 border-b border-border">
+      <div className="shrink-0 px-4 py-3 border-b border-glass-border">
         <div className="flex items-start gap-3">
-          {/* Avatar */}
-          <div
-            className={cn(
-              'w-10 h-10 rounded-lg flex items-center justify-center shrink-0',
-              isStreaming ? 'bg-info-light' : 'bg-muted',
-            )}
-          >
+          {/* Monochrome Avatar with live corner status dot (matches AgentCard & AgentMonitorWidget) */}
+          <div className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-muted-30 text-foreground">
             {isStreaming ? (
-              <Loader2 className="h-5 w-5 text-info animate-spin" />
+              <Loader2 className="h-4 w-4 text-info animate-spin" />
             ) : (
-              <ScanEye className="h-5 w-5 text-primary" />
+              <ScanEye className="h-4 w-4" strokeWidth={1.75} />
             )}
+            <span
+              className={cn(
+                'absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-card',
+                isStreaming ? 'bg-info' : isConnected ? 'bg-success' : 'bg-muted-foreground',
+              )}
+            />
           </div>
 
           {/* Info */}
@@ -361,7 +362,7 @@ export function AiAnalyst({
               {isStreaming ? (
                 <Badge
                   variant="default"
-                  className={cn(textNano, "h-5 gap-0.5 px-1.5")}
+                  className={cn(textNano, "h-5 gap-1 px-1.5 font-normal")}
                 >
                   <Loader2 className="h-2.5 w-2.5 animate-spin" />
                   {t('aiAnalyst.analyzing')}
@@ -369,33 +370,33 @@ export function AiAnalyst({
               ) : isConnected ? (
                 <Badge
                   variant="outline"
-                  className={cn(textNano, "h-5 text-success border-success-light")}
+                  className={cn(textNano, "h-5 font-normal bg-muted-20 border-glass-border text-muted-foreground")}
                 >
                   {t('aiAnalyst.live')}
                 </Badge>
               ) : (
-                <Badge variant="secondary" className={cn(textNano, "h-5")}>
+                <Badge variant="secondary" className={cn(textNano, "h-5 font-normal")}>
                   {t('aiAnalyst.offline')}
                 </Badge>
               )}
             </div>
 
             {/* Stats row */}
-            <div className={cn("flex items-center gap-3", textMini, "text-muted-foreground")}>
+            <div className={cn("flex flex-wrap items-center gap-x-3 gap-y-0.5 tabular-nums", textMini, "text-muted-foreground")}>
               <span className="flex items-center gap-1">
-                <MessageSquare className="h-4 w-4" />
+                <MessageSquare className="h-3.5 w-3.5" />
                 {t('aiAnalyst.messagesCount', { count: messageCount })}
               </span>
               {avgDuration > 0 && (
                 <span className="flex items-center gap-1">
-                  <Clock className="h-4 w-4" />
+                  <Clock className="h-3.5 w-3.5" />
                   {t('aiAnalyst.avgDuration', { count: avgDuration })}
                 </span>
               )}
               {config.modelName && (
-                <span className="flex items-center gap-1">
-                  <Activity className="h-4 w-4" />
-                  {config.modelName}
+                <span className="flex items-center gap-1 truncate max-w-[140px]">
+                  <Activity className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">{config.modelName}</span>
                 </span>
               )}
             </div>
@@ -405,7 +406,7 @@ export function AiAnalyst({
           <Button
             variant="ghost"
             size="icon"
-            className="h-8 w-8 shrink-0 sm:h-8 sm:w-8"
+            className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground sm:h-8 sm:w-8"
             onClick={() => setConfigOpen(true)}
             aria-label={t('aiAnalyst.settingsAriaLabel')}
           >
