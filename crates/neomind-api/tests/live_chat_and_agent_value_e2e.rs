@@ -76,8 +76,16 @@ fn make_instance(
 }
 
 async fn setup_local_models(dir: &std::path::Path) -> Arc<LlmBackendInstanceManager> {
-    let llm_store = LlmBackendStore::open(dir.join("llm_backends.redb")).expect("llm store");
-    let mgr = Arc::new(LlmBackendInstanceManager::new(llm_store));
+    let mgr = match neomind_agent::get_instance_manager() {
+        Ok(existing) => existing,
+        Err(_) => {
+            let llm_store =
+                LlmBackendStore::open(dir.join("llm_backends.redb")).expect("llm store");
+            let fresh = Arc::new(LlmBackendInstanceManager::new(llm_store));
+            set_instance_manager(fresh.clone());
+            fresh
+        }
+    };
 
     let mut qwen = make_instance(
         "ollama-qwen35",
@@ -90,6 +98,9 @@ async fn setup_local_models(dir: &std::path::Path) -> Arc<LlmBackendInstanceMana
     );
     qwen.is_active = true;
     mgr.upsert_instance(qwen).await.expect("upsert qwen");
+    mgr.set_active("ollama-qwen35")
+        .await
+        .expect("set active qwen");
 
     let spark = make_instance(
         "llamacpp-spark",
@@ -102,7 +113,6 @@ async fn setup_local_models(dir: &std::path::Path) -> Arc<LlmBackendInstanceMana
     );
     mgr.upsert_instance(spark).await.expect("upsert spark");
 
-    set_instance_manager(mgr.clone());
     mgr
 }
 
@@ -781,6 +791,284 @@ async fn live_chat_builds_and_manages_ai_agent_full_lifecycle() {
     assert!(
         failures.is_empty(),
         "Chat-manages-Agent failures:\n{}",
+        failures.join("\n")
+    );
+}
+
+/// Real-model batch test: Chat (`qwen3.5:4b`) builds & executes 5 distinct Agent archetypes
+/// via real `neomind` CLI + real HTTP API:
+///   C1. Event Vision (`TriggerSpec::Event` + camera image input + alert notify)
+///   C2. Multi-Source Fusion (`Interval` + 2 bound sensors)
+///   C3. Scheduled Cron Patrol (`Cron` with `Asia/Shanghai` + `on_complete`)
+///   C4. Scoped Tool Allowlist (`Manual` + `ToolPolicy::Scoped { allowed_tools: ["shell"] }`)
+///   C5. Controlled Actions (`--commands` -> `controlled_actions` + alert-gated execution)
+#[tokio::test]
+#[ignore = "requires local Ollama (11434 qwen3.5:4b) and built target/debug/neomind binary"]
+async fn live_chat_builds_5_agent_archetypes() {
+    use base64::Engine as _;
+    use futures::StreamExt;
+    use neomind_agent::agent::AgentEvent;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    // Boot ServerState FIRST, then register local models so ServerState::new_for_testing()
+    // does not overwrite the global LlmBackendInstanceManager with an empty test manager.
+    let state = ServerState::new_for_testing().await;
+    let mgr = setup_local_models(dir.path()).await;
+    let now_secs = chrono::Utc::now().timestamp();
+
+    // Seed realistic multi-vertical devices & telemetry (including valid JPEG for C1).
+    let mut img = image::RgbImage::new(32, 32);
+    for (x, y, p) in img.enumerate_pixels_mut() {
+        *p = image::Rgb([(x * 8) as u8, (y * 8) as u8, 160]);
+    }
+    let mut jpeg_buf = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgb8(img)
+        .write_to(&mut jpeg_buf, image::ImageFormat::Jpeg)
+        .expect("encode jpeg");
+    let jpeg_b64 = base64::engine::general_purpose::STANDARD.encode(jpeg_buf.into_inner());
+
+    let seeds: Vec<(&str, &str, MetricValue)> = vec![
+        ("cam_warehouse", "image", MetricValue::String(format!("data:image/jpeg;base64,{jpeg_b64}"))),
+        ("sensor_temp", "temperature", MetricValue::Float(3.8)),
+        ("sensor_hum", "humidity", MetricValue::Float(68.0)),
+        ("meter_factory", "power_kw", MetricValue::Float(245.5)),
+        ("cold_room_01", "temperature", MetricValue::Float(48.5)),
+    ];
+    for (dev, field, val) in seeds {
+        state
+            .devices
+            .telemetry
+            .write(
+                &format!("device:{dev}"),
+                field,
+                DataPoint {
+                    timestamp: now_secs,
+                    value: val,
+                    quality: None,
+                    metadata: None,
+                },
+            )
+            .await
+            .expect("seed telemetry");
+    }
+
+    let (api_key, _) = state
+        .auth
+        .api_key_state
+        .create_key("live-chat-5archetypes".into(), vec!["admin".into()])
+        .await;
+
+    let app = create_router_with_state(state.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("local_addr");
+    let server_handle = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.parent().and_then(|p| p.parent()).unwrap();
+    let debug_bin_dir = workspace_root.join("target/debug");
+    assert!(
+        debug_bin_dir.join("neomind").exists(),
+        "Build CLI first: cargo build -p neomind-cli --bin neomind"
+    );
+    let orig_path = std::env::var("PATH").unwrap_or_default();
+    std::env::set_var("PATH", format!("{}:{orig_path}", debug_bin_dir.display()));
+    std::env::set_var("NEOMIND_API_BASE", format!("http://{addr}/api"));
+    std::env::set_var("NEOMIND_API_KEY", &api_key);
+
+    let runtime = mgr
+        .get_runtime("ollama-qwen35")
+        .await
+        .expect("ollama-qwen35 runtime");
+    let mut reg = ToolRegistry::new();
+    reg.register(Arc::new(ShellTool::new(ShellConfig {
+        enabled: true,
+        timeout_secs: 30,
+        max_output_chars: 16_000,
+    })));
+
+    let system_prompt = "\
+你是 NeoMind 平台运维助手，必须调用 `shell` 工具执行 `neomind agent create` 创建用户指定的 AI Agent，严禁编造结果。\n\
+常用参数规范：\n\
+- 事件触发：`--schedule-type event --event-filter '{\"any\":[{\"type\":\"device\",\"id\":\"<dev>\"}]}'`\n\
+- 定时间隔：`--schedule-type interval --schedule-config <秒数>`（如 10 分钟=600，5 分钟=300）\n\
+- Cron 定时：`--schedule-type cron --schedule-config '0 9 * * *' --timezone 'Asia/Shanghai'`\n\
+- 手动触发：`--schedule-type manual`\n\
+- 绑定整机：`--device-ids <dev>`；绑定多指标：`--metrics 'd1:m1,d2:m2'`\n\
+- 工具策略：禁用 `--no-tools`（布尔开关，不接参数）；白名单 `--execution-mode free --allowed-tools shell`\n\
+- 结构化输出：`--output-schema 'status,summary'`\n\
+- 通知策略：告警 `--notify 'on_alert=true'`；完成通知 `--notify 'on_complete=true'`（或 JSON `'{\"channels\":[\"IM\"],\"on_alert\":true}'`）\n\
+- 受控动作：`--commands '[{\"device_id\":\"<dev>\",\"command_name\":\"<cmd>\"}]'`\n\
+每次请求直接执行一条准确的 `neomind agent create` 命令并汇报返回的 Agent ID。"
+        .to_string();
+
+    async fn ask_chat(
+        runtime: &Arc<dyn neomind_core::LlmRuntime>,
+        reg: &Arc<ToolRegistry>,
+        system_prompt: &str,
+        session_id: &str,
+        user_msg: &str,
+    ) -> String {
+        let cfg = AgentConfig {
+            name: session_id.into(),
+            system_prompt: system_prompt.into(),
+            max_context_tokens: 32768,
+            temperature: 0.1,
+            enable_tools: true,
+            ..Default::default()
+        };
+        let chat = Agent::with_tools(cfg, session_id.into(), reg.clone());
+        chat.set_custom_llm(runtime.clone()).await;
+        let mut stream = chat
+            .process_stream_events(user_msg, None, None)
+            .await
+            .expect("stream");
+        let mut reply = String::new();
+        while let Some(ev) = stream.next().await {
+            match ev {
+                AgentEvent::Content { content } => reply.push_str(&content),
+                AgentEvent::ToolCallStart { tool, arguments, .. } => {
+                    println!("    [tool_start] {tool} args={arguments}");
+                }
+                AgentEvent::ToolCallEnd { tool, result, success, .. } => {
+                    let preview: String = result.chars().take(220).collect();
+                    println!("    [tool_end]   {tool} ok={success} -> {preview}");
+                }
+                _ => {}
+            }
+        }
+        reply
+    }
+
+    let reg = Arc::new(reg);
+    let rt = state.require_clean_slate().await.expect("clean_slate");
+    let mut failures: Vec<String> = Vec::new();
+    let mut check = |ok: bool, msg: String| {
+        if ok {
+            println!("  [PASS] {msg}");
+        } else {
+            println!("  [FAIL] {msg}");
+            failures.push(msg);
+        }
+    };
+
+    // ── C1: Event Vision Agent ──
+    println!("\n=== C1: Chat creates Event Vision Agent ===");
+    let _ = ask_chat(
+        &runtime,
+        &reg,
+        &system_prompt,
+        "chat-c1-event-vision",
+        "帮我创建一个事件视觉巡检 Agent「仓库视觉哨兵」：使用 event 触发监听设备 cam_warehouse，绑定设备 cam_warehouse，focused 模式且 --no-tools，输出字段 status 和 summary，开启 IM 告警通知（on_alert: true）。请立刻创建。",
+    )
+    .await;
+    let c1 = rt.list().into_iter().find(|(s, _)| s.name.contains("视觉") || s.name.contains("仓库"));
+    check(c1.is_some(), format!("C1 created Event Vision agent (found={})", c1.is_some()));
+    if let Some((spec, _)) = c1 {
+        let is_event = matches!(&spec.trigger, TriggerSpec::Event { .. });
+        check(is_event, format!("C1 trigger is Event (got {:?})", spec.trigger));
+        check(!spec.input.requirements.is_empty(), format!("C1 bound cam_warehouse (inputs={})", spec.input.requirements.len()));
+        check(spec.tool_policy == ToolPolicy::Disabled, format!("C1 tool_policy=Disabled (got {:?})", spec.tool_policy));
+        let run = rt.invoke(&spec.id).await.expect("invoke c1");
+        let exec = run.execution.as_ref().unwrap();
+        check(exec.status == ExecutionStatus::Completed, format!("C1 live vision invoke Completed (status={:?})", exec.status));
+    }
+
+    // ── C2: Multi-Source Fusion Agent ──
+    println!("\n=== C2: Chat creates Multi-Source Fusion Agent ===");
+    let _ = ask_chat(
+        &runtime,
+        &reg,
+        &system_prompt,
+        "chat-c2-multi-source",
+        "创建一个多源融合 Agent「冷链双源监测」：每 10 分钟（600 秒）运行一次，使用 --metrics 同时绑定 sensor_temp 的 temperature 和 sensor_hum 的 humidity 两个指标，focused 模式 --no-tools，输出 status 和 summary。请立刻创建。",
+    )
+    .await;
+    let c2 = rt.list().into_iter().find(|(s, _)| s.name.contains("双源") || s.name.contains("冷链"));
+    check(c2.is_some(), format!("C2 created Multi-Source agent (found={})", c2.is_some()));
+    if let Some((spec, _)) = c2 {
+        check(matches!(spec.trigger, TriggerSpec::Interval { every_secs: 600 }), format!("C2 trigger=Interval(600) (got {:?})", spec.trigger));
+        check(spec.input.requirements.len() >= 2, format!("C2 bound >=2 metrics (got {})", spec.input.requirements.len()));
+        let run = rt.invoke(&spec.id).await.expect("invoke c2");
+        let exec = run.execution.as_ref().unwrap();
+        check(exec.status == ExecutionStatus::Completed && exec.evidence.missing_keys.is_empty(), format!("C2 live multi-source invoke Completed (status={:?}, missing={:?})", exec.status, exec.evidence.missing_keys));
+    }
+
+    // ── C3: Scheduled Cron Patrol Agent ──
+    println!("\n=== C3: Chat creates Scheduled Cron Patrol Agent ===");
+    let _ = ask_chat(
+        &runtime,
+        &reg,
+        &system_prompt,
+        "chat-c3-cron-patrol",
+        "创建一个定时巡检 Agent「每日早班巡检」：使用 cron 表达式 `0 9 * * *`、时区 `Asia/Shanghai`，绑定设备 meter_factory，focused 模式 --no-tools，开启完成通知（IM 渠道 on_complete: true）。请立刻创建。",
+    )
+    .await;
+    let c3 = rt.list().into_iter().find(|(s, _)| s.name.contains("早班") || s.name.contains("巡检"));
+    check(c3.is_some(), format!("C3 created Cron Patrol agent (found={})", c3.is_some()));
+    if let Some((spec, _)) = c3 {
+        let cron_ok = matches!(&spec.trigger, TriggerSpec::Cron { expr, timezone } if expr == "0 9 * * *" && timezone == "Asia/Shanghai");
+        check(cron_ok, format!("C3 trigger=Cron(0 9 * * *, Asia/Shanghai) (got {:?})", spec.trigger));
+        check(spec.notify.on_complete, format!("C3 notify.on_complete=true (got {:?})", spec.notify));
+        let run = rt.invoke(&spec.id).await.expect("invoke c3");
+        check(run.execution.as_ref().unwrap().status == ExecutionStatus::Completed, "C3 live patrol invoke Completed".into());
+    }
+
+    // ── C4: Scoped Tool Allowlist Agent ──
+    println!("\n=== C4: Chat creates Scoped Tool Allowlist Agent ===");
+    let _ = ask_chat(
+        &runtime,
+        &reg,
+        &system_prompt,
+        "chat-c4-tool-allowlist",
+        "创建一个带工具白名单的手动运维 Agent「主机信息巡检」：manual 触发，free 模式，只允许使用 shell 工具（--allowed-tools shell），任务提示为：调用 shell 执行 `uname -s` 并汇报操作系统名称。请立刻创建。",
+    )
+    .await;
+    let c4 = rt.list().into_iter().find(|(s, _)| {
+        s.name.contains("主机")
+            || matches!(&s.tool_policy, ToolPolicy::Scoped { allowed_tools, .. } if allowed_tools.iter().any(|t| t == "shell"))
+    });
+    check(c4.is_some(), format!("C4 created Tool Allowlist agent (found={})", c4.is_some()));
+    if let Some((spec, _)) = c4 {
+        check(matches!(spec.trigger, TriggerSpec::Manual), format!("C4 trigger=Manual (got {:?})", spec.trigger));
+        let scoped_shell = matches!(&spec.tool_policy, ToolPolicy::Scoped { allowed_tools, .. } if allowed_tools.iter().any(|t| t == "shell"));
+        check(scoped_shell, format!("C4 tool_policy=Scoped([shell]) (got {:?})", spec.tool_policy));
+        let run = rt.invoke(&spec.id).await.expect("invoke c4");
+        let exec = run.execution.as_ref().unwrap();
+        check(exec.status == ExecutionStatus::Completed, format!("C4 live scoped-shell invoke Completed (status={:?})", exec.status));
+    }
+
+    // ── C5: Controlled Actions Agent ──
+    println!("\n=== C5: Chat creates Controlled Actions Agent ===");
+    let _ = ask_chat(
+        &runtime,
+        &reg,
+        &system_prompt,
+        "chat-c5-controlled-action",
+        "创建一个带受控动作的冷库联动 Agent「冷库自动降温」：每 5 分钟（300 秒）检查设备 cold_room_01 的温度，超过 0°C 就必须告警（status=\"alert\"），绑定 --device-ids cold_room_01 和 --commands '[{\"device_id\":\"cold_room_01\",\"command_name\":\"boost_cooling\"}]'，focused 模式 --no-tools，开启 IM 告警通知（--notify 'on_alert=true'），输出字段 status 和 summary。请立刻创建。",
+    )
+    .await;
+    let c5 = rt.list().into_iter().find(|(s, _)| s.name.contains("自动降温") || s.name.contains("降温"));
+    check(c5.is_some(), format!("C5 created Controlled Actions agent (found={})", c5.is_some()));
+    if let Some((spec, _)) = c5 {
+        let has_action = spec.controlled_actions.iter().any(|a| a.name == "boost_cooling" && a.destination == "device:cold_room_01");
+        check(has_action, format!("C5 bound controlled_action boost_cooling -> device:cold_room_01 (got {:?})", spec.controlled_actions));
+        check(spec.notify.on_alert, format!("C5 notify.on_alert=true (got {:?})", spec.notify));
+        let run = rt.invoke(&spec.id).await.expect("invoke c5");
+        let exec = run.execution.as_ref().unwrap();
+        check(
+            exec.status == ExecutionStatus::Completed && exec.alert_verdict == Some(AlertVerdict::CriteriaMet),
+            format!("C5 live alert invoke Completed & CriteriaMet (status={:?}, alert={:?}, structured={:?}, conclusion={:?}, deliveries={:?})", exec.status, exec.alert_verdict, exec.structured_result, exec.conclusion, exec.deliveries),
+        );
+    }
+
+    server_handle.abort();
+    assert!(
+        failures.is_empty(),
+        "Chat 5-archetype failures:\n{}",
         failures.join("\n")
     );
 }

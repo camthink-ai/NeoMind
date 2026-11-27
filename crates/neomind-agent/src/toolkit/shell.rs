@@ -1922,10 +1922,17 @@ pub(crate) fn tokenize_neomind_command(input: &str) -> std::result::Result<Vec<S
     while let Some(c) = chars.next() {
         match c {
             '\\' if !in_single => {
-                // Backslash escape: take the next char literally. (Inside
-                // single quotes, backslash has no special meaning.)
+                // POSIX line continuation: `\<LF>` or `\<CR><LF>` is discarded
+                // rather than pushed as a literal newline token. (LLMs frequently
+                // format multi-flag `neomind agent create` commands across lines.)
                 if let Some(next) = chars.next() {
-                    current.push(next);
+                    if next == '\n' {
+                        // discard line continuation
+                    } else if next == '\r' && matches!(chars.peek(), Some('\n')) {
+                        chars.next();
+                    } else {
+                        current.push(next);
+                    }
                 }
             }
             '\'' if !in_double => {
@@ -5332,6 +5339,25 @@ mod p0_2_envelope_help_session_tests {
         assert!(
             cmd_desc.contains("built-in filter flags") && cmd_desc.contains("native host commands"),
             "shell command param description must unify pipe rules with capability_index: {cmd_desc}"
+        );
+    }
+
+    #[test]
+    fn tokenize_neomind_command_handles_posix_line_continuations() {
+        let cmd = "neomind agent create \\\n  --name \"仓库哨兵\" \\\n--schedule-type event \\\r\n  --no-tools";
+        let tokens = tokenize_neomind_command(cmd).expect("tokenize multiline");
+        assert_eq!(
+            tokens,
+            vec![
+                "neomind",
+                "agent",
+                "create",
+                "--name",
+                "仓库哨兵",
+                "--schedule-type",
+                "event",
+                "--no-tools",
+            ]
         );
     }
 }
