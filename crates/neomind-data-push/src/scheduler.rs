@@ -758,11 +758,12 @@ fn extract_event_data(
             is_virtual,
             ..
         } => {
-            // Preserve canonical namespaces (`ai:{agent_id}`, `transform:{id}`, `extension:{id}`)
-            // emitted via VirtualMetricPublisher instead of double-prefixing `device:`.
+            // Preserve canonical namespaces (`ai:{agent_id}`, `transform:{id}`, `extension:{id}`,
+            // `device:{id}` alias from VirtualMetricPublisher) instead of double-prefixing `device:`.
             let source_id = if device_id.starts_with("ai:")
                 || device_id.starts_with("transform:")
                 || device_id.starts_with("extension:")
+                || device_id.starts_with("device:")
             {
                 format!("{}:{}", device_id, metric)
             } else {
@@ -795,6 +796,13 @@ const VIRTUAL_DEDUP_WINDOW_SECS: u64 = 5;
 /// already seen within the dedup window — i.e. the second copy of a transform
 /// double-publish that a wide filter (`*` / `device:*`) matched twice.
 /// Otherwise records it and returns `false`. Keeps the map bounded.
+/// Extract `(namespace, metric)` from a canonical `ns:id:metric` source string.
+fn split_canonical_source(source_id: &str) -> Option<(&str, &str)> {
+    let (ns, rest) = source_id.split_once(':')?;
+    let (_, metric) = rest.split_once(':')?;
+    Some((ns, metric))
+}
+
 fn is_duplicate_virtual(
     recent: &mut std::collections::HashMap<(String, String, i64), tokio::time::Instant>,
     source_id: &str,
@@ -813,6 +821,24 @@ fn is_duplicate_virtual(
             return true;
         }
     }
+
+    // VirtualMetricPublisher double-publishes each transform output: first as
+    // `transform:{tid}:{metric}`, then as alias `device:{dev_id}:{metric}`.
+    // Cross-namespace dedup only bridges `transform:` → `device:` for the same
+    // `(metric, value, ts)` so distinct devices never collide with each other.
+    if let Some((ns, metric)) = split_canonical_source(source_id) {
+        let alias_key = (format!("__transform_alias__:{metric}"), value_str.to_string(), ts);
+        if ns == "device" {
+            if let Some(seen) = recent.get(&alias_key) {
+                if now.duration_since(*seen) < window {
+                    return true;
+                }
+            }
+        } else if ns == "transform" {
+            recent.insert(alias_key, now);
+        }
+    }
+
     recent.insert(key, now);
     if recent.len() > 512 {
         recent.retain(|_, t| now.duration_since(*t) < window);
@@ -1612,6 +1638,18 @@ mod tests {
         let (source_id, _, _, _) = extract_event_data(&tr_ev).unwrap();
         assert_eq!(source_id, "transform:t1:avg_temp");
 
+        let dev_alias_ev = neomind_core::NeoMindEvent::DeviceMetric {
+            device_id: "device:sensor-1".into(),
+            metric: "avg_temp".into(),
+            value: neomind_core::MetricValue::float(22.5),
+            timestamp: 1_700_000_001,
+            quality: None,
+            is_virtual: Some(true),
+        };
+        let (source_id, _, _, is_virtual) = extract_event_data(&dev_alias_ev).unwrap();
+        assert_eq!(source_id, "device:sensor-1:avg_temp");
+        assert!(is_virtual);
+
         let dev_ev = neomind_core::NeoMindEvent::DeviceMetric {
             device_id: "sensor-1".into(),
             metric: "temp".into(),
@@ -1623,5 +1661,33 @@ mod tests {
         let (source_id, _, _, is_virtual) = extract_event_data(&dev_ev).unwrap();
         assert_eq!(source_id, "device:sensor-1:temp");
         assert!(!is_virtual);
+
+        // Transform primary followed by device alias with same (metric, value, ts) is deduped.
+        let mut recent = std::collections::HashMap::new();
+        assert!(!is_duplicate_virtual(
+            &mut recent,
+            "transform:t1:avg_temp",
+            "22.5",
+            1_700_000_001
+        ));
+        assert!(is_duplicate_virtual(
+            &mut recent,
+            "device:sensor-1:avg_temp",
+            "22.5",
+            1_700_000_001
+        ));
+        // Distinct device metrics without a preceding transform primary are NOT deduped.
+        assert!(!is_duplicate_virtual(
+            &mut recent,
+            "device:sensor-2:temp",
+            "21.0",
+            1_700_000_002
+        ));
+        assert!(!is_duplicate_virtual(
+            &mut recent,
+            "device:sensor-3:temp",
+            "21.0",
+            1_700_000_002
+        ));
     }
 }

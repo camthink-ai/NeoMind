@@ -205,7 +205,7 @@ impl HostLlmPort {
     ) -> AgentResult<LlmResponse> {
         let sem_key = request.backend_id.as_deref().unwrap_or("default");
         let sem = self.backend_semaphore(sem_key);
-        const PERMIT_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
+        const PERMIT_WAIT_TIMEOUT: Duration = Duration::from_secs(120);
         const PER_ROUND_LLM_TIMEOUT: Duration = Duration::from_secs(120);
         const TOTAL_LLM_RUN_BUDGET: Duration = Duration::from_secs(300);
         let run_deadline = Instant::now() + TOTAL_LLM_RUN_BUDGET;
@@ -700,6 +700,15 @@ impl HostLlmPort {
                     }
                 }
 
+                let tool_timeout = run_deadline
+                    .saturating_duration_since(Instant::now())
+                    .min(Duration::from_secs(30));
+                if tool_timeout.is_zero() {
+                    return Err(AgentError::Llm(format!(
+                        "Agent run exceeded total {}s budget before tool `{orig_name}`",
+                        TOTAL_LLM_RUN_BUDGET.as_secs()
+                    )));
+                }
                 let started = Instant::now();
                 let exec_fut = async {
                     if orig_name == "memory" && !registry.is_disabled("memory") {
@@ -712,7 +721,7 @@ impl HostLlmPort {
                 let exec_res = tokio::select! {
                     _ = cancel.cancelled() => return Err(AgentError::Cancelled),
                     res = tokio::time::timeout(
-                        Duration::from_secs(30),
+                        tool_timeout,
                         exec_fut,
                     ) => res,
                 };
@@ -1494,32 +1503,42 @@ impl SourceReadPort for HostSourceReadPort {
         self.read_count.fetch_add(1, Ordering::SeqCst);
         let source_id = format!("extension:{extension_id}");
         let timeout = Duration::from_secs(timeout_secs.max(1) as u64);
+        let deadline = tokio::time::Instant::now() + timeout;
         let now_ms = chrono::Utc::now().timestamp_millis();
         let freshness = params.get("_freshness").cloned();
 
         // Prefer durable metric storage when the operation names a metric field.
-        if let Ok(Ok(Some(point))) = tokio::time::timeout(
-            timeout,
+        match tokio::time::timeout_at(
+            deadline,
             self.deps
                 .extension_metrics
                 .query_latest(&source_id, operation),
         )
         .await
         {
-            let value = apply_ext_freshness_to_point(&freshness, &point, now_ms, operation);
-            return Ok(SourceReadResult {
-                source_id: source_id.clone(),
-                binding_proof: format!("{source_id}:{operation}"),
-                observed_at: Some(point.timestamp),
-                // Never echo the *requested* window as actual coverage.
-                valid_window: None,
-                value,
-            });
+            Ok(Ok(Some(point))) => {
+                let value = apply_ext_freshness_to_point(&freshness, &point, now_ms, operation);
+                return Ok(SourceReadResult {
+                    source_id: source_id.clone(),
+                    binding_proof: format!("{source_id}:{operation}"),
+                    observed_at: Some(point.timestamp),
+                    // Never echo the *requested* window as actual coverage.
+                    valid_window: None,
+                    value,
+                });
+            }
+            Err(_) => {
+                return Err(AgentError::Source {
+                    key: extension_id.into(),
+                    reason: "extension metric storage query timed out".into(),
+                });
+            }
+            Ok(Ok(None)) | Ok(Err(_)) => {}
         }
 
         // Live registry metrics (read-only by nature).
-        let metrics = tokio::time::timeout(
-            timeout,
+        let metrics = tokio::time::timeout_at(
+            deadline,
             self.deps
                 .extension_registry
                 .get_current_metrics(extension_id),
@@ -1540,15 +1559,15 @@ impl SourceReadPort for HostSourceReadPort {
         }
 
         // Command path — must be declared ReadOnly (blocks dry_run writes).
-        tokio::time::timeout(timeout, self.ensure_readonly_command(extension_id, operation))
+        tokio::time::timeout_at(deadline, self.ensure_readonly_command(extension_id, operation))
             .await
             .map_err(|_| AgentError::Source {
                 key: extension_id.into(),
                 reason: "extension command capability check timed out".into(),
             })??;
 
-        let result = tokio::time::timeout(
-            timeout,
+        let result = tokio::time::timeout_at(
+            deadline,
             self.deps
                 .extension_registry
                 .execute_command(extension_id, operation, params),
@@ -1595,11 +1614,12 @@ impl SourceReadPort for HostSourceReadPort {
         self.read_count.fetch_add(1, Ordering::SeqCst);
         let source_key = format!("device:{device_id}");
         let timeout = Duration::from_secs(timeout_secs.max(1) as u64);
+        let deadline = tokio::time::Instant::now() + timeout;
 
         if field == "*" {
             let _ = self.deps.telemetry.flush();
             let metrics =
-                tokio::time::timeout(timeout, self.deps.telemetry.list_metrics(&source_key))
+                tokio::time::timeout_at(deadline, self.deps.telemetry.list_metrics(&source_key))
                     .await
                     .map_err(|_| AgentError::Source {
                         key: device_id.into(),
@@ -1610,8 +1630,8 @@ impl SourceReadPort for HostSourceReadPort {
                         reason: e.to_string(),
                     })?;
             let metric_refs: Vec<&str> = metrics.iter().map(|s| s.as_str()).collect();
-            let batch = tokio::time::timeout(
-                timeout,
+            let batch = tokio::time::timeout_at(
+                deadline,
                 self.deps.telemetry.latest_batch(&source_key, &metric_refs),
             )
             .await
@@ -1668,6 +1688,7 @@ impl HostSourceReadPort {
         timeout_secs: u32,
     ) -> AgentResult<SourceReadResult> {
         let timeout = Duration::from_secs(timeout_secs.max(1) as u64);
+        let deadline = tokio::time::Instant::now() + timeout;
         let now_ms = chrono::Utc::now().timestamp_millis();
         let freshness = params.get("_freshness").cloned();
 
@@ -1690,18 +1711,21 @@ impl HostSourceReadPort {
                 now_ms,
             );
             let _ = self.deps.telemetry.flush();
-            let sample_ts = tokio::time::timeout(
-                timeout,
+            let sample_ts = tokio::time::timeout_at(
+                deadline,
                 self.deps.telemetry.latest(source_key, field),
             )
             .await
+            .map_err(|_| AgentError::Source {
+                key: err_key.into(),
+                reason: "latest peek timed out".into(),
+            })?
             .ok()
-            .and_then(|r| r.ok())
             .flatten()
             .map(|p| p.timestamp);
             let (start_q, end_q) = storage_range_for_series(lookback_secs, now_ms, sample_ts);
-            let points = tokio::time::timeout(
-                timeout,
+            let points = tokio::time::timeout_at(
+                deadline,
                 self.deps.telemetry.query_limited(
                     source_key,
                     field,
@@ -1944,12 +1968,13 @@ impl SideEffectPort for HostSideEffectPort {
         _execution_id: &str,
     ) -> AgentResult<SideEffectReceipt> {
         const SIDE_EFFECT_TIMEOUT: Duration = Duration::from_secs(30);
+        let deadline = tokio::time::Instant::now() + SIDE_EFFECT_TIMEOUT;
         self.invoke_count.fetch_add(1, Ordering::SeqCst);
 
         if let Some(ext_id) = destination.strip_prefix("extension:") {
             // Extension Ok = Accepted, not device ACK.
-            tokio::time::timeout(
-                SIDE_EFFECT_TIMEOUT,
+            tokio::time::timeout_at(
+                deadline,
                 self.extension_registry
                     .execute_command(ext_id, action, params),
             )
@@ -1963,8 +1988,8 @@ impl SideEffectPort for HostSideEffectPort {
         let map = json_to_string_map(params);
 
         if self.device_service.get_device(device_id).is_some() {
-            let (_value, delivery) = tokio::time::timeout(
-                SIDE_EFFECT_TIMEOUT,
+            let (_value, delivery) = tokio::time::timeout_at(
+                deadline,
                 self.device_service
                     .send_command_reported(device_id, action, map),
             )
@@ -1974,17 +1999,15 @@ impl SideEffectPort for HostSideEffectPort {
             return Ok(receipt_from_command_delivery(delivery));
         }
 
-        if tokio::time::timeout(
-            SIDE_EFFECT_TIMEOUT,
+        let ext_info = tokio::time::timeout_at(
+            deadline,
             self.extension_registry.get_info(destination),
         )
         .await
-        .ok()
-        .flatten()
-        .is_some()
-        {
-            tokio::time::timeout(
-                SIDE_EFFECT_TIMEOUT,
+        .map_err(|_| AgentError::Other("extension lookup timed out after 30s".into()))?;
+        if ext_info.is_some() {
+            tokio::time::timeout_at(
+                deadline,
                 self.extension_registry
                     .execute_command(destination, action, params),
             )
@@ -1994,8 +2017,8 @@ impl SideEffectPort for HostSideEffectPort {
             return Ok(SideEffectReceipt::Accepted);
         }
 
-        let (_value, delivery) = tokio::time::timeout(
-            SIDE_EFFECT_TIMEOUT,
+        let (_value, delivery) = tokio::time::timeout_at(
+            deadline,
             self.device_service
                 .send_command_reported(device_id, action, map),
         )

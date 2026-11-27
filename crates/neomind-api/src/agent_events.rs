@@ -207,6 +207,9 @@ fn effective_event_cooldown(spec: &AgentSpec, source_type: &str, source_id: &str
     if source_type == "device" {
         let writes_same_device = spec.controlled_actions.iter().any(|action| {
             let dest = action.destination.trim();
+            if dest.starts_with("extension:") {
+                return false;
+            }
             let target_device = dest.strip_prefix("device:").unwrap_or(dest);
             // Match both `device:{id}` and legacy `device:{id}:{cmd}` forms.
             target_device == source_id
@@ -353,5 +356,16 @@ mod tests {
         assert_eq!(effective_event_cooldown(&spec, "device", "dev-1"), 5);
         spec.pacing.min_interval_secs = Some(30);
         assert_eq!(effective_event_cooldown(&spec, "device", "dev-1"), 30);
+
+        // Extension destination must never falsely match a device named "extension".
+        spec.pacing.min_interval_secs = None;
+        spec.controlled_actions = vec![ControlledAction {
+            name: "run".into(),
+            destination: "extension:weather".into(),
+            depends_on: vec![],
+            idempotent: true,
+            params: serde_json::json!({}),
+        }];
+        assert_eq!(effective_event_cooldown(&spec, "device", "extension"), 1);
     }
 }

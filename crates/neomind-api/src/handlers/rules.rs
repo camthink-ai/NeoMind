@@ -1551,16 +1551,27 @@ pub async fn import_rules_handler(
         // Deserialize each rule from JSON
         match serde_json::from_value::<CompiledRule>(rule_value.clone()) {
             Ok(mut rule) => {
-                // Finalize the rule
+                // Finalize and enforce the same safety invariants as create/update
+                // (cron syntax + virtual-metric / AI-agent feedback-loop cooldown).
                 rule.finalize();
+
+                let name = rule_value
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| rule.name.clone());
+
+                if let Err(err) = validate_rule_cron(&rule)
+                    .and_then(|_| validate_virtual_metric_policy(&rule))
+                {
+                    errors.push(format!("Rule {}: {}", name, err.message));
+                    skipped += 1;
+                    continue;
+                }
 
                 match state.automation.rule_engine.add_rule(rule).await {
                     Ok(_) => imported += 1,
                     Err(e) => {
-                        let name = rule_value
-                            .get("name")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("unknown");
                         errors.push(format!("Rule {}: {}", name, e));
                         skipped += 1;
                     }
@@ -1873,18 +1884,18 @@ fn build_device_metrics_for_validation(
     metrics
 }
 
-/// Enforce minimum cooldown for virtual-metric rules.
-///
-/// Virtual metrics like `__last_seen_age_secs` update every 60 seconds.
-/// Without a minimum cooldown, this creates alert spam.
+/// Enforce minimum cooldown for virtual-metric rules and AI-agent ↔ rule feedback loops.
 fn validate_virtual_metric_policy(rule: &CompiledRule) -> Result<(), ErrorResponse> {
     if let Err(msg) = neomind_rules::RuleValidator::validate_virtual_metric_cooldown(rule) {
-        return Err(ErrorResponse::bad_request(msg).with_hint(
+        let hint = if msg.contains("feedback loops") {
+            "Set 'cooldown' to at least 60000 ms (60 seconds) when a rule reads AI agent \
+             outputs (ai:*) and triggers an agent, to prevent Agent ↔ Rule execution storms."
+        } else {
             "Set 'cooldown' to at least 60000 ms (60 seconds) when using \
              __last_seen_age_secs in the condition. Production deployments typically \
              use 5 min – 1 h to avoid alert fatigue."
-                .to_string(),
-        ));
+        };
+        return Err(ErrorResponse::bad_request(msg).with_hint(hint.to_string()));
     }
     Ok(())
 }
@@ -1950,7 +1961,25 @@ pub async fn validate_rule_handler(
         };
 
     // Validate
-    let result = RuleValidator::validate_rule(&condition, &actions, &context);
+    let mut result = RuleValidator::validate_rule(&condition, &actions, &context);
+
+    // Mirror create/update/import cooldown policy (virtual metrics + AI feedback loops)
+    // so `/api/rules/validate` does not report `valid: true` for rules `POST /api/rules` rejects.
+    let cooldown_ms = req.get("cooldown").and_then(|v| v.as_u64()).unwrap_or(0);
+    let mut probe = CompiledRule::new("_validate");
+    probe.condition = condition;
+    probe.actions = actions;
+    probe.cooldown = std::time::Duration::from_millis(cooldown_ms);
+    probe.finalize();
+    if let Err(msg) = RuleValidator::validate_virtual_metric_cooldown(&probe) {
+        result.errors.push(neomind_rules::validator::ValidationIssue {
+            code: "COOLDOWN_TOO_SHORT".to_string(),
+            message: msg,
+            field: Some("cooldown".to_string()),
+            severity: neomind_rules::validator::ValidationSeverity::Error,
+        });
+        result.is_valid = false;
+    }
 
     ok(json!({
         "valid": result.is_valid,

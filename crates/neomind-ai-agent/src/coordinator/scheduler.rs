@@ -162,13 +162,15 @@ impl AgentScheduler {
 
         // On cold start (`start()` set `started_at_ms` and this agent has not
         // fired in this process yet), spread overdue Interval agents across
-        // `[0, STARTUP_STAGGER_MAX_MS)` deterministically by agent_id so dozens
-        // of overdue agents do not storm the LLM backend on the exact first tick.
+        // `[0, min(STARTUP_STAGGER_MAX_MS, period_ms))` deterministically by
+        // agent_id so dozens of overdue agents do not storm the LLM backend on
+        // the exact first tick. Guard `now >= started_at` so a backward NTP
+        // wall-clock step never freezes un-fired agents.
         if in_mem_last.is_none() {
             let started_at = self.started_at_ms.load(Ordering::Relaxed);
-            if started_at > 0 {
-                let stagger_ms = startup_stagger_ms(agent_id);
-                if now.saturating_sub(started_at) < stagger_ms {
+            if started_at > 0 && now >= started_at {
+                let stagger_ms = startup_stagger_ms(agent_id).min(period_ms);
+                if now - started_at < stagger_ms {
                     return false;
                 }
             }

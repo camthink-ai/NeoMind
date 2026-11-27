@@ -2531,16 +2531,21 @@ impl ServerState {
                     device_id,
                     metric,
                     value,
-                    is_virtual,
                     ..
                 } = event
                 {
-                    // Skip virtual metrics (`ai:*`, `transform:*`) — VirtualMetricPublisher
-                    // already writes them under their canonical namespace and evaluates rules,
-                    // so re-inserting them here would pollute `device:ai:*` keys.
-                    if is_virtual.unwrap_or(false)
-                        || device_id.starts_with("ai:")
+                    // Skip pre-namespaced / transform-derived events — VirtualMetricPublisher
+                    // already writes `ai:*` / `transform:*` (and its `device:*` alias) to
+                    // UnifiedValueProvider and triggers the rule engine directly.
+                    // Note: do NOT skip `is_virtual: Some(true)` on plain device IDs because
+                    // extension-managed devices (`device_metrics_write` capability) set
+                    // `is_virtual: Some(true)` solely to stop extension feedback loops and
+                    // rely on this listener to update UnifiedValueProvider and fire rules.
+                    if device_id.starts_with("ai:")
                         || device_id.starts_with("transform:")
+                        || device_id.starts_with("device:")
+                        || device_id.starts_with("extension:")
+                        || metric.starts_with("transform.")
                     {
                         continue;
                     }
@@ -3506,18 +3511,17 @@ impl ServerState {
                         is_virtual,
                         ..
                     } => {
-                        // Upstream AI agent published metrics (`ai:{agent_id}:{field}`)
-                        // route to downstream Event agents subscribing to `ai` sources.
-                        // Self-trigger and storm guards are enforced inside `AgentEventBridge`.
-                        if let Some(agent_id) = device_id.strip_prefix("ai:") {
-                            bridge
-                                .check_and_trigger("ai", agent_id, &metric, timestamp)
-                                .await;
-                            continue;
-                        }
-                        // Other virtual metrics (e.g. transform outputs) must NOT
-                        // re-trigger device event agents (feedback-loop guard).
+                        // Upstream AI agent published metrics (`ai:{agent_id}:{field}`, always
+                        // marked `is_virtual: Some(true)`) route to downstream Event agents
+                        // subscribing to `ai` sources. Self-trigger and storm guards are enforced
+                        // inside `AgentEventBridge`.
                         if is_virtual.unwrap_or(false) {
+                            if let Some(agent_id) = device_id.strip_prefix("ai:") {
+                                bridge
+                                    .check_and_trigger("ai", agent_id, &metric, timestamp)
+                                    .await;
+                                continue;
+                            }
                             tracing::debug!(
                                 device_id = %device_id,
                                 metric = %metric,
