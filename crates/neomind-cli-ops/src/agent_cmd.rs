@@ -763,22 +763,32 @@ pub async fn create_agent(
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string())
                         .unwrap_or_else(|| format!("r{i}"));
-                    let source = match rtype {
+                    let (source, operation) = match rtype {
                         "metric" | "Metric" => {
-                            let mut parts = rid.splitn(2, ':');
-                            let device_id = parts.next().unwrap_or(rid);
+                            let clean = rid.strip_prefix("device:").unwrap_or(rid);
+                            let mut parts = clean.splitn(2, ':');
+                            let device_id = parts.next().unwrap_or(clean);
                             let field = parts.next().unwrap_or("value");
-                            json!({ "kind": "device_metric", "device_id": device_id, "field": field })
+                            (
+                                json!({ "kind": "device_metric", "device_id": device_id, "field": field }),
+                                None,
+                            )
                         }
                         "extension" | "Extension" | "extension_metric" | "ExtensionMetric"
                         | "extension_tool" | "ExtensionTool" => {
                             let clean = rid.strip_prefix("extension:").unwrap_or(rid);
-                            let id = clean.split(':').next().unwrap_or(clean);
-                            json!({ "kind": "extension_instance", "id": id })
+                            let (id, op) = match clean.split_once(':') {
+                                Some((ext, op)) if !op.is_empty() => (ext, Some(op.to_string())),
+                                _ => (clean, None),
+                            };
+                            (json!({ "kind": "extension_instance", "id": id }), op)
                         }
-                        _ => json!({ "kind": "whole_device", "device_id": rid }),
+                        _ => (
+                            json!({ "kind": "whole_device", "device_id": rid.strip_prefix("device:").unwrap_or(rid) }),
+                            None,
+                        ),
                     };
-                    requirements.push(json!({
+                    let mut req_obj = json!({
                         "key": key,
                         "source": source,
                         "params": r.get("config").cloned().unwrap_or_else(|| json!({})),
@@ -786,7 +796,11 @@ pub async fn create_agent(
                         "result_type": "structured_json",
                         "freshness": { "kind": "any" },
                         "on_missing": "report_stale",
-                    }));
+                    });
+                    if let Some(op) = operation {
+                        req_obj["operation"] = json!(op);
+                    }
+                    requirements.push(req_obj);
                 }
             }
         }
@@ -1071,14 +1085,17 @@ pub fn notify_to_policy(parsed: serde_json::Value) -> serde_json::Value {
             "on_failure": true,
             "pending_confirmation": false,
         }),
-        "judgment" => json!({
-            "channels": channels,
-            "on_complete": false,
-            "on_alert": false,
-            "alert_depends_on": [],
-            "on_failure": false,
-            "pending_confirmation": true,
-        }),
+        "judgment" => {
+            let has_channels = channels.as_array().is_some_and(|a| !a.is_empty());
+            json!({
+                "channels": channels,
+                "on_complete": false,
+                "on_alert": has_channels,
+                "alert_depends_on": [],
+                "on_failure": false,
+                "pending_confirmation": !has_channels,
+            })
+        }
         _ => json!({
             "channels": channels,
             "on_complete": false,
@@ -1378,7 +1395,23 @@ pub async fn update_agent(
         body["metrics"] = parsed;
     }
 
-    // Compile remaining keys into an AgentSpecPatch for PUT /agents/v2/:id.
+    // Fetch existing agent when partial updates need to preserve existing fields
+    // (e.g. --system-prompt without --user-prompt, or --output-schema / --execution-mode).
+    let needs_existing_for_merge = (body.get("system_prompt").is_some()
+        && body.get("user_prompt").is_none())
+        || (body.get("output").is_some() && body.get("execution_mode").is_none())
+        || (body.get("execution_mode").is_some() && body.get("output").is_none());
+    let existing_agent_snapshot = if needs_existing_for_merge {
+        client
+            .get(&format!("/agents/{}", id))
+            .await
+            .ok()
+            .map(|v| v.get("agent").cloned().unwrap_or(v))
+    } else {
+        None
+    };
+
+    // Compile remaining keys into an AgentSpecPatch for PUT /agents/:id.
     let mut patch = json!({});
     if let Some(v) = body.get("name") {
         patch["name"] = v.clone();
@@ -1393,6 +1426,13 @@ pub async fn update_agent(
         if !sys.trim().is_empty() {
             if let Some(up) = patch.get("user_prompt").and_then(|v| v.as_str()) {
                 patch["user_prompt"] = json!(format!("{sys}\n\n{up}"));
+            } else if let Some(prev_up) = existing_agent_snapshot
+                .as_ref()
+                .and_then(|a| a.get("user_prompt"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+            {
+                patch["user_prompt"] = json!(format!("{sys}\n\n{prev_up}"));
             } else {
                 patch["user_prompt"] = json!(sys);
             }
@@ -1497,22 +1537,32 @@ pub async fn update_agent(
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| format!("r{i}"));
-                let source = match rtype {
+                let (source, operation) = match rtype {
                     "metric" | "Metric" => {
-                        let mut parts = rid.splitn(2, ':');
-                        let device_id = parts.next().unwrap_or(rid);
+                        let clean = rid.strip_prefix("device:").unwrap_or(rid);
+                        let mut parts = clean.splitn(2, ':');
+                        let device_id = parts.next().unwrap_or(clean);
                         let field = parts.next().unwrap_or("value");
-                        json!({ "kind": "device_metric", "device_id": device_id, "field": field })
+                        (
+                            json!({ "kind": "device_metric", "device_id": device_id, "field": field }),
+                            None,
+                        )
                     }
                     "extension" | "Extension" | "extension_metric" | "ExtensionMetric"
                     | "extension_tool" | "ExtensionTool" => {
                         let clean = rid.strip_prefix("extension:").unwrap_or(rid);
-                        let ext_id = clean.split(':').next().unwrap_or(clean);
-                        json!({ "kind": "extension_instance", "id": ext_id })
+                        let (ext_id, op) = match clean.split_once(':') {
+                            Some((ext, op)) if !op.is_empty() => (ext, Some(op.to_string())),
+                            _ => (clean, None),
+                        };
+                        (json!({ "kind": "extension_instance", "id": ext_id }), op)
                     }
-                    _ => json!({ "kind": "whole_device", "device_id": rid }),
+                    _ => (
+                        json!({ "kind": "whole_device", "device_id": rid.strip_prefix("device:").unwrap_or(rid) }),
+                        None,
+                    ),
                 };
-                requirements.push(json!({
+                let mut req_obj = json!({
                     "key": key,
                     "source": source,
                     "params": r.get("config").cloned().unwrap_or_else(|| json!({})),
@@ -1520,7 +1570,11 @@ pub async fn update_agent(
                     "result_type": "structured_json",
                     "freshness": { "kind": "any" },
                     "on_missing": "report_stale",
-                }));
+                });
+                if let Some(op) = operation {
+                    req_obj["operation"] = json!(op);
+                }
+                requirements.push(req_obj);
             }
         }
         patch["input"] = json!({ "requirements": requirements });
@@ -1549,10 +1603,27 @@ pub async fn update_agent(
         patch["trigger"] = trigger;
     }
     if let Some(mut out_obj) = body.get("output").cloned() {
-        if body.get("execution_mode") == Some(&json!("structured")) {
-            out_obj["publish"] = json!(true);
-        }
+        let publish = if let Some(em) = body.get("execution_mode").and_then(|v| v.as_str()) {
+            em == "structured"
+        } else {
+            existing_agent_snapshot
+                .as_ref()
+                .and_then(|a| a.get("output"))
+                .and_then(|o| o.get("publish"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        };
+        out_obj["publish"] = json!(publish);
         patch["output"] = out_obj;
+    } else if let Some(em) = body.get("execution_mode").and_then(|v| v.as_str()) {
+        if let Some(mut existing_out) = existing_agent_snapshot
+            .as_ref()
+            .and_then(|a| a.get("output"))
+            .cloned()
+        {
+            existing_out["publish"] = json!(em == "structured");
+            patch["output"] = existing_out;
+        }
     }
 
     let data = client.put(&format!("/agents/{}", id), &patch).await?;

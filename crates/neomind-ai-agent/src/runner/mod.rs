@@ -112,21 +112,23 @@ pub fn apply_outcome(mut exec: AgentExecutionRecord, outcome: RunOutcome) -> Age
                 crate::model::EvidenceQuality::Fresh => None,
             })
             .collect();
-        exec.error = Some(if details.is_empty() {
-            "all sources missing".into()
-        } else {
-            format!("all sources missing ({})", details.join("; "))
-        });
         let tool_recovered = exec.tool_calls.iter().any(|t| t.success)
             && exec
                 .conclusion
                 .as_deref()
                 .is_some_and(|s| !s.trim().is_empty());
-        exec.status = if tool_recovered {
-            crate::model::ExecutionStatus::Partial
+        if tool_recovered {
+            exec.status = crate::model::ExecutionStatus::Partial;
+            // Keep exec.error unset so explain_last surfaces the recovered Output & Summary,
+            // while exec.evidence.missing_keys preserves the missing-source provenance.
         } else {
-            crate::model::ExecutionStatus::Failed
-        };
+            exec.status = crate::model::ExecutionStatus::Failed;
+            exec.error = Some(if details.is_empty() {
+                "all sources missing".into()
+            } else {
+                format!("all sources missing ({})", details.join("; "))
+            });
+        }
     }
     exec
 }
@@ -197,10 +199,8 @@ mod tests {
         };
         let out = apply_outcome(exec, outcome);
         assert_eq!(out.status, ExecutionStatus::Partial);
-        assert!(out
-            .error
-            .as_deref()
-            .is_some_and(|e| e.contains("all sources missing")));
+        assert!(out.error.is_none());
+        assert!(!out.evidence.missing_keys.is_empty());
     }
 
     #[test]

@@ -1081,10 +1081,20 @@ impl AgentStore {
     }
 
     fn from_db(db: Database) -> Result<Arc<Self>, Error> {
-        // Check/stamp schema version BEFORE mutating any tables so rollback guard
-        // refuses newer databases without touching rows.
-        crate::schema::check_or_stamp_version(&db, crate::schema::AGENTS_SCHEMA_VERSION)
-            .map_err(|e| Error::Storage(format!("schema version: {e}")))?;
+        // Read-only rollback guard BEFORE mutating any tables so newer databases
+        // are rejected untouched without stamping prematurely.
+        if let Some(stored) = crate::schema::read_version(&db)
+            .map_err(|e| Error::Storage(format!("schema version: {e}")))?
+        {
+            if stored > crate::schema::AGENTS_SCHEMA_VERSION {
+                return Err(Error::Storage(format!(
+                    "schema version: database schema version {stored} is NEWER than this build supports ({}). \
+                     The data was written by a newer NeoMind — upgrade the server instead of rolling back \
+                     (opening it now would silently destroy newer-format rows on the next save).",
+                    crate::schema::AGENTS_SCHEMA_VERSION
+                )));
+            }
+        }
 
         // Automatically migrate any residual legacy `agents` table into the
         // five-table layout and delete the legacy table in the same write txn.
@@ -1092,6 +1102,9 @@ impl AgentStore {
             crate::agent_migration::migrate_legacy_agents_table(&db)
                 .map_err(|e| Error::Storage(format!("legacy agents migration: {e}")))?;
         }
+        // Stamp v2 only AFTER migration succeeds.
+        crate::schema::check_or_stamp_version(&db, crate::schema::AGENTS_SCHEMA_VERSION)
+            .map_err(|e| Error::Storage(format!("schema version: {e}")))?;
         let db = Arc::new(db);
         crate::agent_store::ensure_agent_tables(&db)?;
 

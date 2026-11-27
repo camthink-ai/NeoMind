@@ -1,3 +1,4 @@
+#![recursion_limit = "256"]
 //! Edge AI Agent Crate
 //!
 //! This crate provides the main AI Agent that orchestrates LLM, memory, and tools.

@@ -13,6 +13,7 @@ import type {
   AgentSpecDraft,
   AgentSpecPatch,
   AgentToolConfig,
+  ControlledAction,
   InputContract,
   InputRequirement,
   NotifyPolicy,
@@ -290,6 +291,25 @@ function normalizeOutput(
   return { fields: [], publish: false }
 }
 
+function normalizeControlledActions(actions?: ControlledAction[] | null): ControlledAction[] {
+  if (!Array.isArray(actions)) return []
+  return actions.map((action) => {
+    if (!action || typeof action !== 'object') return action
+    const dest = typeof action.destination === 'string' ? action.destination : ''
+    if (dest.startsWith('device:')) {
+      const parts = dest.split(':')
+      if (parts.length === 3 && parts[1] && parts[2]) {
+        return {
+          ...action,
+          destination: `device:${parts[1]}`,
+          name: parts[2],
+        }
+      }
+    }
+    return action
+  })
+}
+
 type SpecLike = Partial<AgentSpec> & {
   agent?: Partial<AgentSpec>
   schedule?: AgentSchedule
@@ -328,7 +348,7 @@ export function specToDraft(raw: AgentSpec | SpecLike): AgentSpecDraft {
     tool_policy: normalizeToolPolicy(spec.tool_policy, spec.tool_config),
     output: normalizeOutput(spec.output, spec.output_schema),
     notify: normalizeNotify(spec.notify),
-    controlled_actions: Array.isArray(spec.controlled_actions) ? spec.controlled_actions : [],
+    controlled_actions: normalizeControlledActions(spec.controlled_actions),
   }
 }
 

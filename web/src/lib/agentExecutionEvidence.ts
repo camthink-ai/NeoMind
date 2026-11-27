@@ -21,6 +21,8 @@ export interface ActionEvidenceRow {
   description: string
   target: string
   success: boolean
+  /** True when an action/delivery was skipped by an alert gate (non-failure). */
+  skipped?: boolean
   result: string | null
   resultState: 'known' | 'unknown'
 }
@@ -79,16 +81,50 @@ function pickOutput(detail: AgentExecutionDetail): {
   return { text: null, presence: 'unknown' }
 }
 
+function getDeliveryStateName(d: ActionDeliveryRecord | null | undefined): string | undefined {
+  return d && d.state && typeof d.state === 'object' ? d.state.state : undefined
+}
+
+function getDeliveryStateReason(d: ActionDeliveryRecord | null | undefined): string {
+  if (!d || !d.state || typeof d.state !== 'object') return ''
+  return 'reason' in d.state && typeof d.state.reason === 'string' ? d.state.reason : ''
+}
+
+function isAlertGatedDelivery(d: ActionDeliveryRecord | null | undefined): boolean {
+  if (!d || getDeliveryStateName(d) !== 'rejected') return false
+  const reason = getDeliveryStateReason(d).toLowerCase()
+  const fp = typeof d.action_fingerprint === 'string' ? d.action_fingerprint : ''
+  return reason.includes('alert criteria not met') || fp.endsWith(':gated')
+}
+
+function isAlertGatedAction(a: { description?: string; result?: string | null }): boolean {
+  const resultLower = (a.result ?? '').toLowerCase()
+  const desc = a.description ?? ''
+  return resultLower.includes('alert criteria not met') || desc.endsWith(':gated')
+}
+
 function mapDeliveryToAction(d: ActionDeliveryRecord): ActionEvidenceRow {
-  const st = d.state
-  const success = st.state === 'accepted' || st.state === 'confirmed'
-  let result: string | null = st.state
-  let resultState: 'known' | 'unknown' = 'known'
-  if (st.state === 'rejected') {
-    result = st.reason ? `rejected: ${st.reason}` : 'rejected'
-  } else if (st.state === 'outcome_unknown') {
-    result = st.reason ? `outcome_unknown: ${st.reason}` : null
-    resultState = st.reason ? 'known' : 'unknown'
+  const stateName = getDeliveryStateName(d)
+  const reason = getDeliveryStateReason(d)
+  if (isAlertGatedDelivery(d)) {
+    return {
+      description: d.action_fingerprint || 'delivery',
+      target: d.destination || '—',
+      success: true,
+      skipped: true,
+      result: reason ? `skipped: ${reason}` : 'skipped',
+      resultState: 'known',
+    }
+  }
+  const success = stateName === 'accepted' || stateName === 'confirmed'
+  let result: string | null = stateName ?? null
+  let resultState: 'known' | 'unknown' = stateName ? 'known' : 'unknown'
+  if (stateName === 'rejected') {
+    result = reason ? `rejected: ${reason}` : 'rejected'
+    resultState = 'known'
+  } else if (stateName === 'outcome_unknown') {
+    result = reason ? `outcome_unknown: ${reason}` : null
+    resultState = reason ? 'known' : 'unknown'
   }
   return {
     description: d.action_fingerprint || 'delivery',
@@ -110,8 +146,12 @@ function mapToolCallToAction(tc: ToolCallTrace): ActionEvidenceRow {
     typeof (tc.arguments as Record<string, unknown>).command === 'string'
       ? ((tc.arguments as Record<string, unknown>).command as string)
       : 'tool'
+  const label = tc.name || 'tool'
   return {
-    description: tc.round ? `#${tc.round} ${tc.name}` : tc.name || 'tool',
+    description:
+      typeof tc.round === 'number' && Number.isFinite(tc.round)
+        ? `#${tc.round + 1} ${label}`
+        : label,
     target,
     success: Boolean(tc.success),
     result,
@@ -124,7 +164,9 @@ function deriveFailure(detail: AgentExecutionDetail): FailureEvidence {
     return { kind: 'error', detail: detail.error.trim(), state: 'known' }
   }
 
-  const failed = (detail.result?.actions_executed ?? []).filter((a) => !a.success)
+  const failed = (detail.result?.actions_executed ?? []).filter(
+    (a) => !a.success && !isAlertGatedAction(a),
+  )
   if (failed.length > 0) {
     const first = failed[0]
     const detailText = [first.description, first.result].filter(Boolean).join(' — ')
@@ -135,13 +177,14 @@ function deriveFailure(detail: AgentExecutionDetail): FailureEvidence {
     }
   }
 
-  const rejectedDelivery = (detail.deliveries ?? []).find(
-    (d) => d.state.state === 'rejected' || d.state.state === 'outcome_unknown',
-  )
+  const rejectedDelivery = (detail.deliveries ?? []).find((d) => {
+    const stateName = getDeliveryStateName(d)
+    if (stateName === 'outcome_unknown') return true
+    if (stateName === 'rejected') return !isAlertGatedDelivery(d)
+    return false
+  })
   if (rejectedDelivery) {
-    const st = rejectedDelivery.state
-    const reason =
-      st.state === 'rejected' || st.state === 'outcome_unknown' ? st.reason : ''
+    const reason = getDeliveryStateReason(rejectedDelivery)
     const detailText = [rejectedDelivery.action_fingerprint, reason]
       .filter(Boolean)
       .join(' — ')
@@ -218,26 +261,76 @@ export function deriveAgentExecutionEvidence(
 
   const output = pickOutput(detail)
 
-  let actions: ActionEvidenceRow[] = []
-  let actionsPresence: EvidencePresence = 'unknown'
+  const actions: ActionEvidenceRow[] = []
+  const hasActionSource =
+    Boolean(detail.result) ||
+    Array.isArray(detail.deliveries) ||
+    Array.isArray(detail.tool_calls)
+
+  const representedDeliveryKeys = new Set<string>()
+  const v2DeliveryDestinations = new Set<string>(
+    (detail.deliveries ?? [])
+      .map((d) => d?.destination)
+      .filter((dest): dest is string => typeof dest === 'string' && dest.length > 0),
+  )
+
   if (detail.result) {
-    actions = (detail.result.actions_executed ?? []).map((a) => {
-      const result = a.result?.trim() ? a.result.trim() : null
-      return {
-        description: a.description || a.action_type || '—',
-        target: a.target || '—',
-        success: !!a.success,
+    for (const a of detail.result.actions_executed ?? []) {
+      const gated = isAlertGatedAction(a)
+      const trimmedResult = a.result?.trim() ? a.result.trim() : null
+      const result = gated ? trimmedResult || 'skipped' : trimmedResult
+      const description = a.description || a.action_type || '—'
+      const target = a.target || '—'
+      actions.push({
+        description,
+        target,
+        success: gated ? true : !!a.success,
+        ...(gated ? { skipped: true } : {}),
         result,
         resultState: result ? 'known' : 'unknown',
+      })
+      if (a.target) {
+        representedDeliveryKeys.add(`${a.target}\0${a.description ?? ''}`)
       }
-    })
-    actionsPresence = actions.length > 0 ? 'known' : 'empty'
-  } else if (Array.isArray(detail.deliveries) || Array.isArray(detail.tool_calls)) {
-    const deliveryActions = (detail.deliveries ?? []).map(mapDeliveryToAction)
-    const toolActions = (detail.tool_calls ?? []).map(mapToolCallToAction)
-    actions = [...deliveryActions, ...toolActions]
-    actionsPresence = actions.length > 0 ? 'known' : 'empty'
+    }
+
+    for (const n of detail.result.notifications_sent ?? []) {
+      const target = n.channel || n.recipient || '—'
+      // If V2 deliveries already carry a receipt for this notification destination,
+      // prefer the V2 delivery record (preserves fingerprint, state, and alert gating).
+      if (v2DeliveryDestinations.has(target)) continue
+      const msg = n.message?.trim()
+      actions.push({
+        description: msg ? `notify: ${msg.slice(0, 80)}` : 'notify',
+        target,
+        success: Boolean(n.success),
+        result: n.success ? 'sent' : 'failed',
+        resultState: 'known',
+      })
+    }
   }
+
+  if (Array.isArray(detail.deliveries)) {
+    for (const d of detail.deliveries) {
+      if (!d || typeof d !== 'object') continue
+      const key = `${d.destination ?? ''}\0${d.action_fingerprint ?? ''}`
+      if (representedDeliveryKeys.has(key)) continue
+      actions.push(mapDeliveryToAction(d))
+    }
+  }
+
+  if (Array.isArray(detail.tool_calls)) {
+    for (const tc of detail.tool_calls) {
+      if (!tc || typeof tc !== 'object') continue
+      actions.push(mapToolCallToAction(tc))
+    }
+  }
+
+  const actionsPresence: EvidencePresence = !hasActionSource
+    ? 'unknown'
+    : actions.length > 0
+      ? 'known'
+      : 'empty'
 
   const stopRaw = dp?.stop_reason?.trim() ?? ''
   const stopReasonPresence: EvidencePresence = !dp

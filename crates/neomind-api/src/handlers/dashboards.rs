@@ -1602,20 +1602,27 @@ pub async fn share_proxy_handler(
     //     - Only permit reading/invoking an `:id` explicitly referenced by a component on
     //       the shared dashboard, and redact private prompts from `GET agents/:id`.
     let mut redact_shared_agent_detail = false;
+    let mut redact_shared_agent_execution = false;
     if path_str == "agents" || path_str.starts_with("agents/") {
         let segs: Vec<&str> = path_str.split('/').filter(|s| !s.is_empty()).collect();
         let allowed_agent_subpath = match segs.as_slice() {
             ["agents", id]
-                if !matches!(*id, "tools" | "plan-preview" | "test-preview" | "presets") =>
+                if !matches!(
+                    *id,
+                    "tools" | "schema" | "plan-preview" | "test-preview" | "presets"
+                ) =>
             {
                 redact_shared_agent_detail = method == Method::GET;
                 Some(*id)
             }
-            ["agents", id, "executions"]
-            | ["agents", id, "executions", "details"]
+            ["agents", id, "executions"] => Some(*id),
+            ["agents", id, "executions", "details"]
             | ["agents", id, "executions", _]
-            | ["agents", id, "latest-execution"]
-            | ["agents", id, "invoke"] => Some(*id),
+            | ["agents", id, "latest-execution"] => {
+                redact_shared_agent_execution = true;
+                Some(*id)
+            }
+            ["agents", id, "invoke"] => Some(*id),
             _ => None,
         };
         let Some(target_agent_id) = allowed_agent_subpath else {
@@ -1631,8 +1638,12 @@ pub async fn share_proxy_handler(
             .load(&share.dashboard_id)
             .ok()
             .flatten()
-            .and_then(|dash| serde_json::to_string(&dash).ok())
-            .is_some_and(|raw| raw.contains(target_agent_id));
+            .and_then(|dash| serde_json::to_value(&dash.components).ok())
+            .is_some_and(|comps| {
+                let mut ids = std::collections::HashSet::new();
+                collect_bound_agent_ids(&comps, &mut ids);
+                ids.contains(target_agent_id)
+            });
         if !bound_to_dashboard {
             return ErrorResponse::new(
                 "FORBIDDEN",
@@ -1706,12 +1717,26 @@ pub async fn share_proxy_handler(
                 .unwrap_or("application/json")
                 .to_string();
             let mut body_bytes = resp.bytes().await.unwrap_or_default();
-            if redact_shared_agent_detail {
+            if redact_shared_agent_detail || redact_shared_agent_execution {
                 if let Ok(mut json_val) = serde_json::from_slice::<serde_json::Value>(&body_bytes) {
                     if let Some(data_obj) = json_val.get_mut("data").and_then(|d| d.as_object_mut())
                     {
-                        data_obj.remove("user_prompt");
-                        data_obj.remove("system_prompt");
+                        if redact_shared_agent_detail {
+                            data_obj.remove("user_prompt");
+                            data_obj.remove("system_prompt");
+                        }
+                        if redact_shared_agent_execution {
+                            strip_sensitive_execution_fields(data_obj);
+                            if let Some(details_map) =
+                                data_obj.get_mut("details").and_then(|d| d.as_object_mut())
+                            {
+                                for entry in details_map.values_mut() {
+                                    if let Some(eo) = entry.as_object_mut() {
+                                        strip_sensitive_execution_fields(eo);
+                                    }
+                                }
+                            }
+                        }
                     }
                     if let Ok(redacted) = serde_json::to_vec(&json_val) {
                         body_bytes = redacted.into();
@@ -1745,6 +1770,68 @@ pub async fn share_proxy_handler(
 /// - Agent execution history (status widgets)
 /// - Data source values
 /// - Messages (alerts shown on dashboard)
+/// Structurally extract all agent IDs explicitly bound to dashboard components.
+fn collect_bound_agent_ids(val: &serde_json::Value, out: &mut std::collections::HashSet<String>) {
+    match val {
+        serde_json::Value::Array(arr) => {
+            for item in arr {
+                collect_bound_agent_ids(item, out);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for key in ["agentId", "agent_id"] {
+                if let Some(s) = map.get(key).and_then(|v| v.as_str()) {
+                    let t = s.trim();
+                    if !t.is_empty() {
+                        out.insert(t.to_string());
+                    }
+                }
+            }
+            let is_ai_source = map
+                .get("type")
+                .or_else(|| map.get("sourceType"))
+                .or_else(|| map.get("source_type"))
+                .and_then(|v| v.as_str())
+                .is_some_and(|t| matches!(t, "ai" | "agent" | "ai_metric" | "ai_agent"));
+            if is_ai_source {
+                for key in ["id", "sourceId", "source_id", "deviceId", "device_id"] {
+                    if let Some(s) = map.get(key).and_then(|v| v.as_str()) {
+                        let t = s.trim();
+                        if !t.is_empty() {
+                            out.insert(t.to_string());
+                        }
+                    }
+                }
+            }
+            for v in map.values() {
+                if let Some(s) = v.as_str() {
+                    if let Some(rest) = s.strip_prefix("ai:") {
+                        if let Some(agent_id) = rest.split(':').next() {
+                            if !agent_id.is_empty() {
+                                out.insert(agent_id.to_string());
+                            }
+                        }
+                    }
+                } else {
+                    collect_bound_agent_ids(v, out);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn strip_sensitive_execution_fields(obj: &mut serde_json::Map<String, serde_json::Value>) {
+    obj.remove("tool_calls");
+    obj.remove("evidence");
+    if let Some(dp) = obj
+        .get_mut("decision_process")
+        .and_then(|d| d.as_object_mut())
+    {
+        dp.remove("reasoning_steps");
+    }
+}
+
 fn is_share_proxy_path_allowed(path: &str) -> bool {
     const ALLOWED_PREFIXES: &[&str] = &[
         "telemetry",

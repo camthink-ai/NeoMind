@@ -33,8 +33,6 @@ async fn reject_viewer_agent_mutation(
         let path = req.uri().path();
         let is_read_only_post = method == axum::http::Method::POST
             && (path.ends_with("/plan-preview")
-                || path.ends_with("/test-preview")
-                || path.ends_with("/dry-run")
                 || path.ends_with("/executions/details")
                 || path.ends_with("/validate-cron")
                 || path.ends_with("/validate-llm"));

@@ -1226,14 +1226,15 @@ pub(super) fn drive_react_stream(
                                 );
                             }
                             yield AgentEvent::content("\n\n[Interrupted]");
-                            {
+                            let end_ev = {
                                 let mut state = internal_state.write().await;
                                 let reason =
                                     crate::agent::task_continuity::StreamEndReason::Interrupted;
                                 let goal = state.task_state.system_goal_status();
-                state.stamp_final_goal_on_last_assistant(goal, reason);
-                                yield AgentEvent::final_end(&state.task_state, reason, None);
-                            }
+                                state.stamp_final_goal_on_last_assistant(goal, reason);
+                                AgentEvent::final_end(&state.task_state, reason, None)
+                            };
+                            yield end_ev;
                             return;
                         }
                     };
@@ -1292,14 +1293,15 @@ pub(super) fn drive_react_stream(
                             );
                         }
                         yield AgentEvent::content("\n\n[Interrupted]");
-                        {
+                        let end_ev = {
                             let mut state = internal_state.write().await;
                             let reason =
                                 crate::agent::task_continuity::StreamEndReason::Interrupted;
                             let goal = state.task_state.system_goal_status();
-                state.stamp_final_goal_on_last_assistant(goal, reason);
-                            yield AgentEvent::final_end(&state.task_state, reason, None);
-                        }
+                            state.stamp_final_goal_on_last_assistant(goal, reason);
+                            AgentEvent::final_end(&state.task_state, reason, None)
+                        };
+                        yield end_ev;
                         return;
                     }
 
@@ -2179,13 +2181,14 @@ pub(super) fn drive_react_stream(
                                         );
                                     }
                                     yield AgentEvent::content("\n\n[Interrupted]");
-                                    {
+                                    let end_ev = {
                                         let mut state = internal_state.write().await;
                                         let reason = crate::agent::task_continuity::StreamEndReason::Interrupted;
                                         let goal = state.task_state.system_goal_status();
-                state.stamp_final_goal_on_last_assistant(goal, reason);
-                                        yield AgentEvent::final_end(&state.task_state, reason, None);
-                                    }
+                                        state.stamp_final_goal_on_last_assistant(goal, reason);
+                                        AgentEvent::final_end(&state.task_state, reason, None)
+                                    };
+                                    yield end_ev;
                                     return;
                                 }
                                 yield AgentEvent::heartbeat();

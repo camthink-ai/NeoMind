@@ -1083,9 +1083,9 @@ fn extract_authorized_tool_calls(
         };
         let fenced_body = rest[..close].trim();
         if let Ok(val) = serde_json::from_str::<serde_json::Value>(fenced_body) {
-            collect_calls_from_json(&val, name_map, &mut calls);
+            collect_calls_from_json_checked(&val, name_map, true, &mut calls);
         } else if let Some(val) = parse_first_json_value(fenced_body) {
-            collect_calls_from_json(&val, name_map, &mut calls);
+            collect_calls_from_json_checked(&val, name_map, true, &mut calls);
         }
         fence_scan = &rest[close + 3..];
     }
@@ -1094,13 +1094,15 @@ fn extract_authorized_tool_calls(
     }
 
     // 4) JSON array [{"name": "...", "arguments": {...}}] or single {"name": "...", "arguments": {...}}
+    // Require an explicit arguments/parameters/params key so structured JSON answers containing
+    // `"name": "shell"` are never mis-dispatched as zero-arg tool calls.
     if let Ok(val) = serde_json::from_str::<serde_json::Value>(text) {
-        collect_calls_from_json(&val, name_map, &mut calls);
+        collect_calls_from_json_checked(&val, name_map, true, &mut calls);
     } else if let Some(i) = text.find('[') {
         if let Some(j) = text.rfind(']') {
             if j > i {
                 if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text[i..=j]) {
-                    collect_calls_from_json(&val, name_map, &mut calls);
+                    collect_calls_from_json_checked(&val, name_map, true, &mut calls);
                 }
             }
         }
@@ -1129,14 +1131,24 @@ fn parse_calling_tools_fallback(
         };
         let raw_name = rest[..paren_open].trim().trim_start_matches(',').trim();
         let after_paren = &rest[paren_open + 1..];
-        if let Some(json_val) = parse_first_json_value(after_paren) {
-            if let Some(brace_start) = after_paren.find('{') {
+        let trimmed_after = after_paren.trim_start();
+        // Zero-arg call: `list_devices(), shell({...})` — do NOT scan ahead and steal
+        // the next tool's JSON object.
+        if let Some(after_close) = trimmed_after.strip_prefix(')') {
+            if let Some(orig) = resolve_authorized_tool_name(raw_name, name_map) {
+                out.push((orig.clone(), serde_json::json!({})));
+            }
+            rest = after_close.trim_start();
+            continue;
+        }
+        if trimmed_after.starts_with('{') {
+            if let Some(json_val) = parse_first_json_value(trimmed_after) {
                 // Advance past balanced JSON object and closing ')'
                 let mut depth = 0usize;
                 let mut in_str = false;
                 let mut esc = false;
                 let mut end_idx = None;
-                for (idx, b) in after_paren.as_bytes().iter().enumerate().skip(brace_start) {
+                for (idx, b) in trimmed_after.as_bytes().iter().enumerate() {
                     if in_str {
                         if esc {
                             esc = false;
@@ -1164,7 +1176,7 @@ fn parse_calling_tools_fallback(
                     out.push((orig.clone(), json_val));
                 }
                 if let Some(e) = end_idx {
-                    let tail = after_paren[e + 1..].trim_start();
+                    let tail = trimmed_after[e + 1..].trim_start();
                     rest = tail.strip_prefix(')').unwrap_or(tail).trim_start();
                     continue;
                 }
@@ -1214,10 +1226,19 @@ fn collect_calls_from_json(
     name_map: &HashMap<String, String>,
     out: &mut Vec<(String, serde_json::Value)>,
 ) {
+    collect_calls_from_json_checked(val, name_map, false, out);
+}
+
+fn collect_calls_from_json_checked(
+    val: &serde_json::Value,
+    name_map: &HashMap<String, String>,
+    require_args_key: bool,
+    out: &mut Vec<(String, serde_json::Value)>,
+) {
     match val {
         serde_json::Value::Array(arr) => {
             for item in arr {
-                collect_calls_from_json(item, name_map, out);
+                collect_calls_from_json_checked(item, name_map, require_args_key, out);
             }
         }
         serde_json::Value::Object(obj) => {
@@ -1228,12 +1249,15 @@ fn collect_calls_from_json(
                 .and_then(|v| v.as_str())
             {
                 if let Some(orig) = resolve_authorized_tool_name(name, name_map) {
-                    let args = obj
+                    let raw_args = obj
                         .get("arguments")
                         .or_else(|| obj.get("parameters"))
                         .or_else(|| obj.get("params"))
-                        .cloned()
-                        .unwrap_or_else(|| serde_json::json!({}));
+                        .cloned();
+                    if require_args_key && raw_args.is_none() {
+                        return;
+                    }
+                    let args = raw_args.unwrap_or_else(|| serde_json::json!({}));
                     let args = match args {
                         serde_json::Value::String(s) => {
                             serde_json::from_str(&s).unwrap_or_else(|_| serde_json::json!({}))

@@ -241,4 +241,46 @@ describe('AgentEditor unified BuilderShell UX', () => {
     await waitFor(() => expect(mockConfirm).toHaveBeenCalledTimes(1))
     expect(templatesSection?.querySelector('.bg-primary-light')).toBeNull()
   })
+
+  it('normalizes legacy 3-part ControlledAction destinations on specToDraft load', () => {
+    const preFixAgent = {
+      id: 'legacy-actions-1',
+      name: 'Legacy Controlled Action Agent',
+      user_prompt: 'Control fan',
+      trigger: { kind: 'manual' },
+      tool_policy: 'disabled',
+      input: { requirements: [] },
+      output: { fields: [], publish: false },
+      controlled_actions: [
+        {
+          name: 'Restart Fan',
+          destination: 'device:fan-01:restart',
+          idempotent: true,
+          depends_on: ['temp'],
+        },
+        {
+          name: 'set_speed',
+          destination: 'device:fan-02',
+          idempotent: true,
+          depends_on: [],
+        },
+      ],
+    } as unknown as AgentSpec
+
+    const draft = specToDraft(preFixAgent)
+    expect(draft.controlled_actions).toEqual([
+      {
+        name: 'restart',
+        destination: 'device:fan-01',
+        idempotent: true,
+        depends_on: ['temp'],
+      },
+      {
+        name: 'set_speed',
+        destination: 'device:fan-02',
+        idempotent: true,
+        depends_on: [],
+      },
+    ])
+  })
 })

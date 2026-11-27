@@ -1543,15 +1543,26 @@ pub async fn test_agent_preview(
             } else {
                 r.name.clone()
             };
-            let source = match r.resource_type.as_str() {
-                "device" | "Device" => InputSourceRef::WholeDevice {
-                    device_id: r.resource_id.clone(),
-                },
+            let (source, operation) = match r.resource_type.as_str() {
+                "device" | "Device" => (
+                    InputSourceRef::WholeDevice {
+                        device_id: r
+                            .resource_id
+                            .strip_prefix("device:")
+                            .unwrap_or(&r.resource_id)
+                            .to_string(),
+                    },
+                    None,
+                ),
                 "metric" | "Metric" => {
-                    let mut parts = r.resource_id.splitn(2, ':');
-                    let device_id = parts.next().unwrap_or(&r.resource_id).to_string();
+                    let clean = r
+                        .resource_id
+                        .strip_prefix("device:")
+                        .unwrap_or(&r.resource_id);
+                    let mut parts = clean.splitn(2, ':');
+                    let device_id = parts.next().unwrap_or(clean).to_string();
                     let field = parts.next().unwrap_or("value").to_string();
-                    InputSourceRef::DeviceMetric { device_id, field }
+                    (InputSourceRef::DeviceMetric { device_id, field }, None)
                 }
                 "extension" | "Extension" | "extension_metric" | "ExtensionMetric"
                 | "extension_tool" | "ExtensionTool" => {
@@ -1559,17 +1570,27 @@ pub async fn test_agent_preview(
                         .resource_id
                         .strip_prefix("extension:")
                         .unwrap_or(&r.resource_id);
-                    let id = clean.split(':').next().unwrap_or(clean).to_string();
-                    InputSourceRef::ExtensionInstance { id }
+                    let (id, op) = match clean.split_once(':') {
+                        Some((ext, op)) if !op.is_empty() => (ext.to_string(), Some(op.to_string())),
+                        _ => (clean.to_string(), None),
+                    };
+                    (InputSourceRef::ExtensionInstance { id }, op)
                 }
-                _ => InputSourceRef::WholeDevice {
-                    device_id: r.resource_id.clone(),
-                },
+                _ => (
+                    InputSourceRef::WholeDevice {
+                        device_id: r
+                            .resource_id
+                            .strip_prefix("device:")
+                            .unwrap_or(&r.resource_id)
+                            .to_string(),
+                    },
+                    None,
+                ),
             };
             requirements.push(InputRequirement {
                 key,
                 source,
-                operation: None,
+                operation,
                 params: r.config.clone().unwrap_or_else(|| json!({})),
                 auth_scope: None,
                 timeout_secs: 10,

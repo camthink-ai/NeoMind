@@ -198,11 +198,179 @@ describe('deriveAgentExecutionEvidence', () => {
       resultState: 'known',
     })
     expect(populatedV2.actions[1]).toMatchObject({
-      description: '#1 shell',
+      description: '#2 shell',
       target: 'neomind device list',
       success: true,
       result: '2 devices',
       resultState: 'known',
     })
+  })
+
+  it('combines result with V2 tool_calls (0-based round -> 1-based #1/#2) and unrepresented deliveries', () => {
+    const e = deriveAgentExecutionEvidence(
+      base({
+        status: 'Completed',
+        result: {
+          actions_executed: [
+            {
+              action_type: 'device_command',
+              description: 'restart',
+              target: 'device:fan-01',
+              success: true,
+              result: 'Confirmed',
+            },
+          ],
+          notifications_sent: [
+            {
+              channel: 'ops-webhook',
+              recipient: 'ops-webhook',
+              message: 'done',
+              sent_at: 1_700_000_000,
+              success: true,
+            },
+          ],
+          summary: 'Checked devices and restarted fan',
+          success_rate: 1,
+        },
+        deliveries: [
+          {
+            execution_id: 'e1',
+            destination: 'device:fan-01',
+            action_fingerprint: 'restart',
+            idempotent: true,
+            state: { state: 'confirmed' },
+          },
+          {
+            execution_id: 'e1',
+            destination: 'ops-webhook',
+            action_fingerprint: 'notify:complete',
+            idempotent: true,
+            state: { state: 'accepted' },
+          },
+        ],
+        tool_calls: [
+          {
+            round: 0,
+            name: 'shell',
+            arguments: { command: 'neomind device list' },
+            success: true,
+            result_preview: '1 device',
+            duration_ms: 15,
+          },
+          {
+            round: 1,
+            name: 'shell',
+            arguments: { command: 'neomind device status fan-01' },
+            success: true,
+            result_preview: 'ok',
+            duration_ms: 20,
+          },
+        ],
+      }),
+    )
+
+    expect(e.actionsPresence).toBe('known')
+    // 1 action_executed + 1 notification delivery (fan-01 deduped) + 2 tool_calls
+    expect(e.actions).toHaveLength(4)
+    expect(e.actions[0]).toMatchObject({
+      description: 'restart',
+      target: 'device:fan-01',
+      success: true,
+    })
+    expect(e.actions[1]).toMatchObject({
+      description: 'notify:complete',
+      target: 'ops-webhook',
+      success: true,
+      result: 'accepted',
+    })
+    expect(e.actions[2]).toMatchObject({
+      description: '#1 shell',
+      target: 'neomind device list',
+      success: true,
+    })
+    expect(e.actions[3]).toMatchObject({
+      description: '#2 shell',
+      target: 'neomind device status fan-01',
+      success: true,
+    })
+    expect(e.failure.kind).toBe('none')
+  })
+
+  it('treats alert-gated deliveries and actions as skipped (not failed_action)', () => {
+    const e = deriveAgentExecutionEvidence(
+      base({
+        status: 'Completed',
+        result: {
+          actions_executed: [
+            {
+              action_type: 'device_command',
+              description: 'sound_alarm:gated',
+              target: 'device:siren-01',
+              success: false,
+              result: 'Rejected: alert criteria not met',
+            },
+          ],
+          notifications_sent: [],
+          summary: 'Normal conditions',
+          success_rate: 0,
+        },
+        deliveries: [
+          {
+            execution_id: 'e1',
+            destination: 'device:siren-01',
+            action_fingerprint: 'sound_alarm:gated',
+            idempotent: true,
+            state: { state: 'rejected', reason: 'alert criteria not met' },
+          },
+          {
+            execution_id: 'e1',
+            destination: 'ops-channel',
+            action_fingerprint: 'notify_alert',
+            idempotent: true,
+            state: { state: 'rejected', reason: 'alert criteria not met' },
+          },
+        ],
+      }),
+    )
+
+    expect(e.failure.kind).toBe('none')
+    expect(e.actions).toHaveLength(2)
+    expect(e.actions[0]).toMatchObject({
+      description: 'sound_alarm:gated',
+      success: true,
+      skipped: true,
+    })
+    expect(e.actions[1]).toMatchObject({
+      description: 'notify_alert',
+      success: true,
+      skipped: true,
+      result: 'skipped: alert criteria not met',
+    })
+  })
+
+  it('handles malformed persisted delivery states defensively without throwing', () => {
+    const malformed = {
+      execution_id: 'e1',
+      destination: 'device:broken',
+      action_fingerprint: 'noop',
+      idempotent: true,
+      state: null,
+    } as unknown as NonNullable<AgentExecutionDetail['deliveries']>[number]
+
+    const e = deriveAgentExecutionEvidence(
+      base({
+        status: 'Completed',
+        deliveries: [malformed],
+      }),
+    )
+
+    expect(e.actionsPresence).toBe('known')
+    expect(e.actions[0]).toMatchObject({
+      description: 'noop',
+      target: 'device:broken',
+      success: false,
+      resultState: 'unknown',
+    })
+    expect(e.failure.kind).toBe('none')
   })
 })

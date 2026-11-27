@@ -142,9 +142,16 @@ SECRETS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/neomind-upgrade-secrets.XXXXXX")"
 chmod 700 "$SECRETS_DIR"
 trap cleanup EXIT
 
-KEY_OUT="$SECRETS_DIR/api-key-create.txt"
-(umask 077; "$BIN131" api-key create --name upgrade-seed --data-dir "$DATA_DIR" >"$KEY_OUT" 2>&1)
-API_KEY="$(python3 - "$KEY_OUT" <<'PY'
+init_data_dir() {
+  mkdir -p "$DATA_DIR" "$PID_DIR"
+  cat >"$DATA_DIR/config.toml" <<EOF
+[mqtt]
+port = ${MQTT_PORT}
+EOF
+
+  KEY_OUT="$SECRETS_DIR/api-key-create.txt"
+  (umask 077; "$BIN131" api-key create --name upgrade-seed --data-dir "$DATA_DIR" >"$KEY_OUT" 2>&1)
+  API_KEY="$(python3 - "$KEY_OUT" <<'PY'
 from pathlib import Path
 import re, sys
 text = Path(sys.argv[1]).read_text(errors="replace")
@@ -154,19 +161,17 @@ for line in text.splitlines():
         print(m.group(1))
         break
 PY
-)"
-test -n "$API_KEY" || { echo "failed to parse API key"; sed -E 's/nmk_[A-Za-z0-9_-]+/nmk_<redacted>/g' "$KEY_OUT"; exit 2; }
-echo "API_KEY_LEN=${#API_KEY}"
+  )"
+  test -n "$API_KEY" || { echo "failed to parse API key"; sed -E 's/nmk_[A-Za-z0-9_-]+/nmk_<redacted>/g' "$KEY_OUT"; exit 2; }
+  echo "API_KEY_LEN=${#API_KEY}"
 
-cat >"$DATA_DIR/config.toml" <<EOF
-[mqtt]
-port = ${MQTT_PORT}
-EOF
+  export NEOMIND_DATA_DIR="$DATA_DIR"
+  export NEOMIND_STRICT_DATA_DIR=1
+  # Keep API_KEY for curl helpers only. CLI auto_auth checks must unset it.
+  export NEOMIND_API_KEY="$API_KEY"
+}
 
-export NEOMIND_DATA_DIR="$DATA_DIR"
-export NEOMIND_STRICT_DATA_DIR=1
-# Keep API_KEY for curl helpers only. CLI auto_auth checks must unset it.
-export NEOMIND_API_KEY="$API_KEY"
+init_data_dir
 export NEOMIND_API_BASE="http://127.0.0.1:${HTTP_PORT}/api"
 export NEOMIND_BUILTIN_LLM=off
 export NEOMIND_HOST=127.0.0.1
@@ -383,17 +388,30 @@ verify_after_upgrade() {
   fi
   local srv_log_name
   srv_log_name="$(basename "$srv_log")"
+  local logs_to_check=("$srv_log")
+  if [[ "$srv_log_name" == "serve-132-re.log" && -f "$OUT_DIR/serve-132.log" ]]; then
+    logs_to_check+=("$OUT_DIR/serve-132.log")
+  fi
 
-  if grep -q "DATA-DIR SPLIT" "$srv_log"; then
-    echo "FAIL: DATA-DIR SPLIT in $srv_log_name"; FAIL=1
-  else
-    echo "OK: no DATA-DIR SPLIT"
-  fi
-  if grep -qiE "decrypt(ion)? failed|failed to decrypt|panic" "$srv_log"; then
-    echo "FAIL: decrypt/panic in $srv_log_name"; FAIL=1
-  else
-    echo "OK: no decrypt/panic"
-  fi
+  local check_log check_log_name
+  for check_log in "${logs_to_check[@]}"; do
+    check_log_name="$(basename "$check_log")"
+    if grep -q "DATA-DIR SPLIT" "$check_log"; then
+      echo "FAIL: DATA-DIR SPLIT in $check_log_name"; FAIL=1
+    else
+      echo "OK: no DATA-DIR SPLIT ($check_log_name)"
+    fi
+    if grep -qiE "decrypt(ion)? failed|failed to decrypt|panic" "$check_log"; then
+      echo "FAIL: decrypt/panic in $check_log_name"; FAIL=1
+    else
+      echo "OK: no decrypt/panic ($check_log_name)"
+    fi
+    if grep -qiE "migration failed|failed to migrate|skipping unreadable legacy agent row" "$check_log"; then
+      echo "FAIL: migration error in $check_log_name"; FAIL=1
+    else
+      echo "OK: no migration error ($check_log_name)"
+    fi
+  done
 
   # Real auto_auth: CLI must NOT see NEOMIND_API_KEY (else it shadows redb/file auth).
   CLI_OUT="$OUT_DIR/cli-device-list.json"
@@ -592,6 +610,7 @@ run_interrupt() {
   stop_serve 131
   sleep 1
   # Snapshot before tip touches data (also used as rollback baseline artifact).
+  rm -rf "$OUT_DIR/interrupt-backup"
   mkdir -p "$OUT_DIR/interrupt-backup"
   cp -a "$DATA_DIR/." "$OUT_DIR/interrupt-backup/"
   start_serve "$BIN132" 132
@@ -621,6 +640,7 @@ run_rollback() {
   seed_v131
   stop_serve 131
   sleep 1
+  rm -rf "$OUT_DIR/rollback-backup"
   mkdir -p "$OUT_DIR/rollback-backup"
   cp -a "$DATA_DIR/." "$OUT_DIR/rollback-backup/"
   start_serve "$BIN132" 132
@@ -628,7 +648,16 @@ run_rollback() {
   # Post-upgrade write: new agent config + a telemetry point (loss window).
   api POST /agents -d '{"name":"post-upgrade-agent","user_prompt":"g6 rollback probe","trigger":{"kind":"manual"},"input":{"requirements":[]},"tool_policy":"disabled","output":{"fields":[],"publish":false}}' \
     >"$OUT_DIR/post-upgrade-agent.json" || true
-  api POST /devices/upgrade-sensor-001/telemetry -d '{"metric":"values.battery","value":91,"timestamp":null}' \
+  if ! grep -q '"success":true' "$OUT_DIR/post-upgrade-agent.json" && ! grep -q 'post-upgrade-agent' "$OUT_DIR/post-upgrade-agent.json"; then
+    echo "FAIL: post-upgrade-agent creation failed before rollback: $(cat "$OUT_DIR/post-upgrade-agent.json")"
+    exit 1
+  fi
+  if ! api GET /agents | grep -q "post-upgrade-agent"; then
+    echo "FAIL: post-upgrade-agent missing from GET /agents before rollback"
+    exit 1
+  fi
+  echo "OK: post-upgrade-agent verified before rollback"
+  api POST /devices/upgrade-sensor-001/metrics -d '{"metric":"values.battery","value":91}' \
     >"$OUT_DIR/post-upgrade-telemetry.json" || true
   stop_serve 132
   # Restore whole data dir from pre-tip snapshot (repo upgrade contract).
@@ -665,13 +694,11 @@ case "$SCENARIO" in
     # Fresh data dir for remaining scenarios
     DATA_DIR="$DATA_ROOT/run-$(date +%Y%m%d-%H%M%S)-$$-interrupt"
     PID_DIR="$DATA_DIR/pids"
-    mkdir -p "$DATA_DIR" "$PID_DIR"
-    export NEOMIND_DATA_DIR="$DATA_DIR"
+    init_data_dir
     run_interrupt
     DATA_DIR="$DATA_ROOT/run-$(date +%Y%m%d-%H%M%S)-$$-rollback"
     PID_DIR="$DATA_DIR/pids"
-    mkdir -p "$DATA_DIR" "$PID_DIR"
-    export NEOMIND_DATA_DIR="$DATA_DIR"
+    init_data_dir
     run_rollback
     ;;
   *)
