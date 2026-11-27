@@ -518,7 +518,7 @@ impl ChunkedImageReassembler {
             };
         }
 
-        let decoded = match decode_chunk_base64(data_str) {
+        let mut decoded = match decode_chunk_base64(data_str) {
             Some(bytes) if !bytes.is_empty() => bytes,
             _ => {
                 return ChunkIngestOutcome::Rejected {
@@ -526,6 +526,45 @@ impl ChunkedImageReassembler {
                 };
             }
         };
+
+        if let Some(declared_size) = obj.get("chunk_size").and_then(Value::as_u64) {
+            let declared_size = declared_size as usize;
+            if declared_size == 0 || declared_size > self.max_total_size {
+                return ChunkIngestOutcome::Rejected {
+                    reason: format!(
+                        "chunk declared chunk_size {} out of bounds (1..={})",
+                        declared_size, self.max_total_size
+                    ),
+                };
+            }
+            if decoded.len() != declared_size {
+                // NE301 firmware base64-encodes chunks in 3-byte blocks without
+                // converting trailing zero-pad slots to '=' when `chunk_size % 3 != 0`
+                // (e.g. 102400 -> 102402 decoded bytes, 31901 -> 31902 decoded bytes).
+                // Trim the 1..=2 trailing block-padding bytes so they are never
+                // spliced into the middle of the reassembled JPEG bitstream.
+                let rounded_up = declared_size.div_ceil(3) * 3;
+                if decoded.len() == rounded_up {
+                    if decoded[declared_size..].iter().any(|&b| b != 0) {
+                        tracing::debug!(
+                            declared_size,
+                            decoded_len = decoded.len(),
+                            tail = ?&decoded[declared_size..],
+                            "Trimming non-zero 3-byte base64 block tail from MQTT image chunk"
+                        );
+                    }
+                    decoded.truncate(declared_size);
+                } else {
+                    return ChunkIngestOutcome::Rejected {
+                        reason: format!(
+                            "chunk decoded size {} != declared chunk_size {}",
+                            decoded.len(),
+                            declared_size
+                        ),
+                    };
+                }
+            }
+        }
 
         if decoded.len() > self.max_total_size {
             return ChunkIngestOutcome::Rejected {
@@ -535,18 +574,6 @@ impl ChunkedImageReassembler {
                     self.max_total_size
                 ),
             };
-        }
-
-        if let Some(declared_size) = obj.get("chunk_size").and_then(Value::as_u64) {
-            if declared_size as usize != decoded.len() {
-                return ChunkIngestOutcome::Rejected {
-                    reason: format!(
-                        "chunk decoded size {} != declared chunk_size {}",
-                        decoded.len(),
-                        declared_size
-                    ),
-                };
-            }
         }
 
         // Validate against existing session if present.
@@ -1025,5 +1052,70 @@ mod tests {
         assert_eq!(r.evict_expired(t3), 2);
         assert_eq!(r.active_session_count(), 0);
         assert_eq!(r.buffered_bytes(), 0);
+    }
+
+    #[test]
+    fn tolerates_ne301_zero_padded_base64_chunks_without_corrupting_bytes() {
+        // Real NE301 firmware emits 4 * ceil(n/3) base64 chars with trailing 'A'
+        // instead of '=' when chunk_size % 3 != 0:
+        //   chunk 0: 102400 bytes (% 3 == 1) -> decodes to 102402 (+2 zero bytes)
+        //   chunk 1:  31901 bytes (% 3 == 2) -> decodes to  31902 (+1 zero byte)
+        let mut r = ChunkedImageReassembler::new();
+        let chunk0_raw: Vec<u8> = (1u8..=251u8).cycle().take(102_400).collect();
+        let chunk1_raw: Vec<u8> = (7u8..=253u8).cycle().take(31_901).collect();
+        let mut expected = Vec::with_capacity(chunk0_raw.len() + chunk1_raw.len());
+        expected.extend_from_slice(&chunk0_raw);
+        expected.extend_from_slice(&chunk1_raw);
+
+        // Simulate firmware encoder that pads to 3-byte multiple with 0x00 (no '=').
+        let encode_ne301_buggy = |src: &[u8]| -> String {
+            let mut padded = src.to_vec();
+            while padded.len() % 3 != 0 {
+                padded.push(0);
+            }
+            BASE64.encode(&padded)
+        };
+
+        let now = Instant::now();
+        let header = make_header("img_ne301_pad", expected.len(), 102_400);
+        assert!(matches!(
+            r.ingest_json_at("embedded", "ne301/281991/upload/report", &header, now),
+            ChunkIngestOutcome::Pending { total_chunks: 2, .. }
+        ));
+
+        let c0 = json!({
+            "type": "image_chunk",
+            "image_id": "img_ne301_pad",
+            "chunk_index": 0,
+            "total_chunks": 2,
+            "chunk_size": 102_400,
+            "data": encode_ne301_buggy(&chunk0_raw),
+            "encoding": "base64"
+        });
+        assert!(matches!(
+            r.ingest_json_at("embedded", "ne301/281991/upload/report", &c0, now),
+            ChunkIngestOutcome::Pending {
+                received_chunks: 1,
+                total_chunks: 2,
+                ..
+            }
+        ));
+
+        let c1 = json!({
+            "type": "image_chunk",
+            "image_id": "img_ne301_pad",
+            "chunk_index": 1,
+            "total_chunks": 2,
+            "chunk_size": 31_901,
+            "data": encode_ne301_buggy(&chunk1_raw),
+            "encoding": "base64"
+        });
+        match r.ingest_json_at("embedded", "ne301/281991/upload/report", &c1, now) {
+            ChunkIngestOutcome::Completed(img) => {
+                assert_eq!(img.image_bytes.len(), expected.len());
+                assert_eq!(img.image_bytes, expected);
+            }
+            other => panic!("expected Completed, got {:?}", other),
+        }
     }
 }
