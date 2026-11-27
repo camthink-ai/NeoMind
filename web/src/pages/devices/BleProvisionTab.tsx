@@ -5,7 +5,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Bluetooth, Loader2, Signal } from 'lucide-react'
+import { Bluetooth, ChevronRight, Loader2, Signal } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { useCtProvision } from '@/hooks/useCtProvision'
@@ -46,6 +46,7 @@ function bleErrorCopy(
   if (code === 'device_busy') return t('devices:ctProv.errorBusy')
   if (code === 'not_connected') return t('devices:ctProv.errorNotConnected')
   if (code === 'internal_error') return t('devices:ctProv.errorInternal')
+  if (code === 'ble_pairing_removed') return t('devices:ctProv.errorBlePairingRemoved')
   return code
 }
 
@@ -100,11 +101,11 @@ export function BleProvisionTab({ onComplete, dismissSignal = 0 }: BleProvisionT
         <CtProvisionHero tone="error">
           <Bluetooth className="h-7 w-7 text-error" />
         </CtProvisionHero>
-        <div className="max-w-sm space-y-1 text-center">
-          <h3 className="text-base font-medium">{t('devices:ble.failedTitle')}</h3>
-          <p className="text-sm text-muted-foreground">{bleErrorCopy(t, ct.error)}</p>
+        <div className="max-w-sm space-y-1.5 text-center">
+          <h3 className="text-base font-semibold text-foreground">{t('devices:ble.failedTitle')}</h3>
+          <p className="text-sm leading-relaxed text-muted-foreground">{bleErrorCopy(t, ct.error)}</p>
         </div>
-        <Button onClick={reset}>{t('common:retry')}</Button>
+        <Button onClick={reset} className="min-w-[160px]">{t('common:retry')}</Button>
       </CtProvisionCenter>
     )
   }
@@ -126,31 +127,31 @@ export function BleProvisionTab({ onComplete, dismissSignal = 0 }: BleProvisionT
         <CtProvisionHero>
           <Loader2 className="h-7 w-7 animate-spin text-primary" />
         </CtProvisionHero>
-        <div className="space-y-1 text-center">
-          <h3 className="text-base font-medium">{t('devices:ble.connectingTitle')}</h3>
+        <div className="max-w-sm space-y-1 text-center">
+          <h3 className="text-base font-semibold text-foreground">{t('devices:ble.connectingTitle')}</h3>
           <p className="truncate text-sm text-muted-foreground">
             {ct.selectedScan?.name || ct.selectedScan?.id}
           </p>
         </div>
-        <Button variant="outline" onClick={reset}>
+        <Button variant="outline" onClick={reset} className="min-w-[140px]">
           {t('common:cancel')}
         </Button>
       </CtProvisionCenter>
     )
   }
 
-  // Empty scan-in-progress (no hits yet) — full-pane spinner.
+  // Empty scan-in-progress (no hits yet) — clean flat centered state.
   if (ct.scanning && ct.scannedDevices.length === 0) {
     return (
       <CtProvisionCenter>
         <CtProvisionHero>
           <Loader2 className="h-7 w-7 animate-spin text-primary" />
         </CtProvisionHero>
-        <div className="space-y-1 text-center">
-          <h3 className="text-base font-medium">{t('devices:ble.scanning')}</h3>
-          <p className="text-xs text-muted-foreground">{t('devices:ble.scanningHint')}</p>
+        <div className="max-w-sm space-y-1.5 text-center">
+          <h3 className="text-base font-semibold text-foreground">{t('devices:ble.scanning')}</h3>
+          <p className="text-xs leading-relaxed text-muted-foreground">{t('devices:ble.scanningHint')}</p>
         </div>
-        <Button variant="outline" onClick={reset}>
+        <Button variant="outline" onClick={reset} className="min-w-[140px]">
           {t('common:cancel')}
         </Button>
       </CtProvisionCenter>
@@ -160,16 +161,29 @@ export function BleProvisionTab({ onComplete, dismissSignal = 0 }: BleProvisionT
   // One or more devices — list while scanning continues so late advertisers appear.
   if (ct.scannedDevices.length > 0) {
     return (
-      <div className="mx-auto flex h-full min-h-0 w-full max-w-3xl flex-1 flex-col self-center py-4">
-        <div className="mb-3 shrink-0 space-y-0.5 text-center">
-          <h3 className="text-base font-medium">{t('devices:ble.selectDevice')}</h3>
-          <p className="text-xs text-muted-foreground">
-            {ct.scanning
-              ? t('devices:ble.scanningFound', { count: ct.scannedDevices.length })
-              : t('devices:ble.foundDevices', { count: ct.scannedDevices.length })}
-          </p>
+      <div className="mx-auto flex h-full min-h-0 w-full max-w-3xl flex-1 flex-col self-center py-6">
+        <div className="mb-4 flex shrink-0 items-center justify-between gap-3 border-b border-border pb-4">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary-light">
+              <Bluetooth className="h-5 w-5 text-primary" />
+            </div>
+            <div className="min-w-0">
+              <h3 className="text-base font-semibold text-foreground">{t('devices:ble.selectDevice')}</h3>
+              <p className="text-xs text-muted-foreground">
+                {ct.scanning
+                  ? t('devices:ble.scanningFound', { count: ct.scannedDevices.length })
+                  : t('devices:ble.foundDevices', { count: ct.scannedDevices.length })}
+              </p>
+            </div>
+          </div>
+          {ct.scanning && (
+            <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-primary-light px-2.5 py-1 text-xs font-medium text-primary">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              {t('devices:ble.scanning')}
+            </span>
+          )}
         </div>
-        <div className="min-h-0 w-full flex-1 space-y-2 overflow-y-auto">
+        <div className="min-h-0 w-full flex-1 space-y-2.5 overflow-y-auto pb-2">
           {ct.scannedDevices.map((dev) => {
             const busy = dev.discovered?.busy
             const codeName =
@@ -188,14 +202,14 @@ export function BleProvisionTab({ onComplete, dismissSignal = 0 }: BleProvisionT
                 type="button"
                 onClick={() => !busy && !ct.connecting && handleSelectDevice(dev)}
                 disabled={!!busy || ct.connecting}
-                className="flex w-full items-center gap-3 rounded-xl border border-border bg-card p-3 text-left transition-colors hover:bg-muted-30 disabled:opacity-50"
+                className="group flex w-full items-center gap-3.5 rounded-xl border border-border bg-card px-4 py-3.5 text-left transition-all hover:border-border-hover hover:bg-muted-30 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
               >
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary-light">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary-light">
                   <Bluetooth className="h-4 w-4 text-primary" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">{label}</p>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="truncate text-sm font-medium text-foreground">{label}</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
                     {busy
                       ? t('devices:ble.busy')
                       : codeName || t('devices:ble.tabTitle')}
@@ -203,23 +217,28 @@ export function BleProvisionTab({ onComplete, dismissSignal = 0 }: BleProvisionT
                   </p>
                 </div>
                 {dev.rssi != null && (
-                  <div className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+                  <div className="flex shrink-0 items-center gap-1 rounded-md bg-muted-30 px-2 py-1 text-xs tabular-nums text-muted-foreground">
                     <Signal className="h-3 w-3" />
                     {dev.rssi} dBm
                   </div>
                 )}
+                <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
               </button>
             )
           })}
         </div>
-        <div className="mt-auto flex shrink-0 flex-col items-center gap-2 pt-3">
-          {ct.scanning ? (
-            <p className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              {t('devices:ble.scanningHint')}
-            </p>
-          ) : null}
-          <div className="flex gap-2">
+        <div className="mt-auto flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border pt-3.5">
+          <div className="min-w-0 flex-1">
+            {ct.scanning ? (
+              <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+                <span className="truncate">{t('devices:ble.scanningHint')}</span>
+              </p>
+            ) : (
+              <p className="truncate text-xs text-muted-foreground">{t('devices:ble.scanHint')}</p>
+            )}
+          </div>
+          <div className="flex shrink-0 gap-2">
             <Button variant="outline" onClick={reset} disabled={ct.connecting}>
               {t('common:cancel')}
             </Button>
@@ -233,20 +252,20 @@ export function BleProvisionTab({ onComplete, dismissSignal = 0 }: BleProvisionT
     )
   }
 
-  // Initial pre-scan: Manual/Auto-parity hero (md / text-lg / text-sm); mid-pane kept.
+  // Initial pre-scan: flat centered layout directly on the dialog surface.
   return (
     <CtProvisionCenter>
       <CtProvisionHero size="md">
         <Bluetooth className="h-7 w-7 text-primary" />
       </CtProvisionHero>
       <div className="max-w-sm space-y-2 text-center">
-        <h3 className="text-lg font-medium">{t('devices:ble.scanTitle')}</h3>
-        <p className="text-sm text-muted-foreground">{t('devices:ble.scanDescShort')}</p>
+        <h3 className="text-lg font-semibold text-foreground">{t('devices:ble.scanTitle')}</h3>
+        <p className="text-sm leading-relaxed text-muted-foreground">{t('devices:ble.scanDescShort')}</p>
       </div>
 
       {!bleSupported ? (
         <div className="max-w-sm space-y-1 text-center">
-          <p className="text-sm text-warning">{t('devices:ble.notSupported')}</p>
+          <p className="text-sm font-medium text-warning">{t('devices:ble.notSupported')}</p>
           <p className="text-xs text-muted-foreground">{t('devices:ble.notSupportedHint')}</p>
         </div>
       ) : (
@@ -256,7 +275,7 @@ export function BleProvisionTab({ onComplete, dismissSignal = 0 }: BleProvisionT
         </Button>
       )}
 
-      <p className="max-w-sm text-center text-xs text-muted-foreground">
+      <p className="max-w-sm text-center text-xs leading-relaxed text-muted-foreground">
         {t('devices:ble.scanHint')}
       </p>
 

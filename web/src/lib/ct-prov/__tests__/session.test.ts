@@ -226,4 +226,18 @@ describe('ct-prov FakeTransport session path', () => {
       ),
     ).toBe('required_field_missing')
   })
+
+  it('maps macOS CoreBluetooth / btleplug stale pairing errors to ble_pairing_removed', () => {
+    expect(
+      formatProvUserMessage(
+        new Error('Btleplug error: Runtime Error: Peer removed pairing information'),
+      ),
+    ).toBe('ble_pairing_removed')
+    expect(
+      formatProvUserMessage('Btleplug error: Runtime Error: Peer removed pairing information'),
+    ).toBe('ble_pairing_removed')
+    expect(
+      formatProvUserMessage(new Error('HCI error: PIN or Key Missing')),
+    ).toBe('ble_pairing_removed')
+  })
 })

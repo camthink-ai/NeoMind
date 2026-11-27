@@ -33,7 +33,7 @@ export interface CtGattChannel {
   /** Subscribe once; handler receives each D2C ATT payload (with 5B fragment header). */
   subscribeD2c(handler: (frame: Uint8Array) => void): Promise<void>
   readMeta(): Promise<CtMetaInfo | null>
-  disconnect(): void
+  disconnect(): Promise<void> | void
 }
 
 function isTauriEnv(): boolean {
@@ -107,11 +107,38 @@ function tryParseAdvFromServiceData(
 }
 
 // ---------------------------------------------------------------------------
-// Scan
+// Scan & Tauri BLE lifecycle coordination
 // ---------------------------------------------------------------------------
 
 /** Default BLE scan window (Tauri). Web Bluetooth uses the system picker instead. */
 export const CT_PROV_BLE_SCAN_MS = 30_000
+
+let activeTauriScan: {
+  id: number
+  stop: (cancelled: boolean) => Promise<void>
+} | null = null
+let nextTauriScanId = 0
+let pendingTauriDisconnect: Promise<void> | null = null
+
+async function awaitPendingTauriDisconnect(): Promise<void> {
+  const pending = pendingTauriDisconnect
+  if (!pending) return
+  try {
+    await pending
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Stop any active Tauri BLE scan early and wait for native `stopScan()`.
+ * Safe no-op in browser mode or when no scan is running.
+ */
+export async function stopBleScan(): Promise<void> {
+  const current = activeTauriScan
+  if (!current) return
+  await current.stop(true)
+}
 
 export async function scanCtDevices(opts?: {
   durationMs?: number
@@ -128,18 +155,65 @@ async function scanTauri(
   durationMs: number,
   onDevices?: (devices: CtScanDevice[]) => void,
 ): Promise<CtScanDevice[]> {
+  await stopBleScan()
+  await awaitPendingTauriDisconnect()
+
   const { startScan, stopScan } = await import('@mnlphlp/plugin-blec')
   const devices: CtScanDevice[] = []
   const seen = new Set<string>()
+  const scanId = ++nextTauriScanId
+
+  let stopped = false
+  let cancelled = false
+  let timer: ReturnType<typeof setTimeout> | null = null
+  let resolveWait: (() => void) | null = null
+  let startPromise: Promise<void> | null = null
+  let stopPromise: Promise<void> | null = null
+
+  const stopOnce = (wasCancelled: boolean): Promise<void> => {
+    if (wasCancelled) cancelled = true
+    if (stopPromise) return stopPromise
+    stopped = true
+    if (timer != null) {
+      clearTimeout(timer)
+      timer = null
+    }
+    if (activeTauriScan?.id === scanId) {
+      activeTauriScan = null
+    }
+    const wake = resolveWait
+    resolveWait = null
+    wake?.()
+
+    stopPromise = (async () => {
+      if (startPromise) {
+        try {
+          await startPromise
+        } catch {
+          return
+        }
+      }
+      try {
+        await stopScan()
+      } catch {
+        /* ignore when adapter already stopped scanning */
+      }
+    })()
+    return stopPromise
+  }
+
+  activeTauriScan = { id: scanId, stop: stopOnce }
 
   const publish = () => {
+    if (stopped) return
     const sorted = [...devices]
       .filter((d) => d.hasCtService)
       .sort((a, b) => (b.rssi ?? -100) - (a.rssi ?? -100))
     onDevices?.(sorted)
   }
 
-  await startScan((found) => {
+  startPromise = startScan((found) => {
+    if (stopped) return
     let added = false
     for (const d of found) {
       if (seen.has(d.address)) continue
@@ -167,11 +241,32 @@ async function scanTauri(
     if (added) publish()
   }, durationMs)
 
-  await new Promise((r) => setTimeout(r, durationMs))
-  await stopScan()
+  try {
+    await startPromise
+  } catch (err) {
+    if (activeTauriScan?.id === scanId) {
+      activeTauriScan = null
+    }
+    throw err
+  }
+
+  if (!stopped) {
+    await new Promise<void>((resolve) => {
+      resolveWait = resolve
+      timer = setTimeout(() => {
+        timer = null
+        resolveWait = null
+        resolve()
+      }, durationMs)
+    })
+  }
+
+  await stopOnce(false)
   devices.sort((a, b) => (b.rssi ?? -100) - (a.rssi ?? -100))
   const finalList = devices.filter((d) => d.hasCtService)
-  onDevices?.(finalList)
+  if (!cancelled) {
+    onDevices?.(finalList)
+  }
   return finalList
 }
 
@@ -198,8 +293,13 @@ async function scanWebBluetooth(): Promise<CtScanDevice[]> {
 class TauriCtGattChannel implements CtGattChannel {
   mtu = 23
   private d2cHandler: ((frame: Uint8Array) => void) | null = null
+  private subscribed = false
+  private disconnectPromise: Promise<void> | null = null
 
   async connect(deviceId: string, onDisconnect?: () => void): Promise<void> {
+    // Stop any in-flight scan and wait for prior disconnect teardown before connecting.
+    await stopBleScan()
+    await awaitPendingTauriDisconnect()
     const { connect } = await import('@mnlphlp/plugin-blec')
     await connect(deviceId, onDisconnect ?? null)
     // blec does not expose negotiated MTU; 23 is always safe for slicing.
@@ -217,6 +317,7 @@ class TauriCtGattChannel implements CtGattChannel {
     await subscribe(CT_D2C, (data) => {
       this.d2cHandler?.(new Uint8Array(data))
     })
+    this.subscribed = true
   }
 
   async readMeta(): Promise<CtMetaInfo | null> {
@@ -229,18 +330,48 @@ class TauriCtGattChannel implements CtGattChannel {
     }
   }
 
-  disconnect(): void {
-    import('@mnlphlp/plugin-blec')
-      .then(async ({ unsubscribe, disconnect }) => {
+  disconnect(): Promise<void> {
+    if (this.disconnectPromise) return this.disconnectPromise
+    this.d2cHandler = null
+    const wasSubscribed = this.subscribed
+    this.subscribed = false
+
+    const prev = pendingTauriDisconnect
+    const task = (async () => {
+      if (prev) {
         try {
-          await unsubscribe(CT_D2C)
+          await prev
         } catch {
           /* ignore */
         }
-        await disconnect()
-      })
-      .catch(() => {})
-    this.d2cHandler = null
+      }
+      try {
+        const { unsubscribe, disconnect } = await import('@mnlphlp/plugin-blec')
+        if (wasSubscribed) {
+          try {
+            await unsubscribe(CT_D2C)
+          } catch {
+            /* ignore */
+          }
+        }
+        try {
+          await disconnect()
+        } catch {
+          /* ignore */
+        }
+      } catch {
+        /* ignore */
+      }
+    })()
+
+    const tracked = task.finally(() => {
+      if (pendingTauriDisconnect === tracked) {
+        pendingTauriDisconnect = null
+      }
+    })
+    this.disconnectPromise = tracked
+    pendingTauriDisconnect = tracked
+    return tracked
   }
 }
 

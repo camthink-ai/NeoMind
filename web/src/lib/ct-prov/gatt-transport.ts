@@ -104,6 +104,6 @@ export class BleGattCtTransport implements ProvTransport {
       p.reject(new Error('transport closed before response arrived'))
     }
     this.pending.clear()
-    this.channel.disconnect()
+    await this.channel.disconnect()
   }
 }

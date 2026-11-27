@@ -20,6 +20,7 @@ import {
   scanCtDevicesWithWebStash,
   softapFailureKind,
   softapHostForModel,
+  stopBleScan,
   type CapabilitiesResult,
   type CtMqttConfig,
   type CtScanDevice,
@@ -126,13 +127,21 @@ export function useCtProvision(channel: CtProvisionChannel): UseCtProvisionRetur
   }, [])
 
   const disposeSession = useCallback(async () => {
+    const client = clientRef.current
+    const transport = transportRef.current
+    clientRef.current = null
+    transportRef.current = null
     try {
-      await clientRef.current?.dispose()
+      if (client) {
+        await client.dispose()
+      } else if (transport) {
+        // Close transport directly when openWithTransport failed before CtSessionClient was stored
+        // (e.g. D2C subscribe failure such as "Peer removed pairing information").
+        await transport.close()
+      }
     } catch {
       /* ignore */
     }
-    clientRef.current = null
-    transportRef.current = null
   }, [])
 
   const checkAdapter = useCallback(async (): Promise<'ok' | 'off' | 'unavailable'> => {
@@ -227,6 +236,8 @@ export function useCtProvision(channel: CtProvisionChannel): UseCtProvisionRetur
         if (device.discovered && device.discovered.provisionable === false) {
           throw new Error('Device is not in provisionable mode')
         }
+        // Stop any running BLE scan before attempting GATT connect.
+        await stopBleScan()
         const channelGatt = await withTimeout(
           openCtGattChannel(device.id, () => {
             setConnected(false)
@@ -235,16 +246,16 @@ export function useCtProvision(channel: CtProvisionChannel): UseCtProvisionRetur
           'BLE connect',
         )
         if (gen !== opGenRef.current) {
-          channelGatt.disconnect()
+          await channelGatt.disconnect()
           return false
         }
         const meta = await channelGatt.readMeta()
         if (gen !== opGenRef.current) {
-          channelGatt.disconnect()
+          await channelGatt.disconnect()
           return false
         }
         if (meta?.busy) {
-          channelGatt.disconnect()
+          await channelGatt.disconnect()
           throw new Error('Device META reports BUSY')
         }
         const transport = new BleGattCtTransport(channelGatt)
@@ -431,6 +442,7 @@ export function useCtProvision(channel: CtProvisionChannel): UseCtProvisionRetur
   const disconnect = useCallback(() => {
     opGenRef.current += 1
     clearBleRetain()
+    void stopBleScan()
     void disposeSession()
     setScanning(false)
     setConnecting(false)

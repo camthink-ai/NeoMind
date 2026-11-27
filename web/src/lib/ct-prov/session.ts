@@ -25,6 +25,9 @@ export class ProvSessionError extends Error {
 export function formatProvUserMessage(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err)
   const lower = raw.toLowerCase()
+  if (lower.includes('peer removed pairing') || lower.includes('pin or key missing')) {
+    return 'ble_pairing_removed'
+  }
   if (lower.includes('wifi_init')) {
     return 'wifi_init_failed'
   }

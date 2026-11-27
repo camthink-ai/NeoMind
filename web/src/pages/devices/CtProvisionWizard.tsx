@@ -168,6 +168,7 @@ function provErrorCopy(
   if (code === 'device_busy') return t('devices:ctProv.errorBusy')
   if (code === 'not_connected') return t('devices:ctProv.errorNotConnected')
   if (code === 'internal_error') return t('devices:ctProv.errorInternal')
+  if (code === 'ble_pairing_removed') return t('devices:ctProv.errorBlePairingRemoved')
   return code
 }
 
@@ -635,8 +636,8 @@ export function CtProvisionWizard({
         <CtProvisionHero>
           <Loader2 className="h-7 w-7 animate-spin text-primary" />
         </CtProvisionHero>
-        <div className="space-y-1 text-center">
-          <h3 className="text-base font-medium">{t('devices:ble.provisioning')}</h3>
+        <div className="max-w-sm space-y-1.5 text-center">
+          <h3 className="text-base font-semibold text-foreground">{t('devices:ble.provisioning')}</h3>
           <p className="text-sm text-muted-foreground">
             {ct.provisioningStep === 'writingConfig' && t('devices:ble.status.writingMqtt')}
             {ct.provisioningStep === 'closing' && t('devices:ctProv.closingSession')}
@@ -644,7 +645,7 @@ export function CtProvisionWizard({
             {!ct.provisioningStep && t('devices:ctProv.applyingHint')}
           </p>
         </div>
-        <Button variant="outline" onClick={onReset}>
+        <Button variant="outline" onClick={onReset} className="min-w-[140px]">
           {t('common:cancel')}
         </Button>
       </CtProvisionCenter>
@@ -657,19 +658,21 @@ export function CtProvisionWizard({
         <CtProvisionHero tone="success">
           <CheckCircle2 className="h-7 w-7 text-success" />
         </CtProvisionHero>
-        <div className="space-y-0.5 text-center">
-          <h3 className="text-base font-medium">
+        <div className="max-w-sm space-y-1 text-center">
+          <h3 className="text-base font-semibold text-foreground">
             {isReprovision ? t('devices:ble.reprovisionTitle') : t('devices:ble.successTitle')}
           </h3>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm leading-relaxed text-muted-foreground">
             {isReprovision ? t('devices:ble.reprovisionDesc') : t('devices:ble.successDesc')}
           </p>
         </div>
         {deviceId && !isReprovision && (
-          <p className="text-sm text-success">{t('devices:ble.registered', { id: deviceId })}</p>
+          <p className="rounded-lg bg-success-light px-3 py-1.5 text-xs font-medium text-success">
+            {t('devices:ble.registered', { id: deviceId })}
+          </p>
         )}
         <Button
-          variant="outline"
+          className="min-w-[160px]"
           onClick={() => {
             if (deviceId) onComplete?.(deviceId)
           }}
@@ -687,62 +690,66 @@ export function CtProvisionWizard({
         <CtProvisionHero tone="error">
           <XCircle className="h-7 w-7 text-error" />
         </CtProvisionHero>
-        <div className="max-w-sm space-y-1 text-center">
-          <h3 className="text-base font-medium">{t('devices:ble.failedTitle')}</h3>
-          <p className="text-sm text-muted-foreground">{failMsg}</p>
+        <div className="max-w-sm space-y-1.5 text-center">
+          <h3 className="text-base font-semibold text-foreground">{t('devices:ble.failedTitle')}</h3>
+          <p className="text-sm leading-relaxed text-muted-foreground">{failMsg}</p>
           {failureHint && <p className="text-xs text-muted-foreground">{failureHint}</p>}
         </div>
-        <Button onClick={onReset}>{t('common:retry')}</Button>
+        <Button onClick={onReset} className="min-w-[160px]">{t('common:retry')}</Button>
       </CtProvisionCenter>
     )
   }
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-3xl flex-1 flex-col self-center py-4">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-3xl flex-1 flex-col self-center py-5">
       <StepDots current={step} />
 
-      {/* Connected strip — compact, not a competing card stack */}
-      <div className="mb-4 flex items-center gap-3 rounded-lg border border-border bg-muted-30 px-3 py-2.5">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-success-light">
+      {/* Connected strip — compact card with crisp status pill */}
+      <div className="mb-4 flex items-center gap-3 rounded-xl border border-border bg-card px-3.5 py-2.5">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-success-light">
           <ChannelIcon className="h-4 w-4 text-success" />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium">
+          <p className="truncate text-sm font-medium text-foreground">
             {ct.deviceInfo?.deviceName || ct.deviceInfo?.model}
           </p>
-          <p className="text-xs text-muted-foreground">
-            <span className="text-success">{t('devices:ble.connected')}</span>
-            {ct.deviceInfo?.model ? ` · ${ct.deviceInfo.model}` : ''}
-          </p>
+          {ct.deviceInfo?.model && (
+            <p className="text-xs text-muted-foreground">{ct.deviceInfo.model}</p>
+          )}
         </div>
+        <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-success-light px-2.5 py-0.5 text-xs font-medium text-success">
+          <span className="h-1.5 w-1.5 rounded-full bg-success" aria-hidden />
+          {t('devices:ble.connected')}
+        </span>
       </div>
 
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pb-3">
         {step === 'info' && (
           <div className="space-y-4">
-            <div className="space-y-1 text-center">
-              <h3 className="text-base font-medium">{t('devices:ctProv.stepInfoTitle')}</h3>
-              <p className="text-sm text-muted-foreground">{t('devices:ctProv.stepInfoDesc')}</p>
+            <div className="space-y-0.5">
+              <h3 className="text-base font-semibold text-foreground">{t('devices:ctProv.stepInfoTitle')}</h3>
+              <p className="text-xs text-muted-foreground">{t('devices:ctProv.stepInfoDesc')}</p>
             </div>
-            <div className="space-y-3 rounded-xl border border-border p-4 text-sm">
+            <div className="divide-y divide-border rounded-xl border border-border bg-card px-4 text-sm">
               <InfoRow label={t('devices:ble.deviceName')} value={ct.deviceInfo?.deviceName || '—'} />
               <InfoRow
                 label={t('devices:ctProv.serialNumber')}
                 value={ct.deviceInfo?.serialNumber || '—'}
+                mono
               />
               <InfoRow label={t('devices:ctProv.model')} value={ct.deviceInfo?.model || '—'} />
-              <InfoRow label={t('devices:ctProv.firmware')} value={ct.deviceInfo?.firmware || '—'} />
+              <InfoRow label={t('devices:ctProv.firmware')} value={ct.deviceInfo?.firmware || '—'} mono />
             </div>
           </div>
         )}
 
         {step === 'capabilities' && (
           <div className="space-y-4">
-            <div className="space-y-1 text-center">
-              <h3 className="text-base font-medium">{t('devices:ctProv.stepCapsTitle')}</h3>
-              <p className="text-sm text-muted-foreground">{t('devices:ctProv.stepCapsDesc')}</p>
+            <div className="space-y-0.5">
+              <h3 className="text-base font-semibold text-foreground">{t('devices:ctProv.stepCapsTitle')}</h3>
+              <p className="text-xs text-muted-foreground">{t('devices:ctProv.stepCapsDesc')}</p>
             </div>
-            <div className="space-y-3 rounded-xl border border-border p-4">
+            <div className="space-y-3 rounded-xl border border-border bg-card p-4">
               {/* Operator checklist — not raw protocol section names. */}
               <ul className="space-y-2.5">
                 {needsWifi && (
@@ -827,9 +834,9 @@ export function CtProvisionWizard({
 
         {step === 'edit' && (
           <div className="space-y-4">
-            <div className="space-y-1 text-center">
-              <h3 className="text-base font-medium">{t('devices:ctProv.stepEditTitle')}</h3>
-              <p className="text-sm text-muted-foreground">{t('devices:ctProv.stepEditDesc')}</p>
+            <div className="space-y-0.5">
+              <h3 className="text-base font-semibold text-foreground">{t('devices:ctProv.stepEditTitle')}</h3>
+              <p className="text-xs text-muted-foreground">{t('devices:ctProv.stepEditDesc')}</p>
             </div>
 
             <Field>
@@ -846,7 +853,7 @@ export function CtProvisionWizard({
             </Field>
 
             {needsWifi && (
-              <div className="space-y-3 rounded-xl border border-border p-4">
+              <div className="space-y-3 rounded-xl border border-border bg-card p-4">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <Wifi className="h-4 w-4 text-primary" />
@@ -1008,7 +1015,7 @@ export function CtProvisionWizard({
             )}
 
             {needsCellular && (
-              <div className="space-y-3 rounded-xl border border-border p-4">
+              <div className="space-y-3 rounded-xl border border-border bg-card p-4">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <Radio className="h-4 w-4 text-primary" />
@@ -1148,7 +1155,7 @@ export function CtProvisionWizard({
             )}
 
             {!needsWifi && !needsCellular && (
-              <div className="space-y-2 rounded-xl border border-border p-4">
+              <div className="space-y-2 rounded-xl border border-border bg-card p-4">
                 <div className="flex items-center gap-2">
                   <Signal className="h-4 w-4 text-primary" />
                   <span className="text-sm font-medium">{t('devices:ble.cat1NoWifi')}</span>
@@ -1158,7 +1165,7 @@ export function CtProvisionWizard({
             )}
 
             {needsWebhook && (
-              <div className="space-y-3 rounded-xl border border-border p-4">
+              <div className="space-y-3 rounded-xl border border-border bg-card p-4">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <Globe className="h-4 w-4 text-primary" />
@@ -1245,7 +1252,7 @@ export function CtProvisionWizard({
             )}
 
             <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
-              <div className="rounded-xl border border-border">
+              <div className="rounded-xl border border-border bg-card">
                 <CollapsibleTrigger className="flex w-full items-center justify-between p-4 text-left">
                   <div className="flex items-center gap-2">
                     <Server className="h-4 w-4 text-primary" />
@@ -1544,11 +1551,13 @@ export function CtProvisionWizard({
   )
 }
 
-function InfoRow({ label, value }: { label: string; value: string }) {
+function InfoRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
-    <div className="flex items-start justify-between gap-3">
+    <div className="flex items-start justify-between gap-4 py-3">
       <span className="shrink-0 text-muted-foreground">{label}</span>
-      <span className="break-all text-right font-medium">{value}</span>
+      <span className={cn('break-all text-right font-medium text-foreground', mono && 'font-mono')}>
+        {value}
+      </span>
     </div>
   )
 }

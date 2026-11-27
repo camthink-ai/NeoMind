@@ -175,9 +175,9 @@ export function AddDeviceGlobalDialog({
       />
 
       <FullScreenDialogContent>
-        {/* Sidebar: compact macOS/Linear-style tab navigation (hidden on mobile) */}
+        {/* Sidebar: tab navigation (hidden on mobile) */}
         <FullScreenDialogSidebar>
-          <nav className="flex flex-col gap-0.5 px-2.5 py-3">
+          <nav className="flex flex-col py-2 gap-0.5 px-2">
             {allTabs.map((tab) => {
               const Icon = tab.icon
               const isActive = activeTab === tab.value
@@ -187,14 +187,24 @@ export function AddDeviceGlobalDialog({
                   type="button"
                   onClick={() => setActiveTab(tab.value)}
                   className={cn(
-                    'flex h-9 items-center gap-2.5 rounded-lg px-2.5 text-left text-sm transition-colors',
+                    'flex items-center gap-2.5 px-3 py-3 rounded-lg text-sm font-medium transition-all text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
                     isActive
-                      ? 'bg-muted font-medium text-foreground'
-                      : 'text-muted-foreground hover:bg-muted-30 hover:text-foreground'
+                      ? 'bg-card shadow-sm border border-primary-light text-primary'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-muted-30 border border-transparent'
                   )}
                 >
-                  <Icon className="h-4 w-4 shrink-0" strokeWidth={1.75} />
-                  <span className="truncate">{t(tab.labelKey)}</span>
+                  <div className={cn(
+                    'w-8 h-8 rounded-lg flex items-center justify-center shrink-0',
+                    isActive ? 'bg-primary text-primary-foreground' : 'bg-muted-30'
+                  )}>
+                    <Icon className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <span className="truncate block">{t(tab.labelKey)}</span>
+                    <span className={cn(textMini, 'leading-tight block mt-0.5 truncate text-muted-foreground')}>
+                      {t(tab.descKey)}
+                    </span>
+                  </div>
                 </button>
               )
             })}
@@ -227,7 +237,7 @@ export function AddDeviceGlobalDialog({
             <div
               className={cn(
                 'flex w-full flex-1 flex-col',
-                isMobile ? 'px-3 py-4' : 'mx-auto max-w-2xl px-5 py-6 md:px-8',
+                isMobile ? 'px-3 py-4' : 'mx-auto max-w-3xl px-5 py-6 md:px-8',
                 (activeTab === 'ble' || activeTab === 'ap') && 'min-h-0 max-w-none py-0 md:py-0',
               )}
             >
@@ -303,6 +313,32 @@ export function AddDeviceGlobalDialog({
 }
 
 // ---------------------------------------------------------------------------
+// Shared Tab Page Header & Section Card
+// ---------------------------------------------------------------------------
+
+function TabPageHeader({
+  icon: Icon,
+  title,
+  description,
+}: {
+  icon: LucideIcon
+  title: string
+  description: string
+}) {
+  return (
+    <div className="flex items-center gap-3.5 border-b border-border pb-4">
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary-light">
+        <Icon className="h-5 w-5 text-primary" />
+      </div>
+      <div className="min-w-0">
+        <h3 className="text-base font-semibold text-foreground">{title}</h3>
+        <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{description}</p>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Auto Discovery Tab — Rich guided experience
 // ---------------------------------------------------------------------------
 
@@ -311,34 +347,19 @@ interface StepCardProps {
   icon: LucideIcon
   title: string
   description: string
-  status?: 'done' | 'active' | 'pending'
 }
 
-function StepCard({ step, icon: Icon, title, description, status = 'pending' }: StepCardProps) {
+function StepCard({ step, icon: Icon, title, description }: StepCardProps) {
   return (
-    <div className="flex gap-3 py-2.5">
-      {/* Fixed size-8 badge for every status — success-light is translucent and
-          CheckCircle2 vs digit looked like different chip sizes. */}
-      <div
-        className={cn(
-          'flex size-8 shrink-0 items-center justify-center rounded-lg text-xs font-medium tabular-nums',
-          status === 'done' && 'bg-card text-success ring-1 ring-inset ring-success',
-          status === 'active' && 'bg-primary text-primary-foreground',
-          status === 'pending' && 'bg-card text-muted-foreground ring-1 ring-inset ring-border',
-        )}
-        aria-hidden={status !== 'active'}
-      >
-        {status === 'done' ? (
-          <CheckCircle2 className="size-4 shrink-0" aria-hidden />
-        ) : (
+    <div className="flex flex-col gap-2.5 rounded-xl border border-border bg-card p-3.5">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-primary text-xs font-semibold tabular-nums text-primary-foreground">
           <span className="leading-none">{step}</span>
-        )}
-      </div>
-      <div className="min-w-0 flex-1 space-y-0.5 pt-0.5">
-        <div className="flex items-center gap-2">
-          <Icon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-          <h4 className="text-sm font-medium">{title}</h4>
         </div>
+        <Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+      </div>
+      <div className="min-w-0 space-y-1">
+        <h4 className="text-sm font-medium text-foreground">{title}</h4>
         <p className="text-xs leading-relaxed text-muted-foreground">{description}</p>
       </div>
     </div>
@@ -391,12 +412,6 @@ function AutoDiscoveryTab({ renderFooter }: { renderFooter: (node: ReactNode) =>
   // Don't use serverIp:apiPort as it may not be accessible from external networks
   const webhookBaseUrl = `${serverUrl}/api/devices/{device_id}/webhook`
   const enabledBrokers = brokers.filter(b => b.enabled)
-  const hasAnyBroker = brokerRunning || enabledBrokers.length > 0
-
-  // Determine step statuses
-  const step1Status: StepCardProps['status'] = hasAnyBroker ? 'done' : 'active'
-  const step2Status: StepCardProps['status'] = hasAnyBroker ? 'active' : 'pending'
-  const step3Status: StepCardProps['status'] = hasAnyBroker ? 'active' : 'pending'
 
   if (loading) {
     return (
@@ -409,41 +424,36 @@ function AutoDiscoveryTab({ renderFooter }: { renderFooter: (node: ReactNode) =>
 
   return (
     <div className="space-y-6">
-      <div className="text-center max-w-md mx-auto space-y-2">
-        <div className="w-14 h-14 mx-auto rounded-xl bg-primary-light flex items-center justify-center">
-          <Search className="w-7 h-7 text-primary" />
-        </div>
-        <h3 className="text-lg font-medium">{t('devices:auto.title')}</h3>
-        <p className="text-sm text-muted-foreground">{t('devices:auto.tabDesc')}</p>
-      </div>
+      <TabPageHeader
+        icon={Search}
+        title={t('devices:auto.title')}
+        description={t('devices:auto.tabDesc')}
+      />
 
-      <FormSectionGroup>
-      {/* How it works — calm step list (MQTT pending drafts ≠ SoftAP) */}
+      <FormSectionGroup className="space-y-5">
+      {/* How it works — compact 3-column step cards on desktop */}
       <FormSection
         title={t('devices:auto.howItWorks')}
         description={t('devices:auto.howItWorksDesc')}
       >
-        <div className="rounded-xl border bg-card px-4 py-2 divide-y divide-border">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <StepCard
             step={1}
             icon={Radio}
             title={t('devices:auto.step1_title')}
             description={t('devices:auto.step1_desc')}
-            status={step1Status}
           />
           <StepCard
             step={2}
             icon={Wifi}
             title={t('devices:auto.step2_title')}
             description={t('devices:auto.step2_desc')}
-            status={step2Status}
           />
           <StepCard
             step={3}
             icon={Search}
             title={t('devices:auto.step3_title')}
             description={t('devices:auto.step3_desc')}
-            status={step3Status}
           />
         </div>
       </FormSection>
@@ -453,23 +463,24 @@ function AutoDiscoveryTab({ renderFooter }: { renderFooter: (node: ReactNode) =>
         title={t('devices:auto.brokerInfo')}
         description={t('devices:auto.brokerInfoDesc')}
       >
-        {/* Method toggle — segmented, matches Manual / CT-Prov calm controls */}
-        <div className="grid grid-cols-2 rounded-lg bg-muted p-1 mb-4">
+        {/* Method toggle — crisp segmented control with icons */}
+        <div className="mb-3 grid grid-cols-2 rounded-xl border border-border bg-muted-30 p-1">
           {([
-            { key: 'mqtt' as const },
-            { key: 'webhook' as const },
-          ]).map(({ key }) => (
+            { key: 'mqtt' as const, icon: Radio },
+            { key: 'webhook' as const, icon: Wifi },
+          ]).map(({ key, icon: MethodIcon }) => (
             <button
               key={key}
               type="button"
               onClick={() => setActiveMethod(key)}
               className={cn(
-                'min-h-11 rounded-md px-3 text-sm font-medium transition-colors',
+                'flex min-h-10 sm:min-h-0 sm:h-9 items-center justify-center gap-2 rounded-lg px-3 text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
                 activeMethod === key
-                  ? 'bg-background text-foreground shadow-sm'
-                  : 'text-muted-foreground',
+                  ? 'bg-card text-foreground shadow-sm ring-1 ring-inset ring-border'
+                  : 'text-muted-foreground hover:text-foreground',
               )}
             >
+              <MethodIcon className="h-4 w-4 shrink-0" />
               {t(`devices:auto.method${key.charAt(0).toUpperCase() + key.slice(1)}`)}
             </button>
           ))}
@@ -479,34 +490,67 @@ function AutoDiscoveryTab({ renderFooter }: { renderFooter: (node: ReactNode) =>
         {activeMethod === 'mqtt' && (
           <div className="space-y-3">
             {/* Built-in broker */}
-            <div className="rounded-xl border bg-card overflow-hidden">
-              <div className={cn(
-                'flex items-center gap-2 px-4 py-2.5 text-sm font-medium',
-                brokerRunning
-                  ? 'bg-success-light text-success'
-                  : 'bg-error-light text-error'
-              )}>
-                {brokerRunning ? (
-                  <CheckCircle2 className="h-4 w-4" />
-                ) : (
-                  <XCircle className="h-4 w-4" />
-                )}
-                {t('devices:auto.builtInBroker')}
-                <span className="ml-auto">{brokerRunning ? t('devices:auto.brokerRunning') : t('devices:auto.brokerStopped')}</span>
+            <div className="overflow-hidden rounded-xl border border-border bg-card">
+              <div className="flex items-center gap-2.5 border-b border-border bg-muted-30 px-4 py-2.5">
+                <Radio className="h-4 w-4 shrink-0 text-primary" />
+                <span className="truncate text-sm font-medium text-foreground">
+                  {t('devices:auto.builtInBroker')}
+                </span>
+                <span className={cn(
+                  'ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium',
+                  brokerRunning
+                    ? 'bg-success-light text-success'
+                    : 'bg-error-light text-error'
+                )}>
+                  {brokerRunning ? (
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                  ) : (
+                    <XCircle className="h-3.5 w-3.5" />
+                  )}
+                  {brokerRunning ? t('devices:auto.brokerRunning') : t('devices:auto.brokerStopped')}
+                </span>
               </div>
               <div className="p-4 space-y-3">
                 <div className={cn("gap-3", isMobile ? "grid grid-cols-1" : "grid grid-cols-2")}>
                   <div className="space-y-1">
                     <span className="text-xs text-muted-foreground">{t('devices:auto.protocol')}</span>
-                    <code className="block min-w-0 break-all text-sm font-mono bg-muted-30 rounded-md px-3 py-1.5">
-                      {embeddedConfig?.tls_enabled ? 'mqtts://' : 'mqtt://'}{serverIp}:{brokerPort}
-                    </code>
+                    <div className="flex items-center gap-1.5 rounded-lg border border-border bg-muted-30 px-3 py-1.5">
+                      <code className="min-w-0 flex-1 break-all font-mono text-sm text-foreground">
+                        {embeddedConfig?.tls_enabled ? 'mqtts://' : 'mqtt://'}{serverIp}:{brokerPort}
+                      </code>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 shrink-0 sm:h-7 sm:w-7"
+                        onClick={() => {
+                          copyToClipboard(`${embeddedConfig?.tls_enabled ? 'mqtts://' : 'mqtt://'}${serverIp}:${brokerPort}`)
+                          toast({ title: t('common:copied') })
+                        }}
+                      >
+                        <Copy className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
                   </div>
                   <div className="space-y-1">
                     <span className="text-xs text-muted-foreground">{t('devices:auto.brokerAddress')}</span>
-                    <code className="block min-w-0 break-all text-sm font-mono bg-muted-30 rounded-md px-3 py-1.5">
-                      {serverIp}:{brokerPort}
-                    </code>
+                    <div className="flex items-center gap-1.5 rounded-lg border border-border bg-muted-30 px-3 py-1.5">
+                      <code className="min-w-0 flex-1 break-all font-mono text-sm text-foreground">
+                        {serverIp}:{brokerPort}
+                      </code>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 shrink-0 sm:h-7 sm:w-7"
+                        onClick={() => {
+                          copyToClipboard(`${serverIp}:${brokerPort}`)
+                          toast({ title: t('common:copied') })
+                        }}
+                      >
+                        <Copy className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
                   </div>
                 </div>
                 {/* TLS & Auth status badges */}
@@ -550,11 +594,12 @@ function AutoDiscoveryTab({ renderFooter }: { renderFooter: (node: ReactNode) =>
                   <div className="space-y-1">
                     <span className="text-xs text-muted-foreground">{t('devices:auto.authInfo')}</span>
                     {embeddedConfig.credentials.map((cred) => (
-                      <div key={cred.username} className="flex items-center gap-2">
-                        <code className="min-w-0 flex-1 truncate text-sm font-mono bg-muted-30 rounded-md px-3 py-1.5">
+                      <div key={cred.username} className="flex items-center gap-2 rounded-lg border border-border bg-muted-30 px-3 py-1.5">
+                        <code className="min-w-0 flex-1 truncate text-sm font-mono">
                           {cred.username} / {cred.password}
                         </code>
                         <Button
+                          type="button"
                           variant="ghost"
                           size="icon"
                           className="shrink-0 h-7 w-7 sm:h-7 sm:w-7"
@@ -574,35 +619,56 @@ function AutoDiscoveryTab({ renderFooter }: { renderFooter: (node: ReactNode) =>
 
             {/* External brokers — full details from /api/brokers */}
             {enabledBrokers.map((broker) => (
-              <div key={broker.id} className="rounded-xl border bg-card overflow-hidden">
-                <div className={cn(
-                  'flex items-center gap-2 px-4 py-2.5 text-sm font-medium',
-                  broker.connected
-                    ? 'bg-success-light text-success'
-                    : 'bg-error-light text-error'
-                )}>
-                  {broker.connected ? (
-                    <CheckCircle2 className="h-4 w-4" />
-                  ) : (
-                    <XCircle className="h-4 w-4" />
-                  )}
-                  <span className="truncate">{broker.name}</span>
-                  <span className="ml-auto text-xs">{t('devices:auto.externalBroker')}</span>
-                  {broker.tls && (
-                    <span className="text-xs bg-muted-30 px-1.5 py-0.5 rounded">{t('devices:auto.tlsEnabled')}</span>
-                  )}
+              <div key={broker.id} className="overflow-hidden rounded-xl border border-border bg-card">
+                <div className="flex items-center gap-2.5 border-b border-border bg-muted-30 px-4 py-2.5">
+                  <Network className="h-4 w-4 shrink-0 text-primary" />
+                  <span className="truncate text-sm font-medium text-foreground">{broker.name}</span>
+                  <div className="ml-auto flex shrink-0 items-center gap-1.5">
+                    {broker.tls && (
+                      <span className="rounded-full bg-success-light px-2 py-0.5 text-xs font-medium text-success">
+                        {t('devices:auto.tlsEnabled')}
+                      </span>
+                    )}
+                    <span className="rounded-full bg-background px-2 py-0.5 text-xs text-muted-foreground ring-1 ring-inset ring-border">
+                      {t('devices:auto.externalBroker')}
+                    </span>
+                    <span className={cn(
+                      'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium',
+                      broker.connected ? 'bg-success-light text-success' : 'bg-error-light text-error'
+                    )}>
+                      {broker.connected ? (
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                      ) : (
+                        <XCircle className="h-3.5 w-3.5" />
+                      )}
+                    </span>
+                  </div>
                 </div>
                 <div className="p-4 space-y-3">
                   <div className={cn("gap-3", isMobile ? "grid grid-cols-1" : "grid grid-cols-2")}>
                     <div className="space-y-1">
                       <span className="text-xs text-muted-foreground">{t('devices:auto.brokerAddress')}</span>
-                      <code className="block text-sm font-mono bg-muted-30 rounded-md px-3 py-1.5 break-all">
-                        {broker.broker}
-                      </code>
+                      <div className="flex items-center gap-1.5 rounded-lg border border-border bg-muted-30 px-3 py-1.5">
+                        <code className="min-w-0 flex-1 break-all font-mono text-sm">
+                          {broker.broker}
+                        </code>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 shrink-0 sm:h-7 sm:w-7"
+                          onClick={() => {
+                            copyToClipboard(`${broker.broker}:${broker.port}`)
+                            toast({ title: t('common:copied') })
+                          }}
+                        >
+                          <Copy className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
                     </div>
                     <div className="space-y-1">
                       <span className="text-xs text-muted-foreground">{t('devices:auto.brokerPort')}</span>
-                      <code className="block min-w-0 break-all text-sm font-mono bg-muted-30 rounded-md px-3 py-1.5">
+                      <code className="block min-w-0 break-all rounded-lg border border-border bg-muted-30 px-3 py-2 font-mono text-sm">
                         {broker.port}
                       </code>
                     </div>
@@ -611,11 +677,12 @@ function AutoDiscoveryTab({ renderFooter }: { renderFooter: (node: ReactNode) =>
                   {broker.username && (
                     <div className="space-y-1">
                       <span className="text-xs text-muted-foreground">{t('devices:auto.authInfo')}</span>
-                      <div className="flex items-center gap-2">
-                        <code className="min-w-0 flex-1 truncate text-sm font-mono bg-muted-30 rounded-md px-3 py-1.5">
+                      <div className="flex items-center gap-2 rounded-lg border border-border bg-muted-30 px-3 py-1.5">
+                        <code className="min-w-0 flex-1 truncate text-sm font-mono">
                           {broker.username} / ••••••••
                         </code>
                         <Button
+                          type="button"
                           variant="ghost"
                           size="icon"
                           className="shrink-0 h-7 w-7 sm:h-7 sm:w-7"
@@ -634,13 +701,14 @@ function AutoDiscoveryTab({ renderFooter }: { renderFooter: (node: ReactNode) =>
                   {broker.subscribe_topics && broker.subscribe_topics.length > 0 && (
                     <div className="space-y-1">
                       <span className="text-xs text-muted-foreground">{t('devices:auto.subscribeTopics')}</span>
-                      <div className="space-y-1">
+                      <div className="space-y-1.5">
                         {broker.subscribe_topics.map((topic, i) => (
-                          <div key={i} className="flex items-center gap-2">
-                            <code className="min-w-0 flex-1 break-all text-sm font-mono bg-muted-30 rounded-md px-3 py-1.5">
+                          <div key={i} className="flex items-center gap-2 rounded-lg border border-border bg-muted-30 px-3 py-1.5">
+                            <code className="min-w-0 flex-1 break-all text-sm font-mono">
                               {topic}
                             </code>
                             <Button
+                              type="button"
                               variant="ghost"
                               size="icon"
                               className="shrink-0 h-7 w-7 sm:h-7 sm:w-7"
@@ -664,23 +732,38 @@ function AutoDiscoveryTab({ renderFooter }: { renderFooter: (node: ReactNode) =>
 
         {/* Webhook panel */}
         {activeMethod === 'webhook' && (
-          <div className="rounded-xl border bg-card p-4 space-y-3">
+          <div className="rounded-xl border border-border bg-card p-4 space-y-3.5">
             <p className="text-xs text-muted-foreground leading-relaxed">
               {t('devices:auto.webhookEndpointDesc')}
             </p>
             <div className="space-y-1">
               <span className="text-xs text-muted-foreground">{t('devices:auto.webhookEndpoint')}</span>
-              <code className="block text-sm font-mono bg-muted-30 rounded-md px-3 py-2 break-all">
-                {webhookBaseUrl}
-              </code>
+              <div className="flex items-center gap-2 rounded-lg border border-border bg-muted-30 px-3 py-1.5">
+                <code className="min-w-0 flex-1 break-all font-mono text-sm">
+                  {webhookBaseUrl}
+                </code>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 shrink-0 sm:h-7 sm:w-7"
+                  onClick={() => {
+                    copyToClipboard(webhookBaseUrl)
+                    toast({ title: t('common:copied') })
+                  }}
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                </Button>
+              </div>
             </div>
             <p className="text-xs text-muted-foreground leading-relaxed">
               {t('devices:auto.webhookUrlHint')}
             </p>
-            <div className="space-y-1">
+            <div className="space-y-1.5">
               <div className="flex items-center justify-between">
                 <span className="text-xs text-muted-foreground">{t('devices:auto.webhookCurlTitle')}</span>
                 <Button
+                  type="button"
                   variant="ghost"
                   size="icon"
                   className="h-7 w-7 shrink-0 sm:h-7 sm:w-7"
@@ -693,7 +776,7 @@ function AutoDiscoveryTab({ renderFooter }: { renderFooter: (node: ReactNode) =>
                   <Copy className="h-3.5 w-3.5" />
                 </Button>
               </div>
-              <pre className="text-xs font-mono bg-muted-30 rounded-md px-3 py-2 overflow-x-auto whitespace-pre leading-relaxed">{`curl -X POST ${serverUrl}/api/devices/my-sensor-001/webhook \\
+              <pre className="overflow-x-auto whitespace-pre rounded-lg border border-border bg-muted-30 px-3.5 py-2.5 font-mono text-xs leading-relaxed">{`curl -X POST ${serverUrl}/api/devices/my-sensor-001/webhook \\
   -H "Content-Type: application/json" \\
   -d '{
     "data": {
@@ -708,10 +791,10 @@ function AutoDiscoveryTab({ renderFooter }: { renderFooter: (node: ReactNode) =>
 
       {/* Tips */}
       <FormSection title={t('devices:auto.tips')}>
-        <div className="space-y-2">
+        <div className="rounded-xl border border-border bg-muted-30 p-4 space-y-2">
           {[1, 2, 3].map((n) => (
-            <div key={n} className="flex items-start gap-2 text-sm text-muted-foreground">
-              <span className="text-xs leading-5 mt-px">&#8226;</span>
+            <div key={n} className="flex items-start gap-2.5 text-xs leading-relaxed text-muted-foreground">
+              <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground" aria-hidden />
               <span>{t(`devices:auto.tip${n}`)}</span>
             </div>
           ))}
@@ -867,18 +950,16 @@ export function ManualAddForm({
   }, [selectedDeviceType, adding, handleSubmit, renderFooter, t])
 
   return (
-    <div className="space-y-6">
-      <div className="text-center max-w-md mx-auto space-y-2">
-        <div className="w-14 h-14 mx-auto rounded-xl bg-primary-light flex items-center justify-center">
-          <Pencil className="w-7 h-7 text-primary" />
-        </div>
-        <h3 className="text-lg font-medium">{t('devices:add.title')}</h3>
-        <p className="text-sm text-muted-foreground">{t('devices:add.tabDesc')}</p>
-      </div>
+    <div className="space-y-5">
+      <TabPageHeader
+        icon={Pencil}
+        title={t('devices:add.title')}
+        description={t('devices:add.tabDesc')}
+      />
 
-    <FormSectionGroup>
+    <FormSectionGroup className="space-y-4">
       {/* Basic Info */}
-      <FormSection>
+      <div className="rounded-xl border border-border bg-card p-5 space-y-4">
         {/* Device Type */}
         <FormField label={t('devices:deviceType')} required error={errors.deviceType}>
           <Select value={selectedDeviceType} onValueChange={(v) => { setSelectedDeviceType(v); setErrors(prev => { const next = { ...prev }; delete next.deviceType; return next }) }}>
@@ -928,17 +1009,18 @@ export function ManualAddForm({
             />
           </FormField>
         </div>
-      </FormSection>
+      </div>
 
       {/* Connection Settings Section */}
-      <FormSection
-        title={t('devices:add.connectionSettings')}
-        description={t('devices:add.connectionSettingsDesc')}
-      >
-        {/* Adapter type — compact segmented choice; the labels carry enough
-            meaning without two decorative icon cards. */}
-        <div className="grid grid-cols-2 rounded-lg bg-muted p-1">
-          {ADAPTER_TYPES.map(({ value }) => {
+      <div className="rounded-xl border border-border bg-card p-5 space-y-4">
+        <div className="space-y-0.5">
+          <h4 className="text-sm font-semibold text-foreground">{t('devices:add.connectionSettings')}</h4>
+          <p className="text-xs text-muted-foreground">{t('devices:add.connectionSettingsDesc')}</p>
+        </div>
+
+        {/* Adapter type — crisp segmented control with icons */}
+        <div className="grid grid-cols-2 rounded-xl border border-border bg-muted-30 p-1">
+          {ADAPTER_TYPES.map(({ value, icon: AdapterIcon }) => {
             const isActive = adapterType === value
             return (
               <button
@@ -946,12 +1028,13 @@ export function ManualAddForm({
                 type="button"
                 onClick={() => setAdapterType(value)}
                 className={cn(
-                  'min-h-11 rounded-md px-3 text-sm font-medium transition-colors',
+                  'flex min-h-10 sm:min-h-0 sm:h-9 items-center justify-center gap-2 rounded-lg px-3 text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
                   isActive
-                    ? 'bg-background text-foreground shadow-sm'
-                    : 'text-muted-foreground'
+                    ? 'bg-card text-foreground shadow-sm ring-1 ring-inset ring-border'
+                    : 'text-muted-foreground hover:text-foreground'
                 )}
               >
+                <AdapterIcon className="h-4 w-4 shrink-0" />
                 {t(`devices:add.adapterLabel_${value}`)}
               </button>
             )
@@ -960,19 +1043,21 @@ export function ManualAddForm({
 
         {/* MQTT Config */}
         {adapterType === 'mqtt' && (
-          <div className="space-y-3 pt-1">
+          <div className="space-y-4 pt-0.5">
             {/* Broker connection guide */}
-            <div className="rounded-lg border bg-muted-30 p-4 space-y-3">
-              <div className="flex items-center gap-2 text-sm font-medium">
-                <Radio className="h-4 w-4 text-accent-orange" />
-                {t('devices:add.connectionGuide')}
+            <div className="rounded-xl border border-border bg-muted-30 p-4 space-y-3">
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                  <Radio className="h-4 w-4 text-primary" />
+                  {t('devices:add.connectionGuide')}
+                </div>
+                <p className="text-xs text-muted-foreground">{t('devices:add.connectionGuideDesc')}</p>
               </div>
-              <p className="text-xs text-muted-foreground">{t('devices:add.connectionGuideDesc')}</p>
 
               {/* Broker selector */}
               <FormField label={t('devices:add.selectBroker')}>
                 <Select value={selectedBrokerId} onValueChange={setSelectedBrokerId}>
-                  <SelectTrigger>
+                  <SelectTrigger className="bg-background">
                     <SelectValue placeholder={t('devices:add.selectBrokerPlaceholder')} />
                   </SelectTrigger>
                   <SelectContent>
@@ -1006,19 +1091,33 @@ export function ManualAddForm({
 
               {/* Connection details card */}
               {selectedBrokerId === 'embedded' && embeddedConfig && (
-                <div className="space-y-2">
+                <div className="space-y-2.5">
                   <div className={cn("gap-3", isMobile ? "grid grid-cols-1" : "grid grid-cols-2")}>
                     <div className="space-y-1">
                       <span className="text-xs text-muted-foreground">{t('devices:add.protocol')}</span>
-                      <code className="block min-w-0 break-all text-sm font-mono bg-muted-30 rounded-md px-3 py-1.5">
+                      <code className="block min-w-0 break-all rounded-lg border border-border bg-background px-3 py-2 font-mono text-sm">
                         {embeddedConfig.tls_enabled ? 'mqtts' : 'mqtt'}
                       </code>
                     </div>
                     <div className="space-y-1">
                       <span className="text-xs text-muted-foreground">{t('devices:add.serverAddress')}</span>
-                      <code className="block min-w-0 break-all text-sm font-mono bg-muted-30 rounded-md px-3 py-1.5">
-                        {serverIp || mqttStatus?.server_ip || 'localhost'}:{embeddedConfig.port}
-                      </code>
+                      <div className="flex items-center gap-1.5 rounded-lg border border-border bg-background px-3 py-1.5">
+                        <code className="min-w-0 flex-1 break-all font-mono text-sm">
+                          {serverIp || mqttStatus?.server_ip || 'localhost'}:{embeddedConfig.port}
+                        </code>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 shrink-0 sm:h-7 sm:w-7"
+                          onClick={() => {
+                            copyToClipboard(`${serverIp || mqttStatus?.server_ip || 'localhost'}:${embeddedConfig.port}`)
+                            toast({ title: t('common:copied') })
+                          }}
+                        >
+                          <Copy className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-2">
@@ -1034,7 +1133,7 @@ export function ManualAddForm({
                         {t('devices:add.authStatus')}: {t('devices:add.authRequired')}
                       </div>
                     ) : (
-                      <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-muted-30 text-muted-foreground text-xs font-medium">
+                      <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-background text-muted-foreground border border-border text-xs font-medium">
                         {t('devices:add.authStatus')}: {t('devices:add.authNotRequired')}
                       </div>
                     )}
@@ -1060,11 +1159,12 @@ export function ManualAddForm({
                     <div className="space-y-1">
                       <span className="text-xs text-muted-foreground">{t('devices:auto.authInfo')}</span>
                       {embeddedConfig.credentials.map((cred) => (
-                        <div key={cred.username} className="flex items-center gap-2">
-                          <code className="min-w-0 flex-1 truncate text-sm font-mono bg-muted-30 rounded-md px-3 py-1.5">
+                        <div key={cred.username} className="flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-1.5">
+                          <code className="min-w-0 flex-1 truncate text-sm font-mono">
                             {cred.username} / {cred.password}
                           </code>
                           <Button
+                            type="button"
                             variant="ghost"
                             size="icon"
                             className="shrink-0 h-7 w-7 sm:h-7 sm:w-7"
@@ -1086,19 +1186,33 @@ export function ManualAddForm({
                 const broker = externalBrokers.find(b => b.id === selectedBrokerId)
                 if (!broker) return null
                 return (
-                  <div className="space-y-2">
+                  <div className="space-y-2.5">
                     <div className={cn("gap-3", isMobile ? "grid grid-cols-1" : "grid grid-cols-2")}>
                       <div className="space-y-1">
                         <span className="text-xs text-muted-foreground">{t('devices:add.protocol')}</span>
-                        <code className="block min-w-0 break-all text-sm font-mono bg-muted-30 rounded-md px-3 py-1.5">
+                        <code className="block min-w-0 break-all rounded-lg border border-border bg-background px-3 py-2 font-mono text-sm">
                           {broker.tls ? 'mqtts' : 'mqtt'}
                         </code>
                       </div>
                       <div className="space-y-1">
                         <span className="text-xs text-muted-foreground">{t('devices:add.serverAddress')}</span>
-                        <code className="block min-w-0 break-all text-sm font-mono bg-muted-30 rounded-md px-3 py-1.5">
-                          {broker.broker}:{broker.port}
-                        </code>
+                        <div className="flex items-center gap-1.5 rounded-lg border border-border bg-background px-3 py-1.5">
+                          <code className="min-w-0 flex-1 break-all font-mono text-sm">
+                            {broker.broker}:{broker.port}
+                          </code>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 shrink-0 sm:h-7 sm:w-7"
+                            onClick={() => {
+                              copyToClipboard(`${broker.broker}:${broker.port}`)
+                              toast({ title: t('common:copied') })
+                            }}
+                          >
+                            <Copy className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -1114,7 +1228,7 @@ export function ManualAddForm({
                           {t('devices:add.authStatus')}: {t('devices:add.authRequired')}
                         </div>
                       ) : (
-                        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-muted-30 text-muted-foreground text-xs font-medium">
+                        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-background text-muted-foreground border border-border text-xs font-medium">
                           {t('devices:add.authStatus')}: {t('devices:add.authNotRequired')}
                         </div>
                       )}
@@ -1123,12 +1237,13 @@ export function ManualAddForm({
                     {broker.username && (
                       <div className="space-y-1">
                         <span className="text-xs text-muted-foreground">{t('devices:auto.authInfo')}</span>
-                        <div className="flex items-center gap-2">
-                          <code className="min-w-0 flex-1 truncate text-sm font-mono bg-muted-30 rounded-md px-3 py-1.5">
+                        <div className="flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-1.5">
+                          <code className="min-w-0 flex-1 truncate text-sm font-mono">
                             {broker.username}{broker.password ? ` / ${broker.password}` : ' / ••••••••'}
                           </code>
                           {broker.password && (
                             <Button
+                              type="button"
                               variant="ghost"
                               size="icon"
                               className="shrink-0 h-7 w-7 sm:h-7 sm:w-7"
@@ -1148,37 +1263,53 @@ export function ManualAddForm({
               })()}
             </div>
 
-            <FormField label={t('devices:add.telemetryTopic')} helpText={t('devices:add.telemetryTopicHelp')}>
-              <Input
-                value={connectionConfig.telemetry_topic || ''}
-                onChange={(e) => setConnectionConfig({ ...connectionConfig, telemetry_topic: e.target.value })}
-                placeholder="device/{type}/{id}/uplink"
-                className="font-mono text-sm"
-              />
-            </FormField>
-            <FormField label={t('devices:add.commandTopic')} helpText={t('devices:add.commandTopicHelp')}>
-              <Input
-                value={connectionConfig.command_topic || ''}
-                onChange={(e) => setConnectionConfig({ ...connectionConfig, command_topic: e.target.value })}
-                placeholder="device/{type}/{id}/downlink"
-                className="font-mono text-sm"
-              />
-            </FormField>
+            <div className="grid grid-cols-1 gap-4">
+              <FormField label={t('devices:add.telemetryTopic')} helpText={t('devices:add.telemetryTopicHelp')}>
+                <Input
+                  value={connectionConfig.telemetry_topic || ''}
+                  onChange={(e) => setConnectionConfig({ ...connectionConfig, telemetry_topic: e.target.value })}
+                  placeholder="device/{type}/{id}/uplink"
+                  className="font-mono text-sm"
+                />
+              </FormField>
+              <FormField label={t('devices:add.commandTopic')} helpText={t('devices:add.commandTopicHelp')}>
+                <Input
+                  value={connectionConfig.command_topic || ''}
+                  onChange={(e) => setConnectionConfig({ ...connectionConfig, command_topic: e.target.value })}
+                  placeholder="device/{type}/{id}/downlink"
+                  className="font-mono text-sm"
+                />
+              </FormField>
+            </div>
           </div>
         )}
 
         {/* Webhook Config */}
         {adapterType === 'webhook' && (
-          <div className="space-y-3 pt-1">
-            <div className="rounded-lg border bg-muted-30 p-4">
-              <p className="text-sm text-muted-foreground mb-2">
+          <div className="space-y-4 pt-0.5">
+            <div className="rounded-xl border border-border bg-muted-30 p-4 space-y-2">
+              <p className="text-xs text-muted-foreground leading-relaxed">
                 {t('devices:add.webhookUrlDescription')}
               </p>
-              <code className="text-xs break-all block font-mono">
-                {`${serverUrl}/api/devices/${deviceId}/webhook`}
-              </code>
+              <div className="flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-1.5">
+                <code className="min-w-0 flex-1 break-all font-mono text-xs text-foreground">
+                  {`${serverUrl}/api/devices/${deviceId}/webhook`}
+                </code>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 shrink-0 sm:h-7 sm:w-7"
+                  onClick={() => {
+                    copyToClipboard(`${serverUrl}/api/devices/${deviceId}/webhook`)
+                    toast({ title: t('common:copied') })
+                  }}
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                </Button>
+              </div>
             </div>
-            <FormField label={t('devices:add.webhookToken')}>
+            <FormField label={t('devices:add.webhookToken')} helpText={t('devices:add.webhookTokenDesc')}>
               <div className="flex items-center gap-2">
                 <Input
                   value={webhookToken}
@@ -1197,16 +1328,14 @@ export function ManualAddForm({
                   <KeyRound className="h-4 w-4" />
                 </Button>
               </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                {t('devices:add.webhookTokenDesc')}
-              </p>
             </FormField>
           </div>
         )}
+      </div>
 
-      </FormSection>
-
-      <FormSection title={t('devices:advanced', '高级')}>
+      {/* Advanced Section */}
+      <div className="rounded-xl border border-border bg-card p-5 space-y-4">
+        <h4 className="text-sm font-semibold text-foreground">{t('devices:advanced', '高级')}</h4>
         <FormField
           label={t('devices:detailPage.offlineTimeout', '离线判定时间')}
           helpText={t('devices:offlineTimeoutHelp', '留空时使用设备类型或系统默认值')}
@@ -1224,7 +1353,7 @@ export function ManualAddForm({
             placeholder="300"
           />
         </FormField>
-      </FormSection>
+      </div>
     </FormSectionGroup>
     </div>
   )

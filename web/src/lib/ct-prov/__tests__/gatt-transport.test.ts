@@ -113,4 +113,37 @@ describe('BleGattCtTransport + session over fake GATT', () => {
     expect(resp.ok).toBe(true)
     expect(resp.id).toBe(42)
   })
+
+  it('awaits async channel.disconnect() during transport.close()', async () => {
+    let finishDisconnect!: () => void
+    let resolved = false
+    const channel: CtGattChannel = {
+      mtu: 23,
+      async writeC2d() {},
+      async subscribeD2c() {},
+      async readMeta() {
+        return null
+      },
+      disconnect() {
+        return new Promise<void>((resolve) => {
+          finishDisconnect = () => {
+            resolved = true
+            resolve()
+          }
+        })
+      },
+    }
+    const transport = new BleGattCtTransport(channel)
+    let closeDone = false
+    const closePromise = transport.close().then(() => {
+      closeDone = true
+    })
+    await Promise.resolve()
+    expect(closeDone).toBe(false)
+    expect(resolved).toBe(false)
+    finishDisconnect()
+    await closePromise
+    expect(resolved).toBe(true)
+    expect(closeDone).toBe(true)
+  })
 })
