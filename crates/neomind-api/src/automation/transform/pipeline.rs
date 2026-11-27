@@ -438,16 +438,18 @@ impl TransformEngine {
         if let Some(ref js_code) = transform.js_code {
             if !js_code.is_empty() {
                 // Pass extension registry to JS executor for extensions.invoke() support
-                let ext_ref = self.extension_registry.as_ref();
-                match self.js_executor.execute(
-                    js_code,
-                    raw_data,
-                    &actual_prefix,
-                    device_id,
+                let ext_reg = self.extension_registry.clone();
+                match super::JsTransformExecutor::execute_async(
+                    js_code.clone(),
+                    raw_data.clone(),
+                    actual_prefix.clone(),
+                    device_id.to_string(),
                     timestamp,
-                    ext_ref,
+                    ext_reg,
                     mode,
-                ) {
+                )
+                .await
+                {
                     Ok(js_out) => {
                         // Set transform_id on each metric
                         for mut m in js_out.metrics {

@@ -445,6 +445,7 @@ async fn handle_stream_socket(mut socket: WebSocket, extension_id: String, state
     // Stored to keep the task alive; NOT used for cancellation (the forwarder
     // is shared across all sessions and must outlive any single connection).
     let mut _push_forwarder_handle: Option<tokio::task::JoinHandle<()>> = None;
+    let shutdown_token = state.shutdown_token.clone();
 
     // Message loop
     loop {
@@ -454,6 +455,10 @@ async fn handle_stream_socket(mut socket: WebSocket, extension_id: String, state
             // Type annotation needed for the receiver
             let rx: &mut mpsc::Receiver<PushOutputMessage> = rx;
             tokio::select! {
+                _ = shutdown_token.cancelled() => {
+                    tracing::info!(extension_id = %extension_id, "Server shutting down, closing extension stream WebSocket");
+                    break;
+                }
                 msg = socket.recv() => msg,
                 output = rx.recv() => {
                     match output {
@@ -472,7 +477,13 @@ async fn handle_stream_socket(mut socket: WebSocket, extension_id: String, state
                 }
             }
         } else {
-            socket.recv().await
+            tokio::select! {
+                _ = shutdown_token.cancelled() => {
+                    tracing::info!(extension_id = %extension_id, "Server shutting down, closing extension stream WebSocket");
+                    break;
+                }
+                msg = socket.recv() => msg,
+            }
         };
 
         match msg_result {
@@ -626,11 +637,16 @@ async fn handle_stream_socket(mut socket: WebSocket, extension_id: String, state
                                                 let (ws_done_tx, mut ws_done_rx) =
                                                     mpsc::channel::<()>(1);
 
+                                                let ws_shutdown = shutdown_token.clone();
                                                 let ws_task = tokio::spawn(async move {
                                                     let mut frame_count: u64 = 0;
                                                     let result = async {
                                                         loop {
                                                             tokio::select! {
+                                                                _ = ws_shutdown.cancelled() => {
+                                                                    tracing::info!(frames_sent = frame_count, "Server shutting down, closing bidirectional extension stream WS");
+                                                                    return;
+                                                                }
                                                                 msg = socket.recv() => {
                                                                     match msg {
                                                                         Some(Ok(WsMessage::Text(text))) => {
@@ -694,6 +710,10 @@ async fn handle_stream_socket(mut socket: WebSocket, extension_id: String, state
                                                 let mut frames_received: u64 = 0;
                                                 loop {
                                                     tokio::select! {
+                                                        _ = shutdown_token.cancelled() => {
+                                                            tracing::info!(extension_id = %extension_id, "Server shutting down, stopping bidirectional push stream");
+                                                            break;
+                                                        }
                                                         output = rx.recv() => {
                                                             match output {
                                                                 Some(output) => {
@@ -828,11 +848,16 @@ async fn handle_stream_socket(mut socket: WebSocket, extension_id: String, state
                                             let (ws_done_tx, mut ws_done_rx) =
                                                 mpsc::channel::<()>(1);
 
+                                            let ws_shutdown = shutdown_token.clone();
                                             let ws_task = tokio::spawn(async move {
                                                 let mut frame_count: u64 = 0;
                                                 let result = async {
                                                     loop {
                                                         tokio::select! {
+                                                            _ = ws_shutdown.cancelled() => {
+                                                                tracing::info!(frames_sent = frame_count, "Server shutting down, closing outbound extension stream WS");
+                                                                return;
+                                                            }
                                                             msg = socket.recv() => {
                                                                 match msg {
                                                                     Some(Ok(WsMessage::Text(text))) => {
@@ -890,6 +915,10 @@ async fn handle_stream_socket(mut socket: WebSocket, extension_id: String, state
                                             let mut frames_dropped: u64 = 0;
                                             loop {
                                                 tokio::select! {
+                                                    _ = shutdown_token.cancelled() => {
+                                                        tracing::info!(extension_id = %extension_id, "Server shutting down, stopping outbound push stream");
+                                                        break;
+                                                    }
                                                     output = rx.recv() => {
                                                         match output {
                                                             Some(output) => {

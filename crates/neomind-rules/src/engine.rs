@@ -134,8 +134,10 @@ pub struct RuleEngine {
     /// time instead of polling the history API. Wired at construction; the
     /// engine degrades gracefully to no-publish when absent.
     event_bus: Arc<tokio::sync::RwLock<Option<Arc<neomind_core::EventBus>>>>,
-    /// Pending `for_duration` expiry timers keyed by rule id (at most one per rule).
-    for_duration_timers: Arc<StdRwLock<HashMap<RuleId, tokio::task::AbortHandle>>>,
+    /// Pending `for_duration` expiry timers keyed by rule id: `(generation, AbortHandle)`.
+    for_duration_timers: Arc<StdRwLock<HashMap<RuleId, (u64, tokio::task::AbortHandle)>>>,
+    /// Monotonic generation counter preventing a waking timer from removing a newer timer.
+    for_duration_timer_gen: Arc<std::sync::atomic::AtomicU64>,
     /// Bounds total concurrent spawned rule actions (Notify / Execute / TriggerAgent / RunOperator).
     action_semaphore: Arc<tokio::sync::Semaphore>,
 }
@@ -171,6 +173,7 @@ impl RuleEngine {
             rule_store: Arc::new(StdRwLock::new(None)),
             event_bus: Arc::new(tokio::sync::RwLock::new(None)),
             for_duration_timers: Arc::new(StdRwLock::new(HashMap::new())),
+            for_duration_timer_gen: Arc::new(std::sync::atomic::AtomicU64::new(1)),
             action_semaphore: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_RULE_ACTIONS)),
         }
     }
@@ -192,13 +195,14 @@ impl RuleEngine {
             rule_store: Arc::clone(&self.rule_store),
             event_bus: Arc::clone(&self.event_bus),
             for_duration_timers: Arc::clone(&self.for_duration_timers),
+            for_duration_timer_gen: Arc::clone(&self.for_duration_timer_gen),
             action_semaphore: Arc::clone(&self.action_semaphore),
         }
     }
 
     /// Cancel and remove any pending `for_duration` expiry timer for `rule_id`.
     fn cancel_for_duration_timer(&self, rule_id: &RuleId) {
-        if let Some(handle) = self.for_duration_timers.write().remove(rule_id) {
+        if let Some((_, handle)) = self.for_duration_timers.write().remove(rule_id) {
             handle.abort();
         }
     }
@@ -213,14 +217,25 @@ impl RuleEngine {
         expected_since: chrono::DateTime<Utc>,
         wait: Duration,
     ) {
+        let gen = self
+            .for_duration_timer_gen
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let engine = self.clone_handle();
         let timer_rule_id = rule_id.clone();
         let sleep_dur = wait.saturating_add(Duration::from_millis(50));
         let handle = tokio::spawn(async move {
             tokio::time::sleep(sleep_dur).await;
-            // Remove our handle before evaluating so evaluate_and_fire's
-            // cleanup does not abort the currently executing task.
-            engine.for_duration_timers.write().remove(&timer_rule_id);
+            // Remove only if our generation is still the active entry so a
+            // waking timer can never delete a newer replacement timer.
+            {
+                let mut timers = engine.for_duration_timers.write();
+                if timers
+                    .get(&timer_rule_id)
+                    .is_some_and(|(stored_gen, _)| *stored_gen == gen)
+                {
+                    timers.remove(&timer_rule_id);
+                }
+            }
 
             let should_eval = {
                 let rules = engine.rules.read();
@@ -240,8 +255,15 @@ impl RuleEngine {
         });
 
         let mut timers = self.for_duration_timers.write();
-        if let Some(prev) = timers.insert(rule_id, handle.abort_handle()) {
-            prev.abort();
+        if !handle.is_finished() {
+            if let Some((prev_gen, prev_handle)) = timers.get(&rule_id) {
+                if *prev_gen > gen {
+                    handle.abort();
+                    return;
+                }
+                prev_handle.abort();
+            }
+            timers.insert(rule_id, (gen, handle.abort_handle()));
         }
     }
 

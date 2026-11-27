@@ -58,6 +58,11 @@ impl PushManager {
         })
     }
 
+    /// Stop all running push scheduler tasks gracefully, awaiting final batch flushes.
+    pub async fn stop_all(&self) {
+        self.scheduler.stop_all().await;
+    }
+
     /// Create a new PushManager with in-memory storage (for testing).
     pub fn memory() -> Result<Self> {
         Self::memory_inner(None)

@@ -19,6 +19,10 @@ pub struct ToolRegistry {
     tools: HashMap<String, DynTool>,
     /// Session-local gate; never changes the shared global disabled set.
     memory_enabled: std::sync::atomic::AtomicBool,
+    /// Session-local gate for host-privileged tools (`shell`, `file_read`,
+    /// `file_write`, `file_edit`). Non-admin chat sessions disable this so
+    /// `UserRole::User` cannot invoke host shell/filesystem tools.
+    host_tools_enabled: std::sync::atomic::AtomicBool,
     /// Cached tool definitions (rebuilt on register/unregister).
     cached_definitions: RwLock<Option<Vec<ToolDefinition>>>,
     /// Optional cancellation token. When set, `execute` / `execute_parallel`
@@ -37,11 +41,16 @@ pub struct ToolRegistry {
 }
 
 impl ToolRegistry {
+    /// Host-privileged tools restricted to `UserRole::Admin` in multi-user chat sessions.
+    pub const HOST_PRIVILEGED_TOOLS: &'static [&'static str] =
+        &["shell", "file_read", "file_write", "file_edit"];
+
     /// Create a new tool registry.
     pub fn new() -> Self {
         Self {
             tools: HashMap::new(),
             memory_enabled: std::sync::atomic::AtomicBool::new(true),
+            host_tools_enabled: std::sync::atomic::AtomicBool::new(true),
             cached_definitions: RwLock::new(None),
             cancellation_token: Arc::new(RwLock::new(None)),
             disabled: Arc::new(RwLock::new(HashSet::new())),
@@ -60,6 +69,7 @@ impl ToolRegistry {
         Self {
             tools,
             memory_enabled: std::sync::atomic::AtomicBool::new(true),
+            host_tools_enabled: std::sync::atomic::AtomicBool::new(true),
             cached_definitions: RwLock::new(None),
             cancellation_token: self.cancellation_token.clone(),
             disabled: self.disabled.clone(),
@@ -77,6 +87,18 @@ impl ToolRegistry {
     pub(crate) fn set_memory_enabled(&self, enabled: bool) {
         self.memory_enabled
             .store(enabled, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Enable or disable host-privileged tools (`shell`, `file_*`) for this session.
+    /// Returns the previous value.
+    pub fn set_host_tools_enabled(&self, enabled: bool) -> bool {
+        self.host_tools_enabled
+            .swap(enabled, std::sync::atomic::Ordering::AcqRel)
+    }
+
+    pub fn is_host_tools_enabled(&self) -> bool {
+        self.host_tools_enabled
+            .load(std::sync::atomic::Ordering::Acquire)
     }
 
     /// Invalidate cached definitions (call after any mutation).
@@ -216,6 +238,10 @@ impl ToolRegistry {
             && !self
                 .memory_enabled
                 .load(std::sync::atomic::Ordering::Acquire))
+            || (Self::HOST_PRIVILEGED_TOOLS.contains(&name)
+                && !self
+                    .host_tools_enabled
+                    .load(std::sync::atomic::Ordering::Acquire))
             || self.disabled.read().contains(name)
     }
 

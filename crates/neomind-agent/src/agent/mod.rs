@@ -896,6 +896,12 @@ impl Agent {
         self.tools.set_memory_enabled(enabled);
     }
 
+    /// Enable or disable host-privileged tools (`shell`, `file_*`) for this
+    /// session's tool registry. Returns whether the setting changed.
+    pub fn set_host_tools_enabled(&self, enabled: bool) -> bool {
+        self.tools.set_host_tools_enabled(enabled) != enabled
+    }
+
     /// Get the session ID.
     pub fn session_id(&self) -> &str {
         &self.session_id

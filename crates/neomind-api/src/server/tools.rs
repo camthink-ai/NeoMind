@@ -522,22 +522,21 @@ impl TransformTool {
                 })?;
 
                 // Execute the transform using the JsTransformExecutor
-                let executor = JsTransformExecutor::new();
-                let result = executor
-                    .execute(
-                        &js_code,
-                        &input_data,
-                        "test",
-                        "test_device",
-                        chrono::Utc::now().timestamp(),
-                        None,
-                        // Chat-side code preview: dry-run — no real
-                        // extension invocations from a test execution.
-                        crate::automation::transform::TransformExecutionMode::DryRun,
-                    )
-                    .map_err(|e| {
-                        ToolError::Execution(format!("Transform execution failed: {}", e))
-                    })?;
+                let result = JsTransformExecutor::execute_async(
+                    js_code,
+                    input_data.clone(),
+                    "test".to_string(),
+                    "test_device".to_string(),
+                    chrono::Utc::now().timestamp(),
+                    None,
+                    // Chat-side code preview: dry-run — no real
+                    // extension invocations from a test execution.
+                    crate::automation::transform::TransformExecutionMode::DryRun,
+                )
+                .await
+                .map_err(|e| {
+                    ToolError::Execution(format!("Transform execution failed: {}", e))
+                })?;
 
                 Ok(ToolOutput::success(serde_json::json!({
                     "input": input_data,

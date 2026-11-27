@@ -333,7 +333,7 @@ impl PushScheduler {
                         return;
                     }
                     result = rx.recv() => {
-                        if cancel.has_changed().unwrap_or(false) {
+                        if cancel.has_changed().unwrap_or(true) {
                             if !buffer.is_empty() {
                                 // [bounded teardown] the final flush used to run the FULL retry loop
                                 // (endpoint timeout x retries + backoffs = minutes) with no bound - a dead
@@ -589,7 +589,7 @@ impl PushScheduler {
                         return;
                     }
                     result = rx.recv() => {
-                        if cancel.has_changed().unwrap_or(false) {
+                        if cancel.has_changed().unwrap_or(true) {
                             if !buffer.is_empty() {
                                 // [bounded teardown] the final flush used to run the FULL retry loop
                                 // (endpoint timeout x retries + backoffs = minutes) with no bound - a dead

@@ -2223,6 +2223,19 @@ Assistant: {ar}\n"
             .unwrap_or(true)
     }
 
+    /// Gate host-privileged tools (`shell`, `file_read`, `file_write`, `file_edit`)
+    /// for a chat session based on caller RBAC role (`is_admin`).
+    ///
+    /// When `enabled == false`, host tools are excluded from LLM tool schemas
+    /// AND refused at execution time in `ToolRegistry::execute`.
+    pub async fn set_session_host_tools_enabled(&self, session_id: &str, enabled: bool) {
+        if let Ok(agent) = self.get_session(session_id).await {
+            if agent.set_host_tools_enabled(enabled) {
+                agent.update_tool_definitions().await;
+            }
+        }
+    }
+
     /// List all active sessions with their metadata.
     /// Returns sessions from both memory and database (for persistence after restart).
     pub async fn list_sessions_with_info(&self) -> Vec<SessionInfo> {

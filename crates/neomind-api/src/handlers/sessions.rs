@@ -1521,6 +1521,14 @@ pub async fn chat_handler(
             axum::http::StatusCode::FORBIDDEN,
         ));
     }
+    let is_admin = user
+        .as_deref()
+        .is_none_or(|u| u.role == crate::auth_users::UserRole::Admin);
+    state
+        .agents
+        .session_manager
+        .set_session_host_tools_enabled(&id, is_admin)
+        .await;
     use futures::StreamExt;
     use tokio::time::{timeout, Duration};
 
@@ -1988,12 +1996,17 @@ pub async fn ws_chat_handler(
         None => None,
     };
 
-    // If no valid JWT, try API key authentication
+    // If no valid JWT, try API key authentication (derive Admin vs User role
+    // consistently with `hybrid_auth_middleware`: wildcard `*` → Admin).
+    let mut api_key_is_admin = false;
     if session_info.is_none() {
         if let Some(api_key) = params.get("api_key") {
-            if state.auth.api_key_state.validate_key(api_key) {
-                info!("WebSocket authenticated via API key");
-                // No user session for API key auth — proceed without session_info
+            if let Some(key_info) = state.auth.api_key_state.validate_key_info(api_key) {
+                api_key_is_admin = key_info.permissions.iter().any(|p| p == "*");
+                info!(
+                    is_admin = api_key_is_admin,
+                    "WebSocket authenticated via API key"
+                );
             } else {
                 tracing::warn!("Invalid API key, rejecting WebSocket connection");
                 return ws.on_upgrade(|mut socket| async move {
@@ -2061,8 +2074,13 @@ pub async fn ws_chat_handler(
         .map(|info| format!("user:{}", info.username))
         .unwrap_or_else(|| "apikey".to_string());
 
+    let is_admin = session_info
+        .as_ref()
+        .map(|info| info.role == crate::auth_users::UserRole::Admin)
+        .unwrap_or(api_key_is_admin);
+
     let session_id = params.get("sessionId").cloned();
-    ws.on_upgrade(|socket| handle_ws_socket(socket, state, session_id, principal))
+    ws.on_upgrade(move |socket| handle_ws_socket(socket, state, session_id, principal, is_admin))
 }
 
 /// Send session history to the client.
@@ -2245,6 +2263,7 @@ async fn handle_ws_socket(
     state: ServerState,
     session_id: Option<String>,
     principal: String,
+    is_admin: bool,
 ) {
     // Session ownership: a session stamped to a DIFFERENT principal must not
     // be attachable — pre-fix, any valid token could pass ?sessionId=<other
@@ -2313,9 +2332,20 @@ async fn handle_ws_socket(
         }
     }
 
-    // Main event loop - handle client messages, device updates, and heartbeat
+    let shutdown_token = state.shutdown_token.clone();
+
+    // Main event loop - handle client messages, device updates, heartbeat, and shutdown
     loop {
         tokio::select! {
+            _ = shutdown_token.cancelled() => {
+                tracing::info!("Server shutting down, closing chat WebSocket");
+                let _ = tokio::time::timeout(
+                    std::time::Duration::from_secs(2),
+                    socket.close(),
+                )
+                .await;
+                break;
+            }
             // Handle incoming client messages
             msg_result = socket.next() => {
                 match msg_result {
@@ -2535,6 +2565,13 @@ async fn handle_ws_socket(
                                         }
                                         continue;
                                     }
+
+                                    // Enforce per-session host tool RBAC (`shell`, `file_*` restricted to Admin).
+                                    state
+                                        .agents
+                                        .session_manager
+                                        .set_session_host_tools_enabled(&session_id, is_admin)
+                                        .await;
 
                                     // Try event streaming first (rich response with tool calls)
                                     // Spawn a task to process the stream asynchronously, keeping the main loop responsive

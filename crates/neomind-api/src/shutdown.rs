@@ -81,11 +81,13 @@ pub async fn cleanup_resources(state: &ServerState) {
         tracing::info!("Stopped clean-slate agent scheduler at shutdown");
     }
 
-    // 0b. Stop DataPush scheduler tasks without disabling persisted target configs
-    // (taking/dropping PushManager drops all ScheduledHandle watch senders,
-    // waking each running push task's `cancel.changed()` branch to flush & exit).
-    if state.data_push.write().await.take().is_some() {
-        tracing::info!("Stopped DataPush scheduler at shutdown");
+    // 0b. Stop DataPush scheduler tasks gracefully (await final batch flushes
+    // up to 5s without disabling persisted target configs in `data-push.redb`).
+    if let Some(pm) = state.data_push.write().await.take() {
+        match tokio::time::timeout(Duration::from_secs(5), pm.stop_all()).await {
+            Ok(()) => tracing::info!("Stopped DataPush scheduler at shutdown"),
+            Err(_) => tracing::warn!("DataPush scheduler stop timed out after 5s"),
+        }
     }
 
     // 0c. Stop all registered IM bridges.

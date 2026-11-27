@@ -1274,20 +1274,19 @@ pub async fn test_transform_code_handler(
     // host dry-run stub and reported false success for blocked invokes.
     // DryRun installs `__neomind_dryrun_invoke__` and surfaces
     // `extension_invoke_blocked` → `unverified` (same as /transforms/:id/test).
-    let executor = JsTransformExecutor::new();
-
-    // Execute the code
-    match executor.execute(
-        &req.code,
-        &req.input_data,
-        &req.output_prefix,
-        "test_device",
+    match JsTransformExecutor::execute_async(
+        req.code.clone(),
+        req.input_data.clone(),
+        req.output_prefix.clone(),
+        "test_device".to_string(),
         timestamp,
         None, // No extension registry for test
         // Code preview path: dry-run semantics — extension invocations are
         // blocked (unverified) rather than really executed.
         crate::automation::transform::TransformExecutionMode::DryRun,
-    ) {
+    )
+    .await
+    {
         Ok(js_out) => {
             let metrics = js_out.metrics;
             // Convert metrics to a more readable format

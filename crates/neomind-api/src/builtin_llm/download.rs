@@ -53,7 +53,7 @@ pub async fn download_with_resume(
         std::fs::create_dir_all(dir)?;
     }
 
-    let existing = tokio::fs::metadata(&part)
+    let mut existing = tokio::fs::metadata(&part)
         .await
         .map(|m| m.len())
         .unwrap_or(0);
@@ -62,8 +62,59 @@ pub async fn download_with_resume(
     if existing > 0 {
         req = req.header(reqwest::header::RANGE, format!("bytes={}-", existing));
     }
-    let resp = req.send().await?;
-    let status = resp.status();
+    let mut resp = req.send().await?;
+    let mut status = resp.status();
+
+    // Handle HTTP 416 Range Not Satisfiable explicitly so a `.part` that
+    // already holds the complete file (crash right before rename) or outlived
+    // a replaced remote artifact does not permanently wedge every future retry.
+    if existing > 0 && status == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
+        let remote_total = resp
+            .headers()
+            .get(reqwest::header::CONTENT_RANGE)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.rsplit('/').next())
+            .and_then(|v| v.parse::<u64>().ok());
+
+        if remote_total == Some(existing) {
+            let part_for_hash = part.clone();
+            let actual = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
+                use sha2::{Digest, Sha256};
+                use std::io::{BufReader, Read};
+                let mut hasher = Sha256::new();
+                let mut reader =
+                    BufReader::with_capacity(64 * 1024, std::fs::File::open(&part_for_hash)?);
+                let mut buf = vec![0u8; 64 * 1024];
+                loop {
+                    let n = reader.read(&mut buf)?;
+                    if n == 0 {
+                        break;
+                    }
+                    hasher.update(&buf[..n]);
+                }
+                Ok(hex::encode(hasher.finalize()))
+            })
+            .await??;
+
+            if expected_sha256.is_empty() || actual.eq_ignore_ascii_case(expected_sha256) {
+                tokio::fs::rename(&part, dest).await?;
+                if let Some(cb) = on_progress {
+                    cb(DownloadProgress {
+                        downloaded: existing,
+                        total: Some(existing),
+                    });
+                }
+                return Ok(existing);
+            }
+        }
+
+        // Stale/oversized/corrupt `.part` — remove it and retry cleanly from byte 0.
+        let _ = tokio::fs::remove_file(&part).await;
+        existing = 0;
+        resp = client.get(url).send().await?;
+        status = resp.status();
+    }
+
     if !status.is_success() {
         anyhow::bail!(
             "download failed with HTTP {} for {}",
@@ -292,8 +343,8 @@ mod tests {
             "/err",
             get(|| async {
                 (
-                    axum::http::StatusCode::RANGE_NOT_SATISFIABLE,
-                    "range not satisfiable error page",
+                    axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                    "service unavailable error page",
                 )
             }),
         );
@@ -314,7 +365,7 @@ mod tests {
         let err = download_with_resume(&client, &url, &dest, "", None)
             .await
             .expect_err("non-2xx must fail");
-        assert!(err.to_string().contains("416"), "got: {err}");
+        assert!(err.to_string().contains("503"), "got: {err}");
         assert!(!dest.exists(), "must not create dest on HTTP error");
         assert_eq!(
             std::fs::read(&part).unwrap(),
@@ -322,6 +373,70 @@ mod tests {
             "existing .part must not be truncated or overwritten on 4xx/5xx"
         );
         let _ = std::fs::remove_dir_all(&dir);
+        h.abort();
+    }
+
+    #[tokio::test]
+    async fn http_416_recovers_complete_or_oversized_part() {
+        let data: &'static [u8] = b"complete-model-payload";
+        let router = Router::new().route(
+            "/m",
+            get(move |headers: axum::http::HeaderMap| async move {
+                if headers.contains_key(axum::http::header::RANGE) {
+                    axum::http::Response::builder()
+                        .status(axum::http::StatusCode::RANGE_NOT_SATISFIABLE)
+                        .header(
+                            axum::http::header::CONTENT_RANGE,
+                            format!("bytes */{}", data.len()),
+                        )
+                        .body(axum::body::Body::empty())
+                        .unwrap()
+                } else {
+                    axum::http::Response::builder()
+                        .status(axum::http::StatusCode::OK)
+                        .body(axum::body::Body::from(data))
+                        .unwrap()
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let h = tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        let client = reqwest::Client::new();
+        let url = format!("http://{}/m", addr);
+
+        // Case 1: `.part` already holds the complete file -> completes via rename.
+        let dir1 = std::env::temp_dir().join(format!("builtin-dl416a-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir1);
+        std::fs::create_dir_all(&dir1).unwrap();
+        let dest1 = dir1.join("model.gguf");
+        std::fs::write(dir1.join("model.gguf.part"), data).unwrap();
+        let n1 = download_with_resume(&client, &url, &dest1, "", None)
+            .await
+            .unwrap();
+        assert_eq!(n1, data.len() as u64);
+        assert_eq!(std::fs::read(&dest1).unwrap(), data);
+        let _ = std::fs::remove_dir_all(&dir1);
+
+        // Case 2: `.part` is oversized/stale -> removes `.part` and restarts cleanly.
+        let dir2 = std::env::temp_dir().join(format!("builtin-dl416b-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir2);
+        std::fs::create_dir_all(&dir2).unwrap();
+        let dest2 = dir2.join("model.gguf");
+        std::fs::write(
+            dir2.join("model.gguf.part"),
+            b"stale-oversized-partial-file-longer-than-remote",
+        )
+        .unwrap();
+        let n2 = download_with_resume(&client, &url, &dest2, "", None)
+            .await
+            .unwrap();
+        assert_eq!(n2, data.len() as u64);
+        assert_eq!(std::fs::read(&dest2).unwrap(), data);
+        let _ = std::fs::remove_dir_all(&dir2);
+
         h.abort();
     }
 
