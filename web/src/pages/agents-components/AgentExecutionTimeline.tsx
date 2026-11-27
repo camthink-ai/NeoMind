@@ -453,21 +453,38 @@ export function AgentExecutionTimeline({
                                       title={t('agents:execution.structuredResult', 'Structured Output')}
                                     >
                                       <div className="space-y-1.5">
-                                        {Object.entries(detail.structured_result).map(([key, val]) => (
-                                          <div
-                                            key={key}
-                                            className="flex items-start justify-between gap-3 rounded-lg bg-muted-20 px-3 py-2"
-                                          >
-                                            <span className="shrink-0 font-mono text-xs font-medium text-muted-foreground">
-                                              {key}
-                                            </span>
-                                            <span className="min-w-0 text-right text-xs font-medium text-foreground break-words">
-                                              {typeof val === 'string' || typeof val === 'number' || typeof val === 'boolean'
-                                                ? String(val)
-                                                : JSON.stringify(val)}
-                                            </span>
-                                          </div>
-                                        ))}
+                                        {Object.entries(detail.structured_result).map(([key, val]) => {
+                                          const text =
+                                            typeof val === 'string' || typeof val === 'number' || typeof val === 'boolean'
+                                              ? String(val)
+                                              : JSON.stringify(val)
+                                          const isLong = text.length > 36 || text.includes('\n')
+                                          return isLong ? (
+                                            <div
+                                              key={key}
+                                              className="min-w-0 space-y-1 rounded-lg bg-muted-20 px-3 py-2"
+                                            >
+                                              <div className="font-mono text-xs font-medium text-muted-foreground">
+                                                {key}
+                                              </div>
+                                              <div className="whitespace-pre-wrap break-words text-xs font-medium leading-relaxed text-foreground">
+                                                {text}
+                                              </div>
+                                            </div>
+                                          ) : (
+                                            <div
+                                              key={key}
+                                              className="flex min-w-0 items-start justify-between gap-3 rounded-lg bg-muted-20 px-3 py-2"
+                                            >
+                                              <span className="shrink-0 font-mono text-xs font-medium text-muted-foreground">
+                                                {key}
+                                              </span>
+                                              <span className="min-w-0 break-words text-right text-xs font-medium text-foreground">
+                                                {text}
+                                              </span>
+                                            </div>
+                                          )
+                                        })}
                                       </div>
                                     </TimelineSection>
                                   )}

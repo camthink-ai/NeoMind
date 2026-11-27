@@ -620,45 +620,66 @@ export function AgentDetailPanel({
                   {(explainLast || hasOutputFields) && (
                     <div className={cn("grid items-stretch gap-3", explainLast && hasOutputFields ? "lg:grid-cols-2" : "grid-cols-1")}>
                       {explainLast && (
-                        <div className="flex flex-col rounded-xl border border-border bg-card p-3.5">
+                        <div className="flex min-w-0 flex-col rounded-xl border border-border bg-card p-3.5">
                           <h4 className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
-                            <Info className="h-3.5 w-3.5 text-primary" />
+                            <Info className="h-3.5 w-3.5 shrink-0 text-primary" />
                             {t('agents:detail.explainLast')}
                           </h4>
-                          <p className="whitespace-pre-wrap text-xs leading-relaxed text-foreground">
+                          <p className="whitespace-pre-wrap break-words text-xs leading-relaxed text-foreground">
                             {explainLast}
                           </p>
                         </div>
                       )}
 
                       {hasOutputFields && (
-                        <div className="flex flex-col rounded-xl border border-border bg-card p-3.5 space-y-2.5">
+                        <div className="flex min-w-0 flex-col rounded-xl border border-border bg-card p-3.5 space-y-2.5">
                           <div className="flex items-center justify-between gap-2">
                             <h4 className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
-                              <Database className="h-3.5 w-3.5" />
+                              <Database className="h-3.5 w-3.5 shrink-0" />
                               {t('agents:detail.outputFields')}
                             </h4>
-                            <Badge variant={outputPublish ? 'default' : 'secondary'} className="h-5 px-1.5 text-xs">
+                            <Badge variant={outputPublish ? 'default' : 'secondary'} className="h-5 shrink-0 px-1.5 text-xs">
                               {outputPublish ? t('agents:detail.outputPublishOn') : t('agents:detail.outputPublishOff')}
                             </Badge>
                           </div>
-                          <div className="grid gap-2">
+                          <div className="grid min-w-0 gap-2">
                             {outputFields.map((f) => {
                               const state = agent.latest_output_state?.[f.name]
                               const latest = state?.value ?? agent.latest_output?.[f.name]
+                              const latestText =
+                                latest === undefined || latest === null
+                                  ? '—'
+                                  : typeof latest === 'object'
+                                    ? JSON.stringify(latest)
+                                    : String(latest)
+                              const isLongValue = latestText.length > 28 || latestText.includes('\n')
                               return (
-                                <div key={f.name} className="rounded-lg bg-muted-20 px-3 py-2">
-                                  <div className="flex items-center justify-between gap-3">
-                                    <div className="flex min-w-0 items-baseline gap-2">
-                                      <span className="shrink-0 font-mono text-xs font-medium text-foreground">{f.name}</span>
-                                      {f.description && (
-                                        <span className="truncate text-xs text-muted-foreground">{f.description}</span>
-                                      )}
+                                <div key={f.name} className="min-w-0 rounded-lg bg-muted-20 px-3 py-2">
+                                  {isLongValue ? (
+                                    <div className="min-w-0 space-y-1">
+                                      <div className="flex min-w-0 items-baseline gap-2">
+                                        <span className="shrink-0 font-mono text-xs font-medium text-foreground">{f.name}</span>
+                                        {f.description && (
+                                          <span className="truncate text-xs text-muted-foreground">{f.description}</span>
+                                        )}
+                                      </div>
+                                      <div className="whitespace-pre-wrap break-words text-xs font-medium leading-relaxed text-foreground">
+                                        {latestText}
+                                      </div>
                                     </div>
-                                    <span className="shrink-0 text-xs font-semibold tabular-nums text-foreground">
-                                      {latest !== undefined ? String(latest) : '—'}
-                                    </span>
-                                  </div>
+                                  ) : (
+                                    <div className="flex min-w-0 items-start justify-between gap-3">
+                                      <div className="flex min-w-0 items-baseline gap-2">
+                                        <span className="shrink-0 font-mono text-xs font-medium text-foreground">{f.name}</span>
+                                        {f.description && (
+                                          <span className="truncate text-xs text-muted-foreground">{f.description}</span>
+                                        )}
+                                      </div>
+                                      <span className="min-w-0 break-words text-right text-xs font-semibold tabular-nums text-foreground">
+                                        {latestText}
+                                      </span>
+                                    </div>
+                                  )}
                                   {((f.depends_on && f.depends_on.length > 0) || latest !== undefined) && (
                                     <div className="mt-1 flex flex-wrap items-center gap-2 text-nano text-muted-foreground">
                                       {f.depends_on && f.depends_on.length > 0 && (
@@ -704,7 +725,7 @@ export function AgentDetailPanel({
                       <FileText className="h-3.5 w-3.5" />
                       {t('agents:userPrompt')}
                     </h4>
-                    <div className="text-sm leading-relaxed whitespace-pre-wrap text-foreground">
+                    <div className="text-sm leading-relaxed whitespace-pre-wrap break-words text-foreground">
                       {agent.user_prompt || t('agents:card.noDescription')}
                     </div>
                   </div>
